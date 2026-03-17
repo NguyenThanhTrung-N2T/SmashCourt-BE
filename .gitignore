@@ -1,6 +1,7 @@
 # Build output
 bin/
 obj/
+publish/
 
 # Visual Studio
 .vs/
@@ -11,6 +12,12 @@ obj/
 # Environment
 .env
 appsettings.Development.json
+appsettings.Local.json
+appsettings.Staging.json
+
+# Logs
+*.log
+logs/
 
 # OS
 .DS_Store
