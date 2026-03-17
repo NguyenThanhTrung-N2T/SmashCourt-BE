@@ -1,30 +1,38 @@
-# See https://aka.ms/customizecontainer to learn how to customize your debug container and how Visual Studio uses this Dockerfile to build your images for faster debugging.
-
-# This stage is used when running from VS in fast mode (Default for Debug configuration)
-FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS base
-USER $APP_UID
-WORKDIR /app
-EXPOSE 8080
-EXPOSE 8081
-
-
-# This stage is used to build the service project
-FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+# ── Stage 1: Build ──────────────────────────────────────────────────
+FROM mcr.microsoft.com/dotnet/sdk:8.0-alpine AS build
 ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
-COPY ["SmashCourt-BE.csproj", "."]
-RUN dotnet restore "./SmashCourt-BE.csproj"
-COPY . .
-WORKDIR "/src/."
-RUN dotnet build "./SmashCourt-BE.csproj" -c $BUILD_CONFIGURATION -o /app/build
 
-# This stage is used to publish the service project to be copied to the final stage
+# Copy csproj riêng để tận dụng Docker layer cache khi restore
+COPY ["SmashCourt-BE.csproj", "."]
+RUN dotnet restore "./SmashCourt-BE.csproj" --runtime linux-musl-x64
+
+# Copy toàn bộ source và build
+COPY . .
+RUN dotnet build "./SmashCourt-BE.csproj" \
+    -c $BUILD_CONFIGURATION \
+    --no-restore \
+    -o /app/build
+
+# ── Stage 2: Publish ─────────────────────────────────────────────────
 FROM build AS publish
 ARG BUILD_CONFIGURATION=Release
-RUN dotnet publish "./SmashCourt-BE.csproj" -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false
+RUN dotnet publish "./SmashCourt-BE.csproj" \
+    -c $BUILD_CONFIGURATION \
+    --no-restore \
+    --runtime linux-musl-x64 \
+    --self-contained false \
+    /p:UseAppHost=false \
+    -o /app/publish
 
-# This stage is used in production or when running from VS in regular mode (Default when not using the Debug configuration)
-FROM base AS final
+# ── Stage 3: Runtime (Alpine - nhẹ ~100MB) ───────────────────────────
+FROM mcr.microsoft.com/dotnet/aspnet:8.0-alpine AS final
 WORKDIR /app
+EXPOSE 8080
+
+# Thêm timezone và culture support cho Alpine
+RUN apk add --no-cache icu-libs
+ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false
+
 COPY --from=publish /app/publish .
 ENTRYPOINT ["dotnet", "SmashCourt-BE.dll"]
