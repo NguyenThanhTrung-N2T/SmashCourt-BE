@@ -1,11 +1,25 @@
 ﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using Npgsql;
+using SmashCourt_BE.Data;
 using System.Reflection;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Database 
+var dataSourceBuilder = new NpgsqlDataSourceBuilder(
+    builder.Configuration.GetConnectionString("DefaultConnection"));
+
+var dataSource = dataSourceBuilder.Build();
+
+// Đăng ký DbContext
+builder.Services.AddDbContext<SmashCourtContext>(options =>
+    options.UseNpgsql(dataSource));
+
 
 // Controllers
 builder.Services.AddControllers();
@@ -193,5 +207,24 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+
+// Kiểm tra kết nối database
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<SmashCourtContext>();
+    try
+    {
+        await db.Database.CanConnectAsync();
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.WriteLine("✓ Database connected successfully");
+        Console.ResetColor();
+    }
+    catch (Exception ex)
+    {
+        Console.ForegroundColor = ConsoleColor.Red;
+        Console.WriteLine($"✗ Database connection failed: {ex.Message}");
+        Console.ResetColor();
+    }
+}
 
 app.Run();
