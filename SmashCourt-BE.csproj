@@ -24,8 +24,6 @@
 
   <ItemGroup>
     <Folder Include="DTOs\" />
-    <Folder Include="Models\Entities\" />
-    <Folder Include="Models\Enums\" />
     <Folder Include="Repositories\IRepository\" />
     <Folder Include="Services\IService\" />
   </ItemGroup>
