@@ -4,10 +4,17 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using Npgsql;
+using SmashCourt_BE.Configurations;
 using SmashCourt_BE.Data;
+using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Models.Enums;
+using SmashCourt_BE.Repositories;
+using SmashCourt_BE.Repositories.IRepository;
+using SmashCourt_BE.Services;
+using SmashCourt_BE.Services.IService;
 using System.Reflection;
 using System.Text;
+
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -46,6 +53,18 @@ builder.Services.AddDbContext<SmashCourtContext>(options =>
 
 // Controllers
 builder.Services.AddControllers();
+
+// Đăng ký DI cho Repositories và Services
+builder.Services.AddScoped<IUserRepository, UserRepository>();
+builder.Services.AddScoped<IOtpRepository, OtpRepository>();
+builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<ITokenService, TokenService>();
+builder.Services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
+builder.Services.AddScoped<EmailService>();
+builder.Services.AddScoped<OtpService>();
+builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("Jwt"));
+builder.Services.Configure<CookieSettings>(builder.Configuration.GetSection("Cookie"));
+builder.Services.AddScoped<CookieHelper>();
 
 // CORS
 builder.Services.AddCors(options =>
