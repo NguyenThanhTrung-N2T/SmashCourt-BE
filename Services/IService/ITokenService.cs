@@ -15,5 +15,11 @@ namespace SmashCourt_BE.Services.IService
 
         // Kiểm tra temp token có hợp lệ hay không, nếu hợp lệ trả về userId, ngược lại trả về null
         Guid? ValidateTempToken(string tempToken);
+
+        // tạo token dùng cho reset password — JWT ngắn hạn 5 phút, chỉ chứa userId
+        string GenerateResetPasswordToken(Guid userId);
+
+        // Kiểm tra token reset password có hợp lệ hay không, nếu hợp lệ trả về userId, ngược lại trả về null
+        Guid? ValidateResetPasswordToken(string token);
     }
 }

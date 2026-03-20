@@ -105,4 +105,60 @@ public class TokenService : ITokenService
             return null;
         }
     }
+
+    // Tạo token dùng cho reset password — JWT ngắn hạn 5 phút, chỉ chứa userId
+    public string GenerateResetPasswordToken(Guid userId)
+    {
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwt.Key));
+
+        var claims = new[]
+        {
+        new Claim(JwtRegisteredClaimNames.Sub, userId.ToString()),
+        new Claim("token_type", "reset_password")
+    };
+
+        var token = new JwtSecurityToken(
+            issuer: _jwt.Issuer,
+            audience: _jwt.Audience,
+            claims: claims,
+            expires: DateTime.UtcNow.AddMinutes(5), // 5 phút để nhập password mới
+            signingCredentials: new SigningCredentials(key, SecurityAlgorithms.HmacSha256)
+        );
+
+        return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+
+    // Validate token reset password → trả về userId nếu hợp lệ
+    public Guid? ValidateResetPasswordToken(string token)
+    {
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwt.Key));
+
+        try
+        {
+            var principal = new JwtSecurityTokenHandler().ValidateToken(
+                token,
+                new TokenValidationParameters
+                {
+                    ValidateIssuer = true,
+                    ValidateAudience = true,
+                    ValidateLifetime = true,
+                    ValidateIssuerSigningKey = true,
+                    ValidIssuer = _jwt.Issuer,
+                    ValidAudience = _jwt.Audience,
+                    IssuerSigningKey = key,
+                    ClockSkew = TimeSpan.Zero
+                },
+                out _);
+
+            if (principal.FindFirstValue("token_type") != "reset_password")
+                return null;
+
+            var sub = principal.FindFirstValue(JwtRegisteredClaimNames.Sub);
+            return Guid.TryParse(sub, out var userId) ? userId : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }

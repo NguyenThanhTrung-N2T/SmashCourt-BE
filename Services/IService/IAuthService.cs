@@ -24,4 +24,13 @@ public interface IAuthService
 
     // Đăng xuất và thu hồi refresh token
     Task LogoutAsync(string? rawRefreshToken);
+
+    // Quên mật khẩu
+    Task ForgotPasswordAsync(ForgotPasswordDto dto);
+
+    // Xác thực OTP để đặt lại mật khẩu
+    Task<string> VerifyForgotPasswordOtpAsync(VerifyForgotPasswordOtpDto dto);
+
+    // Đặt lại mật khẩu mới sau khi xác thực OTP thành công
+    Task ResetPasswordAsync(ResetPasswordDto dto);
 }

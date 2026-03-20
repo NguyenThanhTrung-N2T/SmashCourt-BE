@@ -518,7 +518,7 @@ public class AuthService : IAuthService
         }
     }
     
-
+    // Map thông tin user cho client
     private static UserInfo MapUserInfo(User user) => new()
     {
         Id = user.Id,
@@ -529,4 +529,132 @@ public class AuthService : IAuthService
         Role = user.Role.ToString(),
         Status = user.Status.ToString()
     };
+
+    // Quên mật khẩu — gửi OTP về email để xác thực
+    public async Task ForgotPasswordAsync(ForgotPasswordDto dto)
+    {
+        var email = dto.Email.Trim().ToLower();
+
+        // 1. Tìm user — không báo lỗi nếu không tìm thấy
+        var user = await _userRepo.GetUserByEmailAsync(email);
+        if (user == null)
+        {
+            // không tìm thấy user
+            return;
+        }
+        if(user.PasswordHash == null)
+        {
+            // User đăng nhập bằng OAuth
+            throw new AppException(400, "Tài khoản này đăng nhập bằng Google, không có mật khẩu để đặt lại");
+        }
+
+        // 2. Kiểm tra cooldown 60s
+        var latestOtp = await _otpRepo.GetLatestActiveOtpAsync(user.Id, OtpType.FORGOT_PASSWORD);
+        if (latestOtp != null)
+        {
+            var secondsElapsed = (DateTime.UtcNow - latestOtp.CreatedAt).TotalSeconds;
+            if (secondsElapsed < 60)
+                throw new AppException(429,
+                    $"Vui lòng chờ {60 - (int)secondsElapsed} giây trước khi gửi lại");
+        }
+
+        // 3. Invalidate OTP cũ
+        await _otpRepo.InvalidateAllOtpAsync(user.Id, OtpType.FORGOT_PASSWORD);
+
+        // 4. Tạo OTP mới
+        var rawCode = _otpService.GenerateCode();
+        var otp = new OtpCode
+        {
+            UserId = user.Id,
+            Type = OtpType.FORGOT_PASSWORD,
+            CodeHash = _otpService.HashCode(rawCode),
+            AttemptCount = 0,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(5),
+            CreatedAt = DateTime.UtcNow
+        };
+        await _otpRepo.CreateOtpAsync(otp);
+
+        // 5. Gửi email
+        try
+        {
+            await _emailService.SendOtpForgotPasswordAsync(email, user.FullName, rawCode);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send forgot password OTP to {Email}", email);
+            throw new AppException(500, "Không thể gửi email OTP, vui lòng thử lại");
+        }
+    }
+
+    // Xác thực OTP để đặt lại mật khẩu
+    public async Task<string> VerifyForgotPasswordOtpAsync(VerifyForgotPasswordOtpDto dto)
+    {
+        var email = dto.Email.Trim().ToLower();
+
+        // 1. Tìm user — không báo rõ để tránh enumeration
+        var user = await _userRepo.GetUserByEmailAsync(email);
+        if (user == null)
+            throw new AppException(400, "OTP không hợp lệ hoặc đã hết hạn");
+
+        // 2. Tìm OTP active
+        var otp = await _otpRepo.GetLatestActiveOtpAsync(user.Id, OtpType.FORGOT_PASSWORD);
+        if (otp == null)
+            throw new AppException(400, "OTP không hợp lệ hoặc đã hết hạn, vui lòng yêu cầu mã mới");
+
+        // 3. Kiểm tra attempt
+        if (otp.AttemptCount >= 3)
+            throw new AppException(400, "OTP đã bị khóa do nhập sai quá 3 lần, vui lòng yêu cầu mã mới");
+
+        // 4. Verify OTP
+        if (!_otpService.VerifyCode(dto.OtpCode, otp.CodeHash))
+        {
+            otp.AttemptCount++;
+            await _otpRepo.UpdateOtpAsync(otp);
+
+            var remaining = 3 - otp.AttemptCount;
+            if (remaining > 0)
+                throw new AppException(400, $"OTP không đúng, còn {remaining} lần thử");
+            else
+                throw new AppException(400, "OTP đã bị khóa do nhập sai quá 3 lần, vui lòng yêu cầu mã mới");
+        }
+
+        // 5. OTP hợp lệ → đánh dấu đã dùng
+        otp.UsedAt = DateTime.UtcNow;
+        await _otpRepo.UpdateOtpAsync(otp);
+
+        // 6. Tạo temp token để dùng ở bước reset password
+        // Dùng lại GenerateTempToken với claim type riêng
+        return _tokenService.GenerateResetPasswordToken(user.Id);
+    }
+
+    // Đặt lại mật khẩu mới sau khi xác thực OTP thành công
+    public async Task ResetPasswordAsync(ResetPasswordDto dto)
+    {
+        // 1. Validate reset token
+        var userId = _tokenService.ValidateResetPasswordToken(dto.ResetToken);
+        if (userId == null)
+            throw new AppException(400, "Phiên đặt lại mật khẩu không hợp lệ hoặc đã hết hạn, vui lòng thực hiện lại");
+
+        // 2. Tìm user
+        var user = await _userRepo.GetUserByIdAsync(userId.Value);
+        if (user == null)
+            throw new AppException(400, "Tài khoản không tồn tại");
+
+        // 3. Kiểm tra status
+        if (user.Status == UserStatus.LOCKED)
+            throw new AppException(403, "Tài khoản của bạn đã bị khóa, vui lòng liên hệ hỗ trợ");
+
+        // 4. Hash password mới + update
+        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.NewPassword);
+        user.FailedLoginCount = 0;
+        user.LockedUntil = null;
+        user.UpdatedAt = DateTime.UtcNow;
+        await _userRepo.UpdateUserAsync(user);
+
+        // 5. Revoke toàn bộ refresh token còn hạn
+        // Đảm bảo tất cả session cũ bị logout sau khi đổi password
+        await _refreshTokenRepo.RevokeAllByUserIdAsync(user.Id);
+    }
+
+
 }

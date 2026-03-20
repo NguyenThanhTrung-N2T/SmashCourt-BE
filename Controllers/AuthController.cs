@@ -160,4 +160,65 @@ public class AuthController : ControllerBase
     }
 
 
+    /// <summary>
+    /// Gửi OTP đặt lại mật khẩu về email
+    /// </summary>
+    [HttpPost("forgot-password")]
+    [EnableRateLimiting("sensitive")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordDto dto)
+    {
+        if (!ModelState.IsValid)
+            return BadRequest("Thông tin không hợp lệ");
+
+        await _authService.ForgotPasswordAsync(dto);
+
+        // Luôn trả message giống nhau — không lộ email có tồn tại không
+        return Ok(new { message = "Nếu email tồn tại, OTP sẽ được gửi đến hộp thư của bạn" });
+    }
+
+
+    /// <summary>
+    /// Xác thực OTP quên mật khẩu — trả về reset token
+    /// </summary>
+    [HttpPost("forgot-password/verify-otp")]
+    [EnableRateLimiting("sensitive")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> VerifyForgotPasswordOtp([FromBody] VerifyForgotPasswordOtpDto dto)
+    {
+        if (!ModelState.IsValid)
+            return BadRequest("Thông tin không hợp lệ");
+
+        var resetToken = await _authService.VerifyForgotPasswordOtpAsync(dto);
+
+        return Ok(new
+        {
+            message = "Xác thực OTP thành công",
+            resetToken  // FE dùng token này ở bước reset password
+        });
+    }
+
+    /// <summary>
+    /// Đặt lại mật khẩu mới sau khi xác thực OTP
+    /// </summary>
+    [HttpPost("forgot-password/reset")]
+    [EnableRateLimiting("sensitive")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordDto dto)
+    {
+        if (!ModelState.IsValid)
+            return BadRequest("Thông tin không hợp lệ");
+
+        await _authService.ResetPasswordAsync(dto);
+
+        return Ok(new { message = "Đặt lại mật khẩu thành công, vui lòng đăng nhập lại" });
+    }
+
 }

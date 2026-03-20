@@ -6,6 +6,7 @@ using Microsoft.OpenApi.Models;
 using Npgsql;
 using SmashCourt_BE.Configurations;
 using SmashCourt_BE.Data;
+using SmashCourt_BE.DTOs.Auth;
 using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories;
@@ -65,6 +66,15 @@ builder.Services.AddScoped<OtpService>();
 builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("Jwt"));
 builder.Services.Configure<CookieSettings>(builder.Configuration.GetSection("Cookie"));
 builder.Services.AddScoped<CookieHelper>();
+builder.Services.Configure<GoogleSettings>(
+    builder.Configuration.GetSection("Google"));
+
+builder.Services.AddMemoryCache();
+builder.Services.AddHttpClient();
+
+builder.Services.AddScoped<IGoogleAuthService, GoogleAuthService>();
+builder.Services.AddScoped<IOAuthAccountRepository, OAuthAccountRepository>();
+
 
 // CORS
 builder.Services.AddCors(options =>
