@@ -8,11 +8,13 @@ using SmashCourt_BE.Configurations;
 using SmashCourt_BE.Data;
 using SmashCourt_BE.DTOs.Auth;
 using SmashCourt_BE.Helpers;
+using SmashCourt_BE.Middlewares;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories;
 using SmashCourt_BE.Repositories.IRepository;
 using SmashCourt_BE.Services;
 using SmashCourt_BE.Services.IService;
+using SmashCourt_BE.Utils;
 using System.Reflection;
 using System.Text;
 
@@ -23,27 +25,30 @@ var builder = WebApplication.CreateBuilder(args);
 var dataSourceBuilder = new NpgsqlDataSourceBuilder(
     builder.Configuration.GetConnectionString("DefaultConnection"));
 
+// Sử dụng UpperCaseEnumTranslator để giữ nguyên tên enum khi map sang PostgreSQL
+var translator = new UpperCaseEnumTranslator();
+
 // Tự động map enum C# sang enum type của PostgreSQL
-dataSourceBuilder.MapEnum<UserRole>("user_role");
-dataSourceBuilder.MapEnum<UserStatus>("user_status");
-dataSourceBuilder.MapEnum<OtpType>("otp_type");
-dataSourceBuilder.MapEnum<BranchStatus>("branch_status");
-dataSourceBuilder.MapEnum<CourtTypeStatus>("court_type_status");
-dataSourceBuilder.MapEnum<CourtStatus>("court_status");
-dataSourceBuilder.MapEnum<UserBranchRole>("user_branch_role");
-dataSourceBuilder.MapEnum<DayType>("day_type");
-dataSourceBuilder.MapEnum<ServiceStatus>("service_status");
-dataSourceBuilder.MapEnum<BranchServiceStatus>("branch_service_status");
-dataSourceBuilder.MapEnum<LoyaltyTransactionType>("loyalty_transaction_type");
-dataSourceBuilder.MapEnum<PromotionStatus>("promotion_status");
-dataSourceBuilder.MapEnum<BookingStatus>("booking_status");
-dataSourceBuilder.MapEnum<BookingSource>("booking_source");
-dataSourceBuilder.MapEnum<CancelSourceEnum>("cancel_source_enum");
-dataSourceBuilder.MapEnum<InvoicePaymentStatus>("invoice_payment_status");
-dataSourceBuilder.MapEnum<PaymentTxStatus>("payment_tx_status");
-dataSourceBuilder.MapEnum<PaymentTxMethod>("payment_tx_method");
-dataSourceBuilder.MapEnum<RefundStatus>("refund_status");
-dataSourceBuilder.MapEnum<IpnProvider>("ipn_provider");
+dataSourceBuilder.MapEnum<UserRole>("user_role", translator);
+dataSourceBuilder.MapEnum<UserStatus>("user_status", translator);
+dataSourceBuilder.MapEnum<OtpType>("otp_type", translator);
+dataSourceBuilder.MapEnum<BranchStatus>("branch_status", translator);
+dataSourceBuilder.MapEnum<CourtTypeStatus>("court_type_status", translator);
+dataSourceBuilder.MapEnum<CourtStatus>("court_status", translator);
+dataSourceBuilder.MapEnum<UserBranchRole>("user_branch_role", translator);
+dataSourceBuilder.MapEnum<DayType>("day_type", translator);
+dataSourceBuilder.MapEnum<ServiceStatus>("service_status", translator);
+dataSourceBuilder.MapEnum<BranchServiceStatus>("branch_service_status", translator);
+dataSourceBuilder.MapEnum<LoyaltyTransactionType>("loyalty_transaction_type", translator);
+dataSourceBuilder.MapEnum<PromotionStatus>("promotion_status", translator);
+dataSourceBuilder.MapEnum<BookingStatus>("booking_status", translator);
+dataSourceBuilder.MapEnum<BookingSource>("booking_source", translator);
+dataSourceBuilder.MapEnum<CancelSourceEnum>("cancel_source_enum", translator);
+dataSourceBuilder.MapEnum<InvoicePaymentStatus>("invoice_payment_status", translator);
+dataSourceBuilder.MapEnum<PaymentTxStatus>("payment_tx_status", translator);
+dataSourceBuilder.MapEnum<PaymentTxMethod>("payment_tx_method", translator);
+dataSourceBuilder.MapEnum<RefundStatus>("refund_status", translator);
+dataSourceBuilder.MapEnum<IpnProvider>("ipn_provider", translator);
 
 var dataSource = dataSourceBuilder.Build();
 
@@ -255,6 +260,7 @@ app.UseHttpsRedirection();
 
 app.UseCors("AllowFrontend");
 app.UseRateLimiter();
+app.UseMiddleware<ExceptionMiddleware>();
 app.UseAuthentication();
 app.UseAuthorization();
 

@@ -148,7 +148,11 @@ public class AuthService : IAuthService
 
         // 4. Kiểm tra attempt
         if (otp.AttemptCount >= 3)
-            throw new AppException(400, "OTP đã bị khóa do nhập sai quá 3 lần, vui lòng yêu cầu mã mới");
+        {
+            await _otpRepo.InvalidateAllOtpAsync(user.Id, OtpType.EMAIL_VERIFY);
+            await _userRepo.DeleteUnverifiedAsync(user.Id);
+            throw new AppException(400, "Xác thực thất bại, vui lòng đăng ký lại");
+        }
 
         // 5. Verify OTP
         if (!_otpService.VerifyCode(dto.OtpCode, otp.CodeHash))
@@ -159,8 +163,11 @@ public class AuthService : IAuthService
             var remaining = 3 - otp.AttemptCount;
             if (remaining > 0)
                 throw new AppException(400, $"OTP không đúng, còn {remaining} lần thử");
-            else
-                throw new AppException(400, "OTP đã bị khóa do nhập sai quá 3 lần, vui lòng yêu cầu mã mới");
+
+            // Hết 3 lần thử → khóa OTP và xóa user chưa verify để tránh tồn tại nhiều user rác
+            await _otpRepo.InvalidateAllOtpAsync(user.Id, OtpType.EMAIL_VERIFY);
+            await _userRepo.DeleteUnverifiedAsync(user.Id);
+            throw new AppException(400, "Xác thực thất bại, vui lòng đăng ký lại");
         }
 
         // 6. OTP hợp lệ → đánh dấu đã dùng
@@ -189,6 +196,27 @@ public class AuthService : IAuthService
             case OtpType.EMAIL_VERIFY:
                 if (user.IsEmailVerified)
                     throw new AppException(400, "Email đã được xác thực, không cần gửi lại");
+                // Kiểm tra tổng số lần đã gửi OTP
+                var resendCount = await _otpRepo.CountByUserAndTypeAsync(
+                    user.Id, OtpType.EMAIL_VERIFY);
+
+                if (resendCount >= 3)
+                {
+                    try
+                    {
+                        // Vô hiệu hóa OTP trước
+                        await _otpRepo.InvalidateAllOtpAsync(user.Id, OtpType.EMAIL_VERIFY);
+                        
+                        // Rồi xóa user (có try-catch để xử lý nếu fail)
+                        await _userRepo.DeleteUnverifiedAsync(user.Id);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Lỗi khi xóa user chưa verify");
+                    }
+                    
+                    throw new AppException(400, "Đã gửi OTP quá số lần cho phép, vui lòng đăng ký lại");
+                }
                 break;
 
             case OtpType.FORGOT_PASSWORD:

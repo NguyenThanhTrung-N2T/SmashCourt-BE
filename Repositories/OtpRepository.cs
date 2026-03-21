@@ -50,4 +50,15 @@ public class OtpRepository : IOtpRepository
         _db.OtpCodes.Update(otp);
         await _db.SaveChangesAsync();
     }
+
+    // đếm số lượng OTP còn hiệu lực — dùng để giới hạn số lần gửi OTP trong 1 khoảng thời gian
+    public async Task<int> CountByUserAndTypeAsync(Guid userId, OtpType type)
+    {
+        return await _db.OtpCodes
+            .CountAsync(o =>
+                o.UserId == userId &&
+                o.Type == type &&
+                o.UsedAt == null &&              //Chưa dùng
+                o.ExpiresAt > DateTime.UtcNow);  //Chưa hết hạn
+    }
 }

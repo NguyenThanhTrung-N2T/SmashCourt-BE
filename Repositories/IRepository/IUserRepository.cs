@@ -16,5 +16,8 @@ namespace SmashCourt_BE.Repositories.IRepository
         // cập nhật thông tin user 
         Task UpdateUserAsync(User updateUser);
 
+        // xóa user chưa xác thực sau 5 phút
+        Task DeleteUnverifiedAsync(Guid userId);
+
     }
 }

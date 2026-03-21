@@ -40,5 +40,13 @@ namespace SmashCourt_BE.Repositories
         {
             return await _context.Users.FindAsync(id);
         }
+
+        // xóa user chưa xác thực sau 5 phút
+        public async Task DeleteUnverifiedAsync(Guid userId)
+        {
+            await _context.Users
+                .Where(u => u.Id == userId && !u.IsEmailVerified)
+                .ExecuteDeleteAsync();
+        }
     }
 }

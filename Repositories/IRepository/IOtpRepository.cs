@@ -16,4 +16,7 @@ public interface IOtpRepository
 
     // cập nhật mã OTP 
     Task UpdateOtpAsync(OtpCode otp);
+
+    // đếm số lượng OTP còn hiệu lực cho một người dùng và theo loại OTP
+    Task<int> CountByUserAndTypeAsync(Guid userId, OtpType type);
 }
