@@ -15,6 +15,7 @@ using SmashCourt_BE.Repositories.IRepository;
 using SmashCourt_BE.Services;
 using SmashCourt_BE.Services.IService;
 using SmashCourt_BE.Utils;
+using System.IdentityModel.Tokens.Jwt;
 using System.Reflection;
 using System.Text;
 
@@ -258,9 +259,15 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
+// Sử dụng CORS policy đã định nghĩa
 app.UseCors("AllowFrontend");
+// Thêm middleware rate limiting toàn cục — có thể override bằng attribute ở controller/action
 app.UseRateLimiter();
+// Middleware xử lý lỗi toàn cục — trả về JSON chuẩn
 app.UseMiddleware<ExceptionMiddleware>();
+// Clear default claim type mapping để giữ nguyên tên claim trong token
+JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
+// Xác thực và phân quyền
 app.UseAuthentication();
 app.UseAuthorization();
 

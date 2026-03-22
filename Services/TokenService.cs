@@ -11,10 +11,11 @@ using System.Text;
 public class TokenService : ITokenService
 {
     private readonly JwtSettings _jwt;
-
-    public TokenService(IOptions<JwtSettings> jwt)
+    private readonly ILogger<TokenService> _logger;
+    public TokenService(IOptions<JwtSettings> jwt, ILogger<TokenService> logger)
     {
         _jwt = jwt.Value;
+        _logger = logger;
     }
 
 
@@ -92,16 +93,30 @@ public class TokenService : ITokenService
                     IssuerSigningKey = key,
                     ClockSkew = TimeSpan.Zero
                 },
-                out _);
+                out var validatedToken);
 
-            if (principal.FindFirstValue("token_type") != "2fa_temp")
+            // Log để debug
+            _logger.LogInformation("Token claims: {Claims}",
+                string.Join(", ", principal.Claims.Select(c => $"{c.Type}={c.Value}")));
+
+            var tokenType = principal.FindFirstValue("token_type");
+            _logger.LogInformation("Token type: {TokenType}", tokenType);
+
+            if (tokenType != "2fa_temp")
+            {
+                _logger.LogWarning("Token type mismatch: {TokenType}", tokenType);
                 return null;
+            }
 
             var sub = principal.FindFirstValue(JwtRegisteredClaimNames.Sub);
+            _logger.LogInformation("Sub: {Sub}", sub);
+
             return Guid.TryParse(sub, out var userId) ? userId : null;
         }
-        catch
+        catch (Exception ex)
         {
+            // Log exception để biết lý do fail
+            _logger.LogError(ex, "ValidateTempToken failed: {Message}", ex.Message);
             return null;
         }
     }
