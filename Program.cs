@@ -7,6 +7,7 @@ using Npgsql;
 using SmashCourt_BE.Configurations;
 using SmashCourt_BE.Data;
 using SmashCourt_BE.DTOs.Auth;
+using SmashCourt_BE.Extensions;
 using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Middlewares;
 using SmashCourt_BE.Models.Enums;
@@ -56,7 +57,8 @@ var dataSource = dataSourceBuilder.Build();
 // Đăng ký DbContext
 builder.Services.AddDbContext<SmashCourtContext>(options =>
     options.UseNpgsql(dataSource));
-
+// Đăng ký Hangfire
+builder.Services.AddHangfireServices(builder.Configuration);
 
 // Controllers
 builder.Services.AddControllers();
@@ -270,6 +272,8 @@ JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
 // Xác thực và phân quyền
 app.UseAuthentication();
 app.UseAuthorization();
+// Hangfire dashboard — chỉ cho phép admin xem
+app.UseHangfireServices(app.Configuration);
 
 app.MapControllers();
 
@@ -291,5 +295,8 @@ using (var scope = app.Services.CreateScope())
         Console.ResetColor();
     }
 }
+
+// Thông báo URL của Hangfire dashboard
+Console.WriteLine("http://localhost:5179/hangfire - Dashboard Hangfire (admin only)");
 
 app.Run();
