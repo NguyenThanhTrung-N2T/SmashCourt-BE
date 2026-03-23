@@ -1,4 +1,4 @@
-﻿using BCrypt.Net;
+using BCrypt.Net;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using SmashCourt_BE.Common;
@@ -21,6 +21,8 @@ public class AuthService : IAuthService
     private readonly ITokenService _tokenService;
     private readonly IRefreshTokenRepository _refreshTokenRepo;
     private readonly JwtSettings _jwtSettings;
+    private readonly ICustomerLoyaltyRepository _customerLoyaltyRepo;
+    private readonly ILoyaltyTierRepository _loyaltyTierRepo;
 
 
     public AuthService(
@@ -31,7 +33,9 @@ public class AuthService : IAuthService
         ILogger<AuthService> logger,
         ITokenService tokenService,
         IRefreshTokenRepository refreshTokenRepo,
-        IOptions<JwtSettings> jwtSettings)
+        IOptions<JwtSettings> jwtSettings,
+        ICustomerLoyaltyRepository customerLoyaltyRepo,
+        ILoyaltyTierRepository loyaltyTierRepo)
     {
         _userRepo = userRepo;
         _otpRepo = otpRepo;
@@ -41,6 +45,8 @@ public class AuthService : IAuthService
         _tokenService = tokenService;
         _refreshTokenRepo = refreshTokenRepo;
         _jwtSettings = jwtSettings.Value;
+        _customerLoyaltyRepo = customerLoyaltyRepo;
+        _loyaltyTierRepo = loyaltyTierRepo;
     }
 
     // Đăng ký tài khoản mới — gửi OTP về email để xác thực
@@ -178,6 +184,21 @@ public class AuthService : IAuthService
         user.IsEmailVerified = true;
         user.UpdatedAt = DateTime.UtcNow;
         await _userRepo.UpdateUserAsync(user);
+
+        // 8. Tạo hạng thành viên mặc định cho khách hàng
+        var defaultTier = await _loyaltyTierRepo.GetDefaultTierAsync();
+        if (defaultTier != null)
+        {
+            var customerLoyalty = new CustomerLoyalty
+            {
+                UserId = user.Id,
+                TierId = defaultTier.Id,
+                TotalPoints = 0,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+            await _customerLoyaltyRepo.CreateAsync(customerLoyalty);
+        }
     }
 
     // Gửi lại OTP mới nếu người dùng chưa nhận được hoặc OTP cũ đã hết hạn

@@ -1,4 +1,4 @@
-﻿using SmashCourt_BE.Data;
+using SmashCourt_BE.Data;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Repositories.IRepository;
 using Microsoft.EntityFrameworkCore;
@@ -49,6 +49,14 @@ namespace SmashCourt_BE.Repositories
         {
             return await _db.LoyaltyTiers
                 .Where(t => t.MinPoints > currentMinPoints)
+                .OrderBy(t => t.MinPoints)
+                .FirstOrDefaultAsync();
+        }
+
+        // Lấy hạng mặc định (hạng có số điểm MinPoints thấp nhất)
+        public async Task<LoyaltyTier?> GetDefaultTierAsync()
+        {
+            return await _db.LoyaltyTiers
                 .OrderBy(t => t.MinPoints)
                 .FirstOrDefaultAsync();
         }

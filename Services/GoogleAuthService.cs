@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using SmashCourt_BE.Common;
@@ -22,6 +22,8 @@ namespace SmashCourt_BE.Services
         private readonly OtpService _otpService;
         private readonly HttpClient _httpClient;
         private readonly ILogger<GoogleAuthService> _logger;
+        private readonly ICustomerLoyaltyRepository _customerLoyaltyRepo;
+        private readonly ILoyaltyTierRepository _loyaltyTierRepo;
 
         public GoogleAuthService(
             IOptions<GoogleSettings> googleSettings,
@@ -32,7 +34,9 @@ namespace SmashCourt_BE.Services
             ITokenService tokenService,
             OtpService otpService,
             IHttpClientFactory httpClientFactory,
-            ILogger<GoogleAuthService> logger)
+            ILogger<GoogleAuthService> logger,
+            ICustomerLoyaltyRepository customerLoyaltyRepo,
+            ILoyaltyTierRepository loyaltyTierRepo)
         {
             _googleSettings = googleSettings.Value;
             _cache = cache;
@@ -43,6 +47,8 @@ namespace SmashCourt_BE.Services
             _otpService = otpService;
             _httpClient = httpClientFactory.CreateClient();
             _logger = logger;
+            _customerLoyaltyRepo = customerLoyaltyRepo;
+            _loyaltyTierRepo = loyaltyTierRepo;
 
             if (string.IsNullOrEmpty(_googleSettings.ClientId) ||
         string.IsNullOrEmpty(_googleSettings.ClientSecret) ||
@@ -138,6 +144,21 @@ namespace SmashCourt_BE.Services
                 catch (DbUpdateException)
                 {
                     throw new AppException(400, "Google account này đã được liên kết với tài khoản khác");
+                }
+
+                // Tạo hạng thành viên mặc định cho user mới
+                var defaultTier = await _loyaltyTierRepo.GetDefaultTierAsync();
+                if (defaultTier != null)
+                {
+                    var customerLoyalty = new CustomerLoyalty
+                    {
+                        UserId = user.Id,
+                        TierId = defaultTier.Id,
+                        TotalPoints = 0,
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow
+                    };
+                    await _customerLoyaltyRepo.CreateAsync(customerLoyalty);
                 }
             }
             else if (user.PasswordHash != null)

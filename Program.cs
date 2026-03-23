@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -61,7 +61,17 @@ builder.Services.AddDbContext<SmashCourtContext>(options =>
 builder.Services.AddHangfireServices(builder.Configuration);
 
 // Controllers
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping;
+    });
+
+// Option dùng cho các middleware trả về WriteAsJsonAsync
+builder.Services.Configure<Microsoft.AspNetCore.Http.Json.JsonOptions>(options =>
+{
+    options.SerializerOptions.Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping;
+});
 
 // Đăng ký DI cho Repositories và Services
 builder.Services.AddScoped<IUserRepository, UserRepository>();
@@ -141,7 +151,7 @@ builder.Services.AddRateLimiter(options =>
         {
             message = "Too many requests",
             detail = "Bạn gửi quá nhiều request, vui lòng thử lại sau"
-        });
+        }, new System.Text.Json.JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
 
         await context.HttpContext.Response.WriteAsync(response, token);
     };
@@ -211,14 +221,20 @@ builder.Services.AddAuthentication(options =>
         OnAuthenticationFailed = context =>
         {
             context.NoResult();
+
+            if (context.Response.HasStarted)
+            {
+                return Task.CompletedTask;
+            }
+
             context.Response.StatusCode = 401;
             context.Response.ContentType = "application/json";
 
             var result = System.Text.Json.JsonSerializer.Serialize(new
             {
                 message = "Invalid token",
-                detail = context.Exception.Message
-            });
+                detail = context.Exception?.Message ?? "Token không hợp lệ"
+            }, new System.Text.Json.JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
 
             return context.Response.WriteAsync(result);
         },
@@ -226,6 +242,12 @@ builder.Services.AddAuthentication(options =>
         OnChallenge = context =>
         {
             context.HandleResponse();
+
+            if (context.Response.HasStarted)
+            {
+                return Task.CompletedTask;
+            }
+
             context.Response.StatusCode = 401;
             context.Response.ContentType = "application/json";
 
@@ -233,13 +255,18 @@ builder.Services.AddAuthentication(options =>
             {
                 message = "Unauthorized",
                 detail = "Bạn chưa xác thực hoặc thiếu token !"
-            });
+            }, new System.Text.Json.JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
 
             return context.Response.WriteAsync(result);
         },
 
         OnForbidden = context =>
         {
+            if (context.Response.HasStarted)
+            {
+                return Task.CompletedTask;
+            }
+
             context.Response.StatusCode = 403;
             context.Response.ContentType = "application/json";
 
@@ -247,7 +274,7 @@ builder.Services.AddAuthentication(options =>
             {
                 message = "Forbidden",
                 detail = "Bạn không có quyền truy cập vào tài nguyên này !"
-            });
+            }, new System.Text.Json.JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
 
             return context.Response.WriteAsync(result);
         }

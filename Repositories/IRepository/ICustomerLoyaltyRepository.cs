@@ -1,4 +1,4 @@
-﻿using SmashCourt_BE.Models.Entities;
+using SmashCourt_BE.Models.Entities;
 
 namespace SmashCourt_BE.Repositories.IRepository
 {
@@ -6,5 +6,8 @@ namespace SmashCourt_BE.Repositories.IRepository
     {
         // lấy thông tin điểm tích lũy của khách hàng theo userId
         Task<CustomerLoyalty?> GetByUserIdAsync(Guid userId);
+
+        // tạo thông tin điểm tích lũy của khách hàng mới
+        Task CreateAsync(CustomerLoyalty customerLoyalty);
     }
 }

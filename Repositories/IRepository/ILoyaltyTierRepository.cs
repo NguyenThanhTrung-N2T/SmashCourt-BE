@@ -1,4 +1,4 @@
-﻿using SmashCourt_BE.Models.Entities;
+using SmashCourt_BE.Models.Entities;
 
 namespace SmashCourt_BE.Repositories.IRepository
 {
@@ -19,6 +19,7 @@ namespace SmashCourt_BE.Repositories.IRepository
         // lấy hạng tiếp theo dựa trên số điểm tối thiểu hiện tại
         Task<LoyaltyTier?> GetNextTierAsync(int currentMinPoints);
 
-
+        // lấy hạng mặc định cho người dùng mới
+        Task<LoyaltyTier?> GetDefaultTierAsync();
     }
 }
