@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Mail;
 
 namespace SmashCourt_BE.Services;
@@ -35,63 +35,17 @@ public class EmailService
         await client.SendMailAsync(message);
     }
 
-    // Gửi email OTP xác nhận đăng ký tài khoản 
     public async Task SendOtpRegisterAsync(string toEmail, string fullName, string otpCode)
     {
         var subject = "🔐 Xác thực tài khoản SmashCourt";
 
-        var body = $"""
-    <div style="font-family: Arial, sans-serif; background-color: #f4f6f8; padding: 20px;">
-        <div style="max-width: 600px; margin: auto; background: white; border-radius: 8px; padding: 30px;">
-
-            <!-- Header -->
-            <div style="text-align: center; margin-bottom: 20px;">
-                <h1 style="color: #2563eb; margin: 0;">SmashCourt</h1>
-                <p style="color: #6b7280;">Hệ thống đặt sân cầu lông</p>
-            </div>
-
-            <!-- Greeting -->
-            <p>Xin chào <strong>{fullName}</strong>,</p>
-
-            <p>Bạn đang thực hiện đăng ký tài khoản. Vui lòng sử dụng mã OTP bên dưới để xác thực:</p>
-
-            <!-- OTP -->
-            <div style="text-align: center; margin: 30px 0;">
-                <span style="
-                    font-size: 36px;
-                    letter-spacing: 10px;
-                    font-weight: bold;
-                    color: #2563eb;
-                ">
-                    {otpCode}
-                </span>
-            </div>
-
-            <!-- Info -->
-            <p>⏳ Mã OTP có hiệu lực trong <strong>5 phút</strong>.</p>
-            <p>🔒 Không chia sẻ mã này với bất kỳ ai để đảm bảo an toàn tài khoản.</p>
-
-            <!-- Warning -->
-            <div style="background: #fff3cd; padding: 10px; border-radius: 6px; margin: 20px 0;">
-                <p style="margin: 0; color: #856404;">
-                    Nếu bạn không thực hiện yêu cầu này, vui lòng bỏ qua email này hoặc liên hệ hỗ trợ.
-                </p>
-            </div>
-
-            <!-- Footer -->
-            <hr style="margin: 30px 0;" />
-
-            <p style="font-size: 12px; color: #6b7280;">
-                Email này được gửi tự động, vui lòng không trả lời.
-            </p>
-
-            <p style="font-size: 12px; color: #6b7280;">
-                © {DateTime.UtcNow.Year} SmashCourt. All rights reserved.
-            </p>
-
-        </div>
-    </div>
-    """;
+        var body = BuildEmailTemplate(
+            title: "Xác thực tài khoản",
+            fullName: fullName,
+            message: "Chào mừng bạn đến với SmashCourt. Vui lòng sử dụng mã xác thực (OTP) bên dưới để hoàn tất việc tạo tài khoản:",
+            otpCode: otpCode,
+            extraNote: "Nếu bạn không thực hiện thao tác đăng ký này, xin vui lòng bỏ qua email hoặc báo cáo cho bộ phận hỗ trợ."
+        );
 
         await SendAsync(toEmail, subject, body);
     }
@@ -131,60 +85,90 @@ public class EmailService
     private string BuildEmailTemplate(string title, string fullName, string message, string otpCode, string extraNote)
     {
         return $"""
-    <div style="font-family: Arial, sans-serif; background-color: #f4f6f8; padding: 20px;">
-        <div style="max-width: 600px; margin: auto; background: white; border-radius: 10px; padding: 30px;">
+    <!DOCTYPE html>
+    <html lang="vi">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    </head>
+    <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f4f7f6; margin: 0; padding: 0;">
+        <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f4f7f6; padding: 40px 0;">
+            <tr>
+                <td align="center">
+                    <table width="100%" cellpadding="0" cellspacing="0" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 25px rgba(0, 0, 0, 0.05); border: 1px solid #e2e8f0; margin: 0 auto;">
+                        <!-- Header -->
+                        <tr>
+                            <td style="background-color: #1e3a8a; padding: 35px 30px; text-align: center;">
+                                <h1 style="color: #ffffff; margin: 0; font-size: 32px; font-weight: 800; letter-spacing: 2px;">SMASHCOURT</h1>
+                                <p style="color: #bfdbfe; margin: 8px 0 0 0; font-size: 15px; font-weight: 500;">Nền Tảng Đặt Sân Thể Thao Hàng Đầu</p>
+                            </td>
+                        </tr>
+                        
+                        <!-- Body Content -->
+                        <tr>
+                            <td style="padding: 45px 35px;">
+                                <h2 style="color: #1e293b; margin: 0 0 25px 0; font-size: 22px; font-weight: 700;">{title}</h2>
+                                <p style="color: #475569; font-size: 16px; line-height: 1.6; margin: 0 0 15px 0;">Xin chào <strong style="color: #0f172a;">{fullName}</strong>,</p>
+                                <p style="color: #475569; font-size: 16px; line-height: 1.6; margin: 0 0 35px 0;">{message}</p>
+                                
+                                <!-- OTP Box -->
+                                <table width="100%" cellpadding="0" cellspacing="0">
+                                    <tr>
+                                        <td align="center">
+                                            <div style="background-color: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 12px; padding: 25px 40px; margin: 0 0 35px 0; display: inline-block;">
+                                                <p style="margin: 0 0 12px 0; color: #64748b; font-size: 13px; text-transform: uppercase; font-weight: 700; letter-spacing: 1px; text-align: center;">Mã Xác Thực Của Bạn</p>
+                                                <div style="font-size: 42px; letter-spacing: 12px; font-weight: 800; color: #2563eb; text-align: center; font-family: 'Courier New', monospace; text-shadow: 1px 1px 0px rgba(37,99,235,0.1);">{otpCode}</div>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </table>
+                                
+                                <!-- Security Info -->
+                                <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom: 30px; background-color: #eff6ff; border-radius: 8px;">
+                                    <tr>
+                                        <td style="padding: 20px; border-left: 4px solid #3b82f6; border-radius: 8px;">
+                                            <p style="margin: 0 0 10px 0; color: #1e3a8a; font-size: 14px; align-items: center;">
+                                                <span style="font-size: 16px;">⏱️</span> Mã xác thực này có hiệu lực trong vòng <strong>5 phút</strong>.
+                                            </p>
+                                            <p style="margin: 0; color: #1e3a8a; font-size: 14px; align-items: center;">
+                                                <span style="font-size: 16px;">🔒</span> Tuyệt đối không chia sẻ mã này cho bất kỳ ai.
+                                            </p>
+                                        </td>
+                                    </tr>
+                                </table>
 
-            <!-- Header -->
-            <div style="text-align: center; margin-bottom: 20px;">
-                <h1 style="color: #2563eb; margin: 0;">SmashCourt</h1>
-                <p style="color: #6b7280; margin: 5px 0;">Hệ thống đặt sân cầu lông</p>
-            </div>
-
-            <!-- Title -->
-            <h2 style="color: #111827;">{title}</h2>
-
-            <!-- Greeting -->
-            <p>Xin chào <strong>{fullName}</strong>,</p>
-
-            <!-- Message -->
-            <p>{message}</p>
-
-            <!-- OTP -->
-            <div style="text-align: center; margin: 30px 0;">
-                <span style="
-                    font-size: 36px;
-                    letter-spacing: 10px;
-                    font-weight: bold;
-                    color: #2563eb;
-                ">
-                    {otpCode}
-                </span>
-            </div>
-
-            <!-- Info -->
-            <p>⏳ Mã OTP có hiệu lực trong <strong>5 phút</strong>.</p>
-            <p>🔒 Không chia sẻ mã này với bất kỳ ai.</p>
-
-            <!-- Warning -->
-            <div style="background: #fff3cd; padding: 12px; border-radius: 6px; margin: 20px 0;">
-                <p style="margin: 0; color: #856404;">
-                    {extraNote}
-                </p>
-            </div>
-
-            <!-- Footer -->
-            <hr style="margin: 30px 0;" />
-
-            <p style="font-size: 12px; color: #6b7280;">
-                Email này được gửi tự động, vui lòng không trả lời.
-            </p>
-
-            <p style="font-size: 12px; color: #6b7280;">
-                © {DateTime.UtcNow.Year} SmashCourt. All rights reserved.
-            </p>
-
-        </div>
-    </div>
+                                <!-- Warning Note -->
+                                <p style="color: #64748b; font-size: 14px; line-height: 1.6; margin: 0; padding-top: 20px; border-top: 1px solid #e2e8f0; font-style: italic;">
+                                    {extraNote}
+                                </p>
+                            </td>
+                        </tr>
+                        
+                        <!-- Footer -->
+                        <tr>
+                            <td style="background-color: #f8fafc; padding: 30px; text-align: center; border-top: 1px solid #e2e8f0;">
+                                <table width="100%" cellpadding="0" cellspacing="0">
+                                    <tr>
+                                        <td align="center" style="padding-bottom: 15px;">
+                                            <p style="margin: 0 0 8px 0; color: #64748b; font-size: 13px; font-weight: 500;">Trân trọng,</p>
+                                            <p style="margin: 0; color: #0f172a; font-size: 15px; font-weight: 600;">Đội ngũ phát triển SmashCourt</p>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td align="center">
+                                            <p style="margin: 0; color: #94a3b8; font-size: 12px; line-height: 1.5;">Email này được tự động tạo và gửi từ hệ thống SmashCourt.<br>Vui lòng không phản hồi lại địa chỉ này.</p>
+                                            <p style="margin: 15px 0 0 0; color: #cbd5e1; font-size: 12px;">&copy; {DateTime.UtcNow.Year} SmashCourt. Tất cả các quyền được bảo lưu.</p>
+                                        </td>
+                                    </tr>
+                                </table>
+                            </td>
+                        </tr>
+                    </table>
+                </td>
+            </tr>
+        </table>
+    </body>
+    </html>
     """;
     }
 }

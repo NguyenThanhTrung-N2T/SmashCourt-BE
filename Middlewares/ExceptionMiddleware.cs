@@ -1,4 +1,4 @@
-﻿using SmashCourt_BE.Common;
+using SmashCourt_BE.Common;
 
 namespace SmashCourt_BE.Middlewares;
 
@@ -24,6 +24,12 @@ public class ExceptionMiddleware
             // Lỗi nghiệp vụ — log info, trả về message rõ ràng cho client
             _logger.LogInformation("Business error {StatusCode}: {Message}", ex.StatusCode, ex.Message);
 
+            if (context.Response.HasStarted)
+            {
+                _logger.LogWarning("The response has already started, the ExceptionMiddleware will not be executed.");
+                throw;
+            }
+
             context.Response.StatusCode = ex.StatusCode;
             context.Response.ContentType = "application/json";
 
@@ -36,6 +42,12 @@ public class ExceptionMiddleware
         {
             // Lỗi hệ thống — log error đầy đủ, không leak detail ra client
             _logger.LogError(ex, "Unhandled exception");
+
+            if (context.Response.HasStarted)
+            {
+                _logger.LogWarning("The response has already started, the ExceptionMiddleware will not be executed.");
+                throw;
+            }
 
             context.Response.StatusCode = 500;
             context.Response.ContentType = "application/json";
