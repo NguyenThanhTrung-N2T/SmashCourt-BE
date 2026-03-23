@@ -69,6 +69,15 @@ builder.Services.AddScoped<IOtpRepository, OtpRepository>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<ITokenService, TokenService>();
 builder.Services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
+builder.Services.AddScoped<ILoyaltyTierService, LoyaltyTierService>();
+builder.Services.AddScoped<ILoyaltyTierRepository, LoyaltyTierRepository>();
+builder.Services.AddScoped<IGoogleAuthService, GoogleAuthService>();
+builder.Services.AddScoped<IOAuthAccountRepository, OAuthAccountRepository>();
+builder.Services.AddScoped<ILoyaltyService, LoyaltyService>();
+builder.Services.AddScoped<ICustomerLoyaltyRepository, CustomerLoyaltyRepository>();
+builder.Services.AddScoped<ILoyaltyTransactionRepository, LoyaltyTransactionRepository>();
+
+
 builder.Services.AddScoped<EmailService>();
 builder.Services.AddScoped<OtpService>();
 builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("Jwt"));
@@ -80,8 +89,6 @@ builder.Services.Configure<GoogleSettings>(
 builder.Services.AddMemoryCache();
 builder.Services.AddHttpClient();
 
-builder.Services.AddScoped<IGoogleAuthService, GoogleAuthService>();
-builder.Services.AddScoped<IOAuthAccountRepository, OAuthAccountRepository>();
 
 
 // CORS
