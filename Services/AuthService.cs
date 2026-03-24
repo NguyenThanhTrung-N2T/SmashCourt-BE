@@ -197,7 +197,15 @@ public class AuthService : IAuthService
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
-            await _customerLoyaltyRepo.CreateAsync(customerLoyalty);
+            try
+            {
+                await _customerLoyaltyRepo.CreateAsync(customerLoyalty);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to create customer loyalty record for user {UserId}", user.Id);
+                throw new AppException(500, "Đã xảy ra lỗi khi thiết lập hạng thành viên, vui lòng liên hệ hỗ trợ");
+            }
         }
     }
 

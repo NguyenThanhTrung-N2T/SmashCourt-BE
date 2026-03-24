@@ -86,6 +86,8 @@ builder.Services.AddScoped<IOAuthAccountRepository, OAuthAccountRepository>();
 builder.Services.AddScoped<ILoyaltyService, LoyaltyService>();
 builder.Services.AddScoped<ICustomerLoyaltyRepository, CustomerLoyaltyRepository>();
 builder.Services.AddScoped<ILoyaltyTransactionRepository, LoyaltyTransactionRepository>();
+builder.Services.AddScoped<ICancelPolicyRepository, CancelPolicyRepository>();
+builder.Services.AddScoped<ICancelPolicyService, CancelPolicyService>();
 
 
 builder.Services.AddScoped<EmailService>();
