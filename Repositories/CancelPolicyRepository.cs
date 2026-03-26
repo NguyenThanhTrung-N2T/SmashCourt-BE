@@ -18,7 +18,7 @@ namespace SmashCourt_BE.Repositories
         public async Task<IEnumerable<CancelPolicy>> GetAllAsync()
         {
             return await _db.CancelPolicies
-                .OrderBy(p => p.HoursBefore)
+                .OrderByDescending(p => p.HoursBefore)
                 .ToListAsync();
         }
 
@@ -36,10 +36,11 @@ namespace SmashCourt_BE.Repositories
         }
 
         // Tạo mới một chính sách hủy
-        public async Task CreateAsync(CancelPolicy policy)
+        public async Task<CancelPolicy> CreateAsync(CancelPolicy policy)
         {
             await _db.CancelPolicies.AddAsync(policy);
             await _db.SaveChangesAsync();
+            return policy;
         }
 
         // Cập nhật một chính sách hủy
@@ -54,6 +55,12 @@ namespace SmashCourt_BE.Repositories
         {
             _db.CancelPolicies.Remove(policy);
             await _db.SaveChangesAsync();
+        }
+
+        // Đếm số lượng chính sách hủy hiện có
+        public async Task<int> CountAsync()
+        {
+            return await _db.CancelPolicies.CountAsync();
         }
     }
 }

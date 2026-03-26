@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using SmashCourt_BE.Common;
 using SmashCourt_BE.DTOs.CancelPolicy;
 using SmashCourt_BE.Models.Entities;
@@ -39,9 +40,15 @@ namespace SmashCourt_BE.Services
                 UpdatedAt = DateTime.UtcNow
             };
 
-            await _policyRepo.CreateAsync(policy);
-
-            return MapToDto(policy);
+            try
+            {
+                var created = await _policyRepo.CreateAsync(policy);
+                return MapToDto(created);
+            }
+            catch (DbUpdateException)
+            {
+                throw new AppException(400, "Đã tồn tại chính sách cho mốc thời gian này");
+            }
         }
 
         // Cập nhật chính sách hủy
@@ -65,7 +72,14 @@ namespace SmashCourt_BE.Services
             policy.Description = dto.Description;
             policy.UpdatedAt = DateTime.UtcNow;
 
-            await _policyRepo.UpdateAsync(policy);
+            try
+            {
+                await _policyRepo.UpdateAsync(policy);
+            }
+            catch (DbUpdateException)
+            {
+                throw new AppException(400, "Đã tồn tại chính sách cho mốc thời gian này");
+            }
 
             return MapToDto(policy);
         }
@@ -77,6 +91,11 @@ namespace SmashCourt_BE.Services
             var policy = await _policyRepo.GetByIdAsync(id);
             if (policy == null)
                 throw new AppException(404, "Không tìm thấy chính sách hủy");
+
+            // Phải giữ lại ít nhất 1 policy
+            var count = await _policyRepo.CountAsync();
+            if (count <= 1)
+                throw new AppException(400, "Phải giữ lại ít nhất 1 chính sách hủy");
 
             await _policyRepo.DeleteAsync(policy);
         }

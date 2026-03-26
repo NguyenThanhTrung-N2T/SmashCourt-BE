@@ -14,12 +14,15 @@ namespace SmashCourt_BE.Repositories.IRepository
         Task<CancelPolicy?> GetByHoursBeforeAsync(int hoursBefore);
 
         // Tạo mới một chính sách hủy
-        Task CreateAsync(CancelPolicy policy);
+        Task<CancelPolicy> CreateAsync(CancelPolicy policy);
 
         // Cập nhật một chính sách hủy đã tồn tại
         Task UpdateAsync(CancelPolicy policy);
 
         // Xóa một chính sách hủy
         Task DeleteAsync(CancelPolicy policy);
+
+        // Đếm số lượng chính sách hủy hiện có
+        Task<int> CountAsync();
     }
 }

@@ -5,7 +5,7 @@ namespace SmashCourt_BE.DTOs.CancelPolicy
     public class UpdateCancelPolicyDto
     {
         [Required(ErrorMessage = "Vui lòng nhập số giờ")]
-        [Range(0, 100, ErrorMessage = "Số giờ phải lớn hơn hoặc bằng 0")]
+        [Range(0, 720, ErrorMessage = "Số giờ phải từ 0 đến 720 (tối đa 30 ngày)")]
         public int HoursBefore { get; set; }
 
         [Required(ErrorMessage = "Vui lòng nhập phần trăm hoàn tiền")]

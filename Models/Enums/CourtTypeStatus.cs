@@ -3,6 +3,7 @@
     public enum CourtTypeStatus
     {
         ACTIVE = 0,
-        DELEDTED = 1
+        DELETED = 1
     }
+
 }

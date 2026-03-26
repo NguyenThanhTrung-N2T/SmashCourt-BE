@@ -21,6 +21,7 @@ namespace SmashCourt_BE.Controllers
         /// lấy tất cả chính sách hủy
         /// </summary>
         [HttpGet]
+        [Authorize]
         [ProducesResponseType(StatusCodes.Status200OK)]
         public async Task<IActionResult> GetAll()
         {
@@ -69,11 +70,13 @@ namespace SmashCourt_BE.Controllers
         /// Xóa chính sách hủy
         /// </summary>
         [HttpDelete("{id}")]
-        [Authorize(Roles = "OWNER")]
+        [ProducesResponseType(StatusCodes.Status204NoContent)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
         public async Task<IActionResult> Delete(Guid id)
         {
             await _cancelPolicyService.DeletePolicyAsync(id);
-            return Ok(new { message = "Xóa chính sách hủy thành công" });
+            return NoContent(); // 204
         }
     }
 }
