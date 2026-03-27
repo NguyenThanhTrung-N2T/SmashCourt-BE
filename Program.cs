@@ -1,9 +1,11 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using Npgsql;
+using SmashCourt_BE.Common;
 using SmashCourt_BE.Configurations;
 using SmashCourt_BE.Data;
 using SmashCourt_BE.DTOs.Auth;
@@ -67,7 +69,31 @@ builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping;
+        options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
     });
+
+// Custom model validation response — KHÔNG tắt auto validation, chỉ override format trả về
+// Khi [Required]/[MaxLength]/... fail, ASP.NET tự động trả về ApiResponse thống nhất
+builder.Services.Configure<ApiBehaviorOptions>(options =>
+{
+    options.InvalidModelStateResponseFactory = context =>
+    {
+        var errors = context.ModelState
+            .Where(x => x.Value!.Errors.Count > 0)
+            .ToDictionary(
+                x => x.Key,
+                x => x.Value!.Errors.Select(e => e.ErrorMessage).ToArray()
+            );
+
+        var response = ApiResponse.Fail(
+            message: "Dữ liệu đầu vào không hợp lệ",
+            code: ErrorCodes.ValidationError,
+            errors: errors
+        );
+
+        return new BadRequestObjectResult(response);
+    };
+});
 
 // Option dùng cho các middleware trả về WriteAsJsonAsync
 builder.Services.Configure<Microsoft.AspNetCore.Http.Json.JsonOptions>(options =>
@@ -289,8 +315,8 @@ builder.Services.AddAuthentication(options =>
 
 });
 
-// Authorization
-builder.Services.AddAuthorization();
+// Authorization — đăng ký tất cả policies tập trung
+builder.Services.AddAuthorization(AuthorizationPolicies.Register);
 
 var app = builder.Build();
 

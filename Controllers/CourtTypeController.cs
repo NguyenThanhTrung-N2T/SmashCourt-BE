@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using SmashCourt_BE.Common;
+using SmashCourt_BE.Configurations;
 using SmashCourt_BE.DTOs.CourtType;
 using SmashCourt_BE.Services.Interfaces;
 
@@ -19,68 +20,73 @@ public class CourtTypeController : ControllerBase
     }
 
     /// <summary>
-    /// Lấy danh sách loại sân đang ACTIVE — có phân trang
+    /// Lấy danh sách loại sân đang ACTIVE — có phân trang.
+    /// Cho phép: mọi user đã xác thực
     /// </summary>
     [HttpGet]
     [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> GetAll([FromQuery] PaginationQuery query)
     {
-        if (!ModelState.IsValid)
-            return BadRequest("Thông tin không hợp lệ");
-
         var result = await _service.GetAllCourtTypesAsync(query);
-        return Ok(result);
+        return Ok(ApiResponse<PagedResult<CourtTypeDto>>.Ok(result, "Lấy danh sách loại sân thành công"));
     }
 
     /// <summary>
-    /// Xem chi tiết 1 loại sân
+    /// Xem chi tiết 1 loại sân.
+    /// Cho phép: mọi user đã xác thực
     /// </summary>
     [HttpGet("{id:guid}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetById(Guid id)
     {
         var result = await _service.GetByIdAsync(id);
-        return Ok(result);
+        return Ok(ApiResponse<CourtTypeDto>.Ok(result));
     }
 
     /// <summary>
     /// Tạo loại sân mới — chỉ OWNER
     /// </summary>
     [HttpPost]
+    [Authorize(Policy = AuthorizationPolicies.OwnerOnly)]
     [ProducesResponseType(StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> Create([FromBody] CreateCourtTypeDto dto)
     {
-        if (!ModelState.IsValid)
-            return BadRequest("Thông tin không hợp lệ");
-
         var result = await _service.CreateAsync(dto);
-        return StatusCode(201, result);
+        return StatusCode(StatusCodes.Status201Created,
+            ApiResponse<CourtTypeDto>.Ok(result, "Tạo loại sân thành công"));
     }
 
     /// <summary>
     /// Cập nhật loại sân — chỉ OWNER
     /// </summary>
     [HttpPut("{id:guid}")]
+    [Authorize(Policy = AuthorizationPolicies.OwnerOnly)]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Update(Guid id, [FromBody] UpdateCourtTypeDto dto)
     {
-        if (!ModelState.IsValid)
-            return BadRequest("Thông tin không hợp lệ");
-
         var result = await _service.UpdateAsync(id, dto);
-        return Ok(result);
+        return Ok(ApiResponse<CourtTypeDto>.Ok(result, "Cập nhật loại sân thành công"));
     }
 
     /// <summary>
     /// Xóa mềm loại sân — chỉ OWNER
     /// </summary>
     [HttpDelete("{id:guid}")]
+    [Authorize(Policy = AuthorizationPolicies.OwnerOnly)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Delete(Guid id)
     {

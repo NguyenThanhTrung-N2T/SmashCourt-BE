@@ -31,19 +31,14 @@ public class CourtTypeService : ICourtTypeService
         };
     }
 
-    // Lấy chi tiết loại sân theo id
+    // Lấy chi tiết loại sân theo ID — kèm count thực tế từ DB
     public async Task<CourtTypeDto> GetByIdAsync(Guid id)
     {
-        var courtType = await _repository.GetByIdAsync(id);
-        if (courtType == null)
+        var result = await _repository.GetWithCountByIdAsync(id);
+        if (result == null)
             throw new AppException(404, "Không tìm thấy loại sân");
 
-        return MapToDto(new CourtTypeWithCount
-        {
-            CourtType = courtType,
-            ActiveBranchCount = 0,
-            CourtCount = 0
-        });
+        return MapToDto(result);
     }
 
     // Tạo mới loại sân
@@ -86,13 +81,10 @@ public class CourtTypeService : ICourtTypeService
         if (courtType == null)
             throw new AppException(404, "Không tìm thấy loại sân");
 
-        // Check tên unique — bỏ qua chính nó
-        if (courtType.Name.ToLower() != dto.Name!.ToLower())
-        {
-            var exists = await _repository.ExistsByNameAsync(dto.Name, id);
-            if (exists)
-                throw new AppException(400, "Tên loại sân đã tồn tại");
-        }
+        // Check tên unique — bỏ qua chính nó (repo đã xử lý case-insensitive)
+        var exists = await _repository.ExistsByNameAsync(dto.Name, id);
+        if (exists)
+            throw new AppException(400, "Tên loại sân đã tồn tại");
 
         courtType.Name = dto.Name.Trim();
         courtType.Description = dto.Description?.Trim();
@@ -107,12 +99,10 @@ public class CourtTypeService : ICourtTypeService
             throw new AppException(400, "Tên loại sân đã tồn tại");
         }
 
-        return MapToDto(new CourtTypeWithCount
-        {
-            CourtType = courtType,
-            ActiveBranchCount = 0,
-            CourtCount = 0
-        });
+        // Lấy lại với count thực tế sau khi update
+        var updated = await _repository.GetWithCountByIdAsync(id)
+            ?? throw new AppException(404, "Không tìm thấy loại sân sau khi cập nhật");
+        return MapToDto(updated);   
     }
 
     // Xóa loại sân (soft delete)

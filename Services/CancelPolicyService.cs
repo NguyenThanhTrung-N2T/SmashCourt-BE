@@ -16,7 +16,7 @@ namespace SmashCourt_BE.Services
             _policyRepo = policyRepo;
         }
 
-        // / Lấy tất cả chính sách hủy
+        // Lấy tất cả chính sách hủy
         public async Task<IEnumerable<CancelPolicyDto>> GetAllPolicesAsync()
         {
             var policies = await _policyRepo.GetAllAsync();

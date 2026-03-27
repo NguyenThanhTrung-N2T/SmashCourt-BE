@@ -1,4 +1,3 @@
-using SmashCourt_BE.Models.Enums;
 using System.ComponentModel.DataAnnotations;
 
 namespace SmashCourt_BE.DTOs.CourtType

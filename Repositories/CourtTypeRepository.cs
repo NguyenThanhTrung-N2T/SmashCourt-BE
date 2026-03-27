@@ -17,7 +17,7 @@ public class CourtTypeRepository : ICourtTypeRepository
         _context = context;
     }
 
-    // Lấy tất cả loại sân đang active, kèm số lượng chi nhánh đang dùng loại sân đó và số lượng sân (không tính INACTIVE)
+    // Lấy tất cả loại sân đang ACTIVE, kèm số lượng chi nhánh đang dùng loại sân đó và số lượng sân (không tính INACTIVE)
     public async Task<PagedResult<CourtTypeWithCount>> GetAllAsync(int page, int pageSize)
     {
         var query = _context.CourtTypes
@@ -49,10 +49,27 @@ public class CourtTypeRepository : ICourtTypeRepository
         };
     }
 
-    // Lấy loại sân theo id
+    // Lấy chi tiết 1 loại sân theo ID, kèm count — chỉ trả về nếu ACTIVE
+    public async Task<CourtTypeWithCount?> GetWithCountByIdAsync(Guid id)
+    {
+        return await _context.CourtTypes
+            .Where(ct => ct.Id == id && ct.Status == CourtTypeStatus.ACTIVE)
+            .Select(ct => new CourtTypeWithCount
+            {
+                CourtType = ct,
+                ActiveBranchCount = ct.BranchCourtTypes
+                    .Count(bct => bct.IsActive),
+                CourtCount = ct.Courts
+                    .Count(c => c.Status != CourtStatus.INACTIVE)
+            })
+            .FirstOrDefaultAsync();
+    }
+
+    // Lấy entity thuần theo ID (không filter status) — dùng nội bộ cho update/delete
     public async Task<CourtType?> GetByIdAsync(Guid id)
     {
-        return await _context.CourtTypes.FindAsync(id);
+        return await _context.CourtTypes
+            .FirstOrDefaultAsync(ct => ct.Id == id && ct.Status == CourtTypeStatus.ACTIVE);
     }
 
     // Check tên unique trong ACTIVE — excludeId dùng khi update

@@ -14,7 +14,7 @@ namespace SmashCourt_BE.Repositories
             _db = db;
         }
 
-        // Lấy tất cả chính sách hủy, sắp xếp theo HoursBefore tăng dần
+        // Lấy tất cả chính sách hủy, sắp xếp theo HoursBefore giảm dần
         public async Task<IEnumerable<CancelPolicy>> GetAllAsync()
         {
             return await _db.CancelPolicies

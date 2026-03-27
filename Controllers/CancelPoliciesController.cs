@@ -1,82 +1,82 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using SmashCourt_BE.Common;
+using SmashCourt_BE.Configurations;
 using SmashCourt_BE.DTOs.CancelPolicy;
 using SmashCourt_BE.Services.IService;
 
-namespace SmashCourt_BE.Controllers
+namespace SmashCourt_BE.Controllers;
+
+[Route("api/cancel-policies")]
+[ApiController]
+[Authorize]
+public class CancelPoliciesController : ControllerBase
 {
-    [Route("api/cancel-policies")]
-    [ApiController]
-    public class CancelPoliciesController : ControllerBase
+    private readonly ICancelPolicyService _cancelPolicyService;
+
+    public CancelPoliciesController(ICancelPolicyService cancelPolicyService)
     {
-        private readonly ICancelPolicyService _cancelPolicyService;
+        _cancelPolicyService = cancelPolicyService;
+    }
 
-        public CancelPoliciesController(ICancelPolicyService cancelPolicyService)
-        {
-            _cancelPolicyService = cancelPolicyService;
-        }
+    /// <summary>
+    /// Lấy tất cả chính sách hủy —
+    /// cho phép: mọi user đã xác thực
+    /// </summary>
+    [HttpGet]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> GetAll()
+    {
+        var policies = await _cancelPolicyService.GetAllPolicesAsync();
+        return Ok(ApiResponse<IEnumerable<CancelPolicyDto>>.Ok(policies, "Lấy danh sách chính sách hủy thành công"));
+    }
 
+    /// <summary>
+    /// Tạo mới chính sách hủy — chỉ OWNER
+    /// </summary>
+    [HttpPost]
+    [Authorize(Policy = AuthorizationPolicies.OwnerOnly)]
+    [ProducesResponseType(StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> Create([FromBody] CreateCancelPolicyDto dto)
+    {
+        var result = await _cancelPolicyService.CreatePolicyAsync(dto);
+        return StatusCode(StatusCodes.Status201Created,
+            ApiResponse<CancelPolicyDto>.Ok(result, "Tạo chính sách hủy thành công"));
+    }
 
-        /// <summary>
-        /// lấy tất cả chính sách hủy
-        /// </summary>
-        [HttpGet]
-        [Authorize]
-        [ProducesResponseType(StatusCodes.Status200OK)]
-        public async Task<IActionResult> GetAll()
-        {
-            var policies = await _cancelPolicyService.GetAllPolicesAsync();
-            return Ok(policies);
-        }
+    /// <summary>
+    /// Cập nhật chính sách hủy — chỉ OWNER
+    /// </summary>
+    [HttpPut("{id:guid}")]
+    [Authorize(Policy = AuthorizationPolicies.OwnerOnly)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Update(Guid id, [FromBody] UpdateCancelPolicyDto dto)
+    {
+        var result = await _cancelPolicyService.UpdatePolicyAsync(id, dto);
+        return Ok(ApiResponse<CancelPolicyDto>.Ok(result, "Cập nhật chính sách hủy thành công"));
+    }
 
-
-        /// <summary>
-        /// tạo mới chính sách hủy
-        /// </summary>
-        [HttpPost]
-        [Authorize(Roles = "OWNER")]
-        [ProducesResponseType(StatusCodes.Status201Created)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        public async Task<IActionResult> Create([FromBody] CreateCancelPolicyDto dto)
-        {
-            // kiểm tra dữ liệu đầu vào
-            if (!ModelState.IsValid)
-            {
-                return BadRequest("Thông tin không hợp lệ");
-            }
-            var result = await _cancelPolicyService.CreatePolicyAsync(dto);
-            return StatusCode(201, result);
-        }
-
-        /// <summary>
-        /// cập nhật chính sách hủy
-        /// </summary>
-        [HttpPut("{id}")]
-        [Authorize(Roles = "OWNER")]
-        [ProducesResponseType(StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<IActionResult> Update(Guid id, [FromBody] UpdateCancelPolicyDto dto)
-        {
-            // kiểm tra dữ liệu đầu vào
-            if (!ModelState.IsValid) {
-                return BadRequest("Thông tin không hợp lệ");
-            }
-            var result = await _cancelPolicyService.UpdatePolicyAsync(id, dto);
-            return Ok(result);
-        }
-
-        /// <summary>
-        /// Xóa chính sách hủy
-        /// </summary>
-        [HttpDelete("{id}")]
-        [ProducesResponseType(StatusCodes.Status204NoContent)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<IActionResult> Delete(Guid id)
-        {
-            await _cancelPolicyService.DeletePolicyAsync(id);
-            return NoContent(); // 204
-        }
+    /// <summary>
+    /// Xóa chính sách hủy — chỉ OWNER
+    /// </summary>
+    [HttpDelete("{id:guid}")]
+    [Authorize(Policy = AuthorizationPolicies.OwnerOnly)]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Delete(Guid id)
+    {
+        await _cancelPolicyService.DeletePolicyAsync(id);
+        return NoContent();
     }
 }
