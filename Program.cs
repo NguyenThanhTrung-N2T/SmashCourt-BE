@@ -12,8 +12,10 @@ using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Middlewares;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories;
+using SmashCourt_BE.Repositories.Interfaces;
 using SmashCourt_BE.Repositories.IRepository;
 using SmashCourt_BE.Services;
+using SmashCourt_BE.Services.Interfaces;
 using SmashCourt_BE.Services.IService;
 using SmashCourt_BE.Utils;
 using System.IdentityModel.Tokens.Jwt;
@@ -86,9 +88,14 @@ builder.Services.AddScoped<IOAuthAccountRepository, OAuthAccountRepository>();
 builder.Services.AddScoped<ILoyaltyService, LoyaltyService>();
 builder.Services.AddScoped<ICustomerLoyaltyRepository, CustomerLoyaltyRepository>();
 builder.Services.AddScoped<ILoyaltyTransactionRepository, LoyaltyTransactionRepository>();
-
+builder.Services.AddScoped<ICancelPolicyRepository, CancelPolicyRepository>();
+builder.Services.AddScoped<ICancelPolicyService, CancelPolicyService>();
+builder.Services.AddScoped<ICourtTypeService, CourtTypeService>();
+builder.Services.AddScoped<ICourtTypeRepository, CourtTypeRepository>();
 
 builder.Services.AddScoped<EmailService>();
+
+
 builder.Services.AddScoped<OtpService>();
 builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("Jwt"));
 builder.Services.Configure<CookieSettings>(builder.Configuration.GetSection("Cookie"));
