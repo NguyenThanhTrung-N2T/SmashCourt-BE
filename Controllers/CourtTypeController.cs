@@ -43,7 +43,7 @@ public class CourtTypeController : ControllerBase
     public async Task<IActionResult> GetById(Guid id)
     {
         var result = await _service.GetByIdAsync(id);
-        return Ok(ApiResponse<CourtTypeDto>.Ok(result));
+        return Ok(ApiResponse<CourtTypeDto>.Ok(result, "Lấy chi tiết loại sân thành công"));
     }
 
     /// <summary>
@@ -83,7 +83,7 @@ public class CourtTypeController : ControllerBase
     /// </summary>
     [HttpDelete("{id:guid}")]
     [Authorize(Policy = AuthorizationPolicies.OwnerOnly)]
-    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
@@ -91,6 +91,6 @@ public class CourtTypeController : ControllerBase
     public async Task<IActionResult> Delete(Guid id)
     {
         await _service.DeleteAsync(id);
-        return NoContent();
+        return Ok(ApiResponse<object>.Ok(null!,"Xóa loại sân thành công"));
     }
 }

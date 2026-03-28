@@ -182,11 +182,17 @@ builder.Services.AddRateLimiter(options =>
     {
         context.HttpContext.Response.ContentType = "application/json";
 
-        var response = System.Text.Json.JsonSerializer.Serialize(new
-        {
-            message = "Too many requests",
-            detail = "Bạn gửi quá nhiều request, vui lòng thử lại sau"
-        }, new System.Text.Json.JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+        var response = System.Text.Json.JsonSerializer.Serialize(
+            ApiResponse.Fail(
+                "Bạn gửi quá nhiều request, vui lòng thử lại sau",
+                ErrorCodes.BadRequest
+            ),
+            new System.Text.Json.JsonSerializerOptions 
+            { 
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+                PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+            }
+        );
 
         await context.HttpContext.Response.WriteAsync(response, token);
     };

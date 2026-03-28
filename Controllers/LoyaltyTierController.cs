@@ -41,7 +41,7 @@ public class LoyaltyTierController : ControllerBase
     public async Task<IActionResult> GetLoyaltyTierById(Guid id)
     {
         var result = await _service.GetLoyaltyTierByIdAsync(id);
-        return Ok(ApiResponse<LoyaltyTierDto>.Ok(result));
+        return Ok(ApiResponse<LoyaltyTierDto>.Ok(result, "Lấy chi tiết hạng thành viên thành công"));  // ← Thêm message
     }
 
     /// <summary>

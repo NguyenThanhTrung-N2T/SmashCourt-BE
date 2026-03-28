@@ -26,7 +26,7 @@ public class ServiceController : ControllerBase
     public async Task<IActionResult> GetAll([FromQuery] PaginationQuery query)
     {
         var result = await _service.GetAllAsync(query);
-        return Ok(ApiResponse<PagedResult<ServiceDto>>.Ok(result));
+        return Ok(ApiResponse<PagedResult<ServiceDto>>.Ok(result, "Lấy danh sách dịch vụ thành công"));
     }
 
 
@@ -54,7 +54,7 @@ public class ServiceController : ControllerBase
     public async Task<IActionResult> Update(Guid id, [FromBody] UpdateServiceDto dto)
     {
         var result = await _service.UpdateAsync(id, dto);
-        return Ok(ApiResponse<ServiceDto>.Ok(result));
+        return Ok(ApiResponse<ServiceDto>.Ok(result, "Cập nhật dịch vụ thành công"));
     }
 
     /// <summary>
@@ -62,11 +62,11 @@ public class ServiceController : ControllerBase
     /// </summary>
     [HttpDelete("{id:guid}")]
     [Authorize(Policy = AuthorizationPolicies.OwnerOnly)]
-    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Delete(Guid id)
     {
         await _service.DeleteAsync(id);
-        return NoContent();
+        return Ok(ApiResponse<object>.Ok(null!, "Xóa dịch vụ thành công"));
     }
 }
