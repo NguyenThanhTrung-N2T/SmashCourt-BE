@@ -29,7 +29,7 @@ namespace SmashCourt_BE.Services
         {
             var tier = await _tierRepo.GetLoyaltyTierByIdAsync(id);
             if (tier == null)
-                throw new AppException(404, "Không tìm thấy hạng thành viên");
+                throw new AppException(404, "Không tìm thấy hạng thành viên", ErrorCodes.NotFound);
 
             return MapToDto(tier);
         }
@@ -40,17 +40,17 @@ namespace SmashCourt_BE.Services
             // 1. Tìm tier
             var tier = await _tierRepo.GetLoyaltyTierByIdAsync(id);
             if (tier == null)
-                throw new AppException(404, "Không tìm thấy hạng thành viên");
+                throw new AppException(404, "Không tìm thấy hạng thành viên", ErrorCodes.NotFound);
 
             // 2. Bronze bắt buộc min_points = 0 — check bằng Name vì Name cố định
             if (tier.Name == "Bronze" && dto.MinPoints != 0)
-                throw new AppException(400, "Hạng Bronze bắt buộc có điểm tối thiểu = 0");
+                throw new AppException(400, "Hạng Bronze bắt buộc có điểm tối thiểu = 0", ErrorCodes.BadRequest);
 
             // 3. Kiểm tra min_points không trùng với tier khác
             var otherTiers = await _tierRepo.GetAllExceptAsync(id);
             var isDuplicate = otherTiers.Any(t => t.MinPoints == dto.MinPoints);
             if (isDuplicate)
-                throw new AppException(400, "Điểm tối thiểu đã được sử dụng bởi hạng khác");
+                throw new AppException(400, "Điểm tối thiểu đã được sử dụng bởi hạng khác", ErrorCodes.Conflict);
 
             // 4. Kiểm tra thứ tự phân hạng đúng
             // Build danh sách đầy đủ với giá trị mới của tier hiện tại
@@ -73,7 +73,8 @@ namespace SmashCourt_BE.Services
                 if (sorted[i].Name != expectedOrder[i])
                     throw new AppException(400,
                         $"Điểm của hạng {tier.Name} không hợp lệ — " +
-                        $"phải đảm bảo thứ tự tăng dần: Bronze < Silver < Gold < Platinum < Diamond");
+                        $"phải đảm bảo thứ tự tăng dần: Bronze < Silver < Gold < Platinum < Diamond",
+                        ErrorCodes.BadRequest);
             }
 
             // 5. Update

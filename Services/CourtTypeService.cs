@@ -36,7 +36,7 @@ public class CourtTypeService : ICourtTypeService
     {
         var result = await _repository.GetWithCountByIdAsync(id);
         if (result == null)
-            throw new AppException(404, "Không tìm thấy loại sân");
+            throw new AppException(404, "Không tìm thấy loại sân", ErrorCodes.NotFound);
 
         return MapToDto(result);
     }
@@ -47,7 +47,7 @@ public class CourtTypeService : ICourtTypeService
         // Check tên unique
         var exists = await _repository.ExistsByNameAsync(dto.Name);
         if (exists)
-            throw new AppException(400, "Tên loại sân đã tồn tại");
+            throw new AppException(409, "Tên loại sân đã tồn tại", ErrorCodes.NameDuplicate);
 
         var courtType = new CourtType
         {
@@ -70,7 +70,7 @@ public class CourtTypeService : ICourtTypeService
         }
         catch (DbUpdateException)
         {
-            throw new AppException(400, "Tên loại sân đã tồn tại");
+            throw new AppException(409, "Tên loại sân đã tồn tại", ErrorCodes.NameDuplicate);
         }
     }
 
@@ -79,12 +79,12 @@ public class CourtTypeService : ICourtTypeService
     {
         var courtType = await _repository.GetByIdAsync(id);
         if (courtType == null)
-            throw new AppException(404, "Không tìm thấy loại sân");
+            throw new AppException(404, "Không tìm thấy loại sân", ErrorCodes.NotFound);
 
         // Check tên unique — bỏ qua chính nó (repo đã xử lý case-insensitive)
         var exists = await _repository.ExistsByNameAsync(dto.Name, id);
         if (exists)
-            throw new AppException(400, "Tên loại sân đã tồn tại");
+            throw new AppException(409, "Tên loại sân đã tồn tại", ErrorCodes.NameDuplicate);
 
         courtType.Name = dto.Name.Trim();
         courtType.Description = dto.Description?.Trim();
@@ -96,12 +96,12 @@ public class CourtTypeService : ICourtTypeService
         }
         catch (DbUpdateException)
         {
-            throw new AppException(400, "Tên loại sân đã tồn tại");
+            throw new AppException(409, "Tên loại sân đã tồn tại", ErrorCodes.NameDuplicate);
         }
 
         // Lấy lại với count thực tế sau khi update
         var updated = await _repository.GetWithCountByIdAsync(id)
-            ?? throw new AppException(404, "Không tìm thấy loại sân sau khi cập nhật");
+            ?? throw new AppException(404, "Không tìm thấy loại sân sau khi cập nhật", ErrorCodes.NotFound);
         return MapToDto(updated);   
     }
 
@@ -110,13 +110,14 @@ public class CourtTypeService : ICourtTypeService
     {
         var courtType = await _repository.GetByIdAsync(id);
         if (courtType == null)
-            throw new AppException(404, "Không tìm thấy loại sân");
+            throw new AppException(404, "Không tìm thấy loại sân", ErrorCodes.NotFound);
 
         // Kiểm tra có đang được dùng ở chi nhánh nào không
         var isInUse = await _repository.IsInUseAsync(id);
         if (isInUse)
             throw new AppException(400,
-                "Loại sân đang được sử dụng tại một số chi nhánh, không thể xóa");
+                "Loại sân đang được sử dụng tại một số chi nhánh, không thể xóa",
+                ErrorCodes.ResourceInUse);
 
         // Xóa mềm — đổi status sang DELETED
         courtType.Status = CourtTypeStatus.DELETED;

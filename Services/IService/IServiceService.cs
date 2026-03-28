@@ -7,17 +7,17 @@ namespace SmashCourt_BE.Services.IService
 {
     public interface IServiceService
     {
-        Task<PagedResult<ServiceDto>> GetAllServicesAsync(int page = 1, int pageSize = 10);
-        Task<ServiceDto> GetServiceByIdAsync(Guid id);
-        Task<ServiceDto> CreateServiceAsync(CreateServiceDto dto);
-        Task<ServiceDto> UpdateServiceAsync(Guid id, UpdateServiceDto dto);
-        Task DeleteServiceAsync(Guid id);
+        // lấy danh sách dịch vụ với phân trang
+        Task<PagedResult<ServiceDto>> GetAllAsync(PaginationQuery query);
 
-        // Branch override
-        Task<PagedResult<BranchServiceDto>> GetBranchServicesAsync(Guid branchId, int page = 1, int pageSize = 10);
-        Task<BranchServiceDto> CreateBranchServiceAsync(Guid branchId, CreateBranchServiceDto dto);
-        Task<BranchServiceDto> UpdateBranchServiceAsync(Guid branchId, Guid serviceId, CreateBranchServiceDto dto);
-        Task DeleteBranchServiceAsync(Guid branchId, Guid serviceId);
+        // tạo mới dịch vụ
+        Task<ServiceDto> CreateAsync(CreateServiceDto dto);
+
+        // cập nhật dịch vụ
+        Task<ServiceDto> UpdateAsync(Guid id, UpdateServiceDto dto);
+
+        // xóa dịch vụ
+        Task DeleteAsync(Guid id);
     }
 }
 

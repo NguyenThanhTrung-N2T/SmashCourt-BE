@@ -16,18 +16,15 @@ namespace SmashCourt_BE.Repositories
             _context = context;
         }
 
-        public async Task<PagedResult<Service>> GetAllAsync(int page = 1, int pageSize = 10)
+        // lấy danh sách dịch vụ có phân trang, chỉ lấy những dịch vụ có trạng thái ACTIVE
+        public async Task<PagedResult<Service>> GetAllAsync(int page, int pageSize)
         {
-            page = Math.Max(1, page);
-            pageSize = Math.Max(1, Math.Min(100, pageSize));
-
             var query = _context.Services
                 .Where(s => s.Status == ServiceStatus.ACTIVE)
-                .AsQueryable();
+                .OrderBy(s => s.Name);
 
             var totalItems = await query.CountAsync();
             var items = await query
-                .OrderBy(s => s.Name)
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
                 .ToListAsync();
@@ -41,17 +38,27 @@ namespace SmashCourt_BE.Repositories
             };
         }
 
+        // lấy dịch vụ theo id, chỉ trả về nếu dịch vụ đó đang ACTIVE
         public async Task<Service?> GetByIdAsync(Guid id)
         {
-            return await _context.Services.FirstOrDefaultAsync(s => s.Id == id);
+            return await _context.Services
+                .FirstOrDefaultAsync(s =>
+                    s.Id == id &&
+                    s.Status == ServiceStatus.ACTIVE);
         }
 
-        public async Task<Service?> GetByNameAsync(string name)
+        // kiểm tra xem có dịch vụ nào đang ACTIVE với tên trùng với tham số name hay không, nếu excludeId được cung cấp thì sẽ bỏ qua dịch vụ có id đó (dùng để kiểm tra khi update)
+        public async Task<bool> ExistsByNameAsync(string name, Guid? excludeId = null)
         {
             return await _context.Services
-                .FirstOrDefaultAsync(s => s.Name.ToLower() == name.ToLower() && s.Status == ServiceStatus.ACTIVE);
+                .Where(s =>
+                    s.Status == ServiceStatus.ACTIVE &&
+                    s.Name.ToLower() == name.ToLower() &&
+                    (excludeId == null || s.Id != excludeId))
+                .AnyAsync();
         }
 
+        // tạo mới dịch vụ, mặc định trạng thái sẽ là ACTIVE
         public async Task<Service> CreateAsync(Service service)
         {
             _context.Services.Add(service);
@@ -59,28 +66,11 @@ namespace SmashCourt_BE.Repositories
             return service;
         }
 
-        public async Task<Service?> UpdateAsync(Service service)
+        // cập nhật dịch vụ, chỉ cho phép cập nhật nếu dịch vụ đó đang ACTIVE
+        public async Task UpdateAsync(Service service)
         {
             _context.Services.Update(service);
             await _context.SaveChangesAsync();
-            return service;
-        }
-
-        public async Task<bool> SoftDeleteAsync(Guid id)
-        {
-            var service = await GetByIdAsync(id);
-            if (service == null) return false;
-
-            service.Status = ServiceStatus.DELETED;
-            service.UpdatedAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync();
-            return true;
-        }
-
-        public async Task<int> GetActiveBranchCountAsync(Guid id)
-        {
-            return await _context.BranchServices
-                .CountAsync(bs => bs.ServiceId == id && bs.Status == BranchServiceStatus.ENABLED);
         }
     }
 }

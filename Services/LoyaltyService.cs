@@ -28,7 +28,7 @@ namespace SmashCourt_BE.Services
             // 1. Tìm loyalty của user
             var loyalty = await _loyaltyRepo.GetByUserIdAsync(userId);
             if (loyalty == null)
-                throw new AppException(404, "Không tìm thấy thông tin loyalty");
+                throw new AppException(404, "Không tìm thấy thông tin loyalty", ErrorCodes.NotFound);
 
             // 2. Tìm tier tiếp theo
             var nextTier = await _tierRepo.GetNextTierAsync(loyalty.Tier.MinPoints);
