@@ -29,7 +29,7 @@ namespace SmashCourt_BE.Services
             // Kiểm tra trùng lặp HoursBefore
             var existing = await _policyRepo.GetByHoursBeforeAsync(dto.HoursBefore);
             if (existing != null)
-                throw new AppException(400, "Đã tồn tại chính sách cho mốc thời gian này");
+                throw new AppException(409, "Đã tồn tại chính sách cho mốc thời gian này", ErrorCodes.Conflict);
 
             var policy = new CancelPolicy
             {
@@ -47,7 +47,7 @@ namespace SmashCourt_BE.Services
             }
             catch (DbUpdateException)
             {
-                throw new AppException(400, "Đã tồn tại chính sách cho mốc thời gian này");
+                throw new AppException(409, "Đã tồn tại chính sách cho mốc thời gian này", ErrorCodes.Conflict);
             }
         }
 
@@ -57,14 +57,14 @@ namespace SmashCourt_BE.Services
             // Lấy chính sách cần cập nhật
             var policy = await _policyRepo.GetByIdAsync(id);
             if (policy == null)
-                throw new AppException(404, "Không tìm thấy chính sách hủy");
+                throw new AppException(404, "Không tìm thấy chính sách hủy", ErrorCodes.NotFound);
 
             // Nếu sửa HoursBefore, cần check trùng lặp với policy khác
             if (policy.HoursBefore != dto.HoursBefore)
             {
                 var existing = await _policyRepo.GetByHoursBeforeAsync(dto.HoursBefore);
                 if (existing != null)
-                    throw new AppException(400, "Đã tồn tại chính sách cho mốc thời gian này");
+                    throw new AppException(409, "Đã tồn tại chính sách cho mốc thời gian này", ErrorCodes.Conflict);
             }
 
             policy.HoursBefore = dto.HoursBefore;
@@ -78,7 +78,7 @@ namespace SmashCourt_BE.Services
             }
             catch (DbUpdateException)
             {
-                throw new AppException(400, "Đã tồn tại chính sách cho mốc thời gian này");
+                throw new AppException(409, "Đã tồn tại chính sách cho mốc thời gian này", ErrorCodes.Conflict);
             }
 
             return MapToDto(policy);
@@ -90,12 +90,12 @@ namespace SmashCourt_BE.Services
             // Lấy chính sách cần xóa
             var policy = await _policyRepo.GetByIdAsync(id);
             if (policy == null)
-                throw new AppException(404, "Không tìm thấy chính sách hủy");
+                throw new AppException(404, "Không tìm thấy chính sách hủy", ErrorCodes.NotFound);
 
             // Phải giữ lại ít nhất 1 policy
             var count = await _policyRepo.CountAsync();
             if (count <= 1)
-                throw new AppException(400, "Phải giữ lại ít nhất 1 chính sách hủy");
+                throw new AppException(422, "Phải giữ lại ít nhất 1 chính sách hủy", ErrorCodes.BadRequest);
 
             await _policyRepo.DeleteAsync(policy);
         }

@@ -118,6 +118,8 @@ builder.Services.AddScoped<ICancelPolicyRepository, CancelPolicyRepository>();
 builder.Services.AddScoped<ICancelPolicyService, CancelPolicyService>();
 builder.Services.AddScoped<ICourtTypeService, CourtTypeService>();
 builder.Services.AddScoped<ICourtTypeRepository, CourtTypeRepository>();
+builder.Services.AddScoped<IServiceService, ServiceService>();
+builder.Services.AddScoped<IServiceRepository, ServiceRepository>();
 
 builder.Services.AddScoped<EmailService>();
 
