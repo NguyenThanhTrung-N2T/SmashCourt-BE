@@ -120,10 +120,13 @@ builder.Services.AddScoped<ICourtTypeService, CourtTypeService>();
 builder.Services.AddScoped<ICourtTypeRepository, CourtTypeRepository>();
 builder.Services.AddScoped<IServiceService, ServiceService>();
 builder.Services.AddScoped<IServiceRepository, ServiceRepository>();
+builder.Services.AddScoped<IBranchService, BranchService>();
+builder.Services.AddScoped<IBranchRepository, BranchRepository>();
+builder.Services.AddScoped<IUserBranchRepository, UserBranchRepository>();
+builder.Services.AddScoped<ICourtTypeRepository, CourtTypeRepository>();
+
 
 builder.Services.AddScoped<EmailService>();
-
-
 builder.Services.AddScoped<OtpService>();
 builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("Jwt"));
 builder.Services.Configure<CookieSettings>(builder.Configuration.GetSection("Cookie"));
