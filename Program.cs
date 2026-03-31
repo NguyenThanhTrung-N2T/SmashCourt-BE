@@ -124,7 +124,8 @@ builder.Services.AddScoped<IBranchService, BranchService>();
 builder.Services.AddScoped<IBranchRepository, BranchRepository>();
 builder.Services.AddScoped<IUserBranchRepository, UserBranchRepository>();
 builder.Services.AddScoped<ICourtTypeRepository, CourtTypeRepository>();
-
+builder.Services.AddScoped<ICourtService, CourtService>();
+builder.Services.AddScoped<ICourtRepository, CourtRepository>();
 
 builder.Services.AddScoped<EmailService>();
 builder.Services.AddScoped<OtpService>();
