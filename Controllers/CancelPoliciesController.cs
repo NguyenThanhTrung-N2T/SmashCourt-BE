@@ -24,6 +24,7 @@ public class CancelPoliciesController : ControllerBase
     /// cho phép: mọi user đã xác thực
     /// </summary>
     [HttpGet]
+    [AllowAnonymous]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> GetAll()
