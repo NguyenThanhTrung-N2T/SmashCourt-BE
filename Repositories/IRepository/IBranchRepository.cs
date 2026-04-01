@@ -57,6 +57,8 @@ namespace SmashCourt_BE.Repositories.IRepository
         // cập nhật thông tin dịch vụ của chi nhánh
         Task UpdateBranchServiceAsync(Guid id, decimal price, BranchServiceStatus status);
 
+        // kiểm tra loại sân có đang dùng cho chi nhánh hay không
+        Task<bool> IsCourtTypeEnabledAsync(Guid branchId, Guid courtTypeId);
 
     }
 }

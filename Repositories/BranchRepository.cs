@@ -230,5 +230,15 @@ namespace SmashCourt_BE.Repositories
                     .SetProperty(bs => bs.Status, status)
                     .SetProperty(bs => bs.UpdatedAt, DateTime.UtcNow));
         }
+
+        // kiểm tra loại sân có được dùng tại chi nhánh hay không
+        public async Task<bool> IsCourtTypeEnabledAsync(Guid branchId, Guid courtTypeId)
+        {
+            return await _context.BranchCourtTypes
+                .AnyAsync(bct =>
+                    bct.BranchId == branchId &&
+                    bct.CourtTypeId == courtTypeId &&
+                    bct.IsActive);
+        }
     }
 }
