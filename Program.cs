@@ -1,9 +1,11 @@
-﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using Npgsql;
+using SmashCourt_BE.Common;
 using SmashCourt_BE.Configurations;
 using SmashCourt_BE.Data;
 using SmashCourt_BE.DTOs.Auth;
@@ -12,8 +14,10 @@ using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Middlewares;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories;
+using SmashCourt_BE.Repositories.Interfaces;
 using SmashCourt_BE.Repositories.IRepository;
 using SmashCourt_BE.Services;
+using SmashCourt_BE.Services.Interfaces;
 using SmashCourt_BE.Services.IService;
 using SmashCourt_BE.Utils;
 using System.IdentityModel.Tokens.Jwt;
@@ -61,7 +65,41 @@ builder.Services.AddDbContext<SmashCourtContext>(options =>
 builder.Services.AddHangfireServices(builder.Configuration);
 
 // Controllers
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping;
+        options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+    });
+
+// Custom model validation response — KHÔNG tắt auto validation, chỉ override format trả về
+// Khi [Required]/[MaxLength]/... fail, ASP.NET tự động trả về ApiResponse thống nhất
+builder.Services.Configure<ApiBehaviorOptions>(options =>
+{
+    options.InvalidModelStateResponseFactory = context =>
+    {
+        var errors = context.ModelState
+            .Where(x => x.Value!.Errors.Count > 0)
+            .ToDictionary(
+                x => x.Key,
+                x => x.Value!.Errors.Select(e => e.ErrorMessage).ToArray()
+            );
+
+        var response = ApiResponse.Fail(
+            message: "Dữ liệu đầu vào không hợp lệ",
+            code: ErrorCodes.ValidationError,
+            errors: errors
+        );
+
+        return new BadRequestObjectResult(response);
+    };
+});
+
+// Option dùng cho các middleware trả về WriteAsJsonAsync
+builder.Services.Configure<Microsoft.AspNetCore.Http.Json.JsonOptions>(options =>
+{
+    options.SerializerOptions.Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping;
+});
 
 // Đăng ký DI cho Repositories và Services
 builder.Services.AddScoped<IUserRepository, UserRepository>();
@@ -69,6 +107,26 @@ builder.Services.AddScoped<IOtpRepository, OtpRepository>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<ITokenService, TokenService>();
 builder.Services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
+builder.Services.AddScoped<ILoyaltyTierService, LoyaltyTierService>();
+builder.Services.AddScoped<ILoyaltyTierRepository, LoyaltyTierRepository>();
+builder.Services.AddScoped<IGoogleAuthService, GoogleAuthService>();
+builder.Services.AddScoped<IOAuthAccountRepository, OAuthAccountRepository>();
+builder.Services.AddScoped<ILoyaltyService, LoyaltyService>();
+builder.Services.AddScoped<ICustomerLoyaltyRepository, CustomerLoyaltyRepository>();
+builder.Services.AddScoped<ILoyaltyTransactionRepository, LoyaltyTransactionRepository>();
+builder.Services.AddScoped<ICancelPolicyRepository, CancelPolicyRepository>();
+builder.Services.AddScoped<ICancelPolicyService, CancelPolicyService>();
+builder.Services.AddScoped<ICourtTypeService, CourtTypeService>();
+builder.Services.AddScoped<ICourtTypeRepository, CourtTypeRepository>();
+builder.Services.AddScoped<IServiceService, ServiceService>();
+builder.Services.AddScoped<IServiceRepository, ServiceRepository>();
+builder.Services.AddScoped<IBranchService, BranchService>();
+builder.Services.AddScoped<IBranchRepository, BranchRepository>();
+builder.Services.AddScoped<IUserBranchRepository, UserBranchRepository>();
+builder.Services.AddScoped<ICourtTypeRepository, CourtTypeRepository>();
+builder.Services.AddScoped<ICourtService, CourtService>();
+builder.Services.AddScoped<ICourtRepository, CourtRepository>();
+
 builder.Services.AddScoped<EmailService>();
 builder.Services.AddScoped<OtpService>();
 builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("Jwt"));
@@ -80,8 +138,6 @@ builder.Services.Configure<GoogleSettings>(
 builder.Services.AddMemoryCache();
 builder.Services.AddHttpClient();
 
-builder.Services.AddScoped<IGoogleAuthService, GoogleAuthService>();
-builder.Services.AddScoped<IOAuthAccountRepository, OAuthAccountRepository>();
 
 
 // CORS
@@ -130,11 +186,17 @@ builder.Services.AddRateLimiter(options =>
     {
         context.HttpContext.Response.ContentType = "application/json";
 
-        var response = System.Text.Json.JsonSerializer.Serialize(new
-        {
-            message = "Too many requests",
-            detail = "Bạn gửi quá nhiều request, vui lòng thử lại sau"
-        });
+        var response = System.Text.Json.JsonSerializer.Serialize(
+            ApiResponse.Fail(
+                "Bạn gửi quá nhiều request, vui lòng thử lại sau",
+                ErrorCodes.BadRequest
+            ),
+            new System.Text.Json.JsonSerializerOptions 
+            { 
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+                PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+            }
+        );
 
         await context.HttpContext.Response.WriteAsync(response, token);
     };
@@ -204,14 +266,20 @@ builder.Services.AddAuthentication(options =>
         OnAuthenticationFailed = context =>
         {
             context.NoResult();
+
+            if (context.Response.HasStarted)
+            {
+                return Task.CompletedTask;
+            }
+
             context.Response.StatusCode = 401;
             context.Response.ContentType = "application/json";
 
             var result = System.Text.Json.JsonSerializer.Serialize(new
             {
                 message = "Invalid token",
-                detail = context.Exception.Message
-            });
+                detail = context.Exception?.Message ?? "Token không hợp lệ"
+            }, new System.Text.Json.JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
 
             return context.Response.WriteAsync(result);
         },
@@ -219,6 +287,12 @@ builder.Services.AddAuthentication(options =>
         OnChallenge = context =>
         {
             context.HandleResponse();
+
+            if (context.Response.HasStarted)
+            {
+                return Task.CompletedTask;
+            }
+
             context.Response.StatusCode = 401;
             context.Response.ContentType = "application/json";
 
@@ -226,13 +300,18 @@ builder.Services.AddAuthentication(options =>
             {
                 message = "Unauthorized",
                 detail = "Bạn chưa xác thực hoặc thiếu token !"
-            });
+            }, new System.Text.Json.JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
 
             return context.Response.WriteAsync(result);
         },
 
         OnForbidden = context =>
         {
+            if (context.Response.HasStarted)
+            {
+                return Task.CompletedTask;
+            }
+
             context.Response.StatusCode = 403;
             context.Response.ContentType = "application/json";
 
@@ -240,7 +319,7 @@ builder.Services.AddAuthentication(options =>
             {
                 message = "Forbidden",
                 detail = "Bạn không có quyền truy cập vào tài nguyên này !"
-            });
+            }, new System.Text.Json.JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
 
             return context.Response.WriteAsync(result);
         }
@@ -248,8 +327,8 @@ builder.Services.AddAuthentication(options =>
 
 });
 
-// Authorization
-builder.Services.AddAuthorization();
+// Authorization — đăng ký tất cả policies tập trung
+builder.Services.AddAuthorization(AuthorizationPolicies.Register);
 
 var app = builder.Build();
 
