@@ -11,6 +11,8 @@ using SmashCourt_BE.Data;
 using SmashCourt_BE.DTOs.Auth;
 using SmashCourt_BE.Extensions;
 using SmashCourt_BE.Helpers;
+using SmashCourt_BE.Jobs;
+using SmashCourt_BE.Jobs.Interfaces;
 using SmashCourt_BE.Middlewares;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories;
@@ -126,6 +128,9 @@ builder.Services.AddScoped<IUserBranchRepository, UserBranchRepository>();
 builder.Services.AddScoped<ICourtTypeRepository, CourtTypeRepository>();
 builder.Services.AddScoped<ICourtService, CourtService>();
 builder.Services.AddScoped<ICourtRepository, CourtRepository>();
+builder.Services.AddScoped<IPromotionService, PromotionService>();
+builder.Services.AddScoped<IPromotionRepository, PromotionRepository>();
+builder.Services.AddScoped<IPromotionJob, PromotionJob>();
 
 builder.Services.AddScoped<EmailService>();
 builder.Services.AddScoped<OtpService>();
