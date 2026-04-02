@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using SmashCourt_BE.Common;
 using SmashCourt_BE.DTOs.Branch;
 using SmashCourt_BE.Models.Entities;
@@ -47,7 +47,6 @@ namespace SmashCourt_BE.Services
             }
         }
 
-        // Lấy danh sách chi nhánh có phân trang, có thể bao gồm cả chi nhánh bị đình chỉ hoạt động
         public async Task<PagedResult<BranchDto>> GetAllAsync(
             PaginationQuery query, bool includeSuspended)
         {
@@ -56,7 +55,7 @@ namespace SmashCourt_BE.Services
 
             return new PagedResult<BranchDto>
             {
-                Items = pagedResult.Items.Select(b => MapToDto(b, null)),
+                Items = pagedResult.Items.Select(b => MapToDto(b, b.UserBranches?.FirstOrDefault(ub => ub.Role == UserBranchRole.MANAGER && ub.IsActive))),
                 TotalItems = pagedResult.TotalItems,
                 Page = pagedResult.Page,
                 PageSize = pagedResult.PageSize
@@ -130,14 +129,15 @@ namespace SmashCourt_BE.Services
                 UserId = dto.ManagerId,
                 Role = UserBranchRole.MANAGER,
                 IsActive = true,
-                AssignedAt = DateTime.UtcNow
+                AssignedAt = DateTime.UtcNow,
+                User = manager
                 // BranchId set trong repo sau khi branch tạo xong
             };
 
             try
             {
                 var created = await _repo.CreateWithManagerAsync(branch, userBranch);
-                return MapToDto(created);
+                return MapToDto(created, userBranch);
             }
             catch (DbUpdateException ex)
                 when (ex.InnerException?.Message.Contains("idx_branches_name_active") == true)
@@ -189,7 +189,8 @@ namespace SmashCourt_BE.Services
                 throw new AppException(409, "Tên chi nhánh đã tồn tại", ErrorCodes.Conflict);
             }
 
-            return MapToDto(branch);
+            var updatedResult = await _repo.GetWithManagerAsync(id);
+            return MapToDto(updatedResult!.Value.Branch, updatedResult.Value.ManagerAssignment);
         }
 
         // tạm khóa chi nhánh 
@@ -369,11 +370,8 @@ namespace SmashCourt_BE.Services
                     ErrorCodes.ResourceInUse);
 
             // 5. Soft delete
-            await _repo.UpdateBranchCourtTypeAsync(new BranchCourtType
-            {
-                Id = branchCourtType.Id,
-                IsActive = false
-            });
+            branchCourtType.IsActive = false;
+            await _repo.UpdateBranchCourtTypeAsync(branchCourtType);
         }
 
         // Lấy danh sách dịch vụ được cung cấp tại chi nhánh, kèm giá (giá chi nhánh nếu có, không thì giá mặc định)

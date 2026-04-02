@@ -1,4 +1,4 @@
-﻿using SmashCourt_BE.Common;
+using SmashCourt_BE.Common;
 using SmashCourt_BE.Data;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
@@ -20,6 +20,8 @@ namespace SmashCourt_BE.Repositories
             int page, int pageSize, bool includeSuspended)
         {
             var query = _context.Branches
+                .Include(b => b.UserBranches.Where(ub => ub.Role == UserBranchRole.MANAGER && ub.IsActive))
+                    .ThenInclude(ub => ub.User)
                 .Where(b => b.Status != BranchStatus.INACTIVE);
 
             // CUSTOMER / chưa đăng nhập → chỉ thấy ACTIVE
