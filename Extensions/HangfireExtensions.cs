@@ -22,6 +22,7 @@ public static class HangfireExtensions
 
         services.AddHangfireServer();
         services.AddScoped<IAuthCleanupJob, AuthCleanupJob>();
+        services.AddScoped<IPromotionJob, PromotionJob>();
 
         return services;
     }
@@ -45,23 +46,35 @@ public static class HangfireExtensions
             });
         }
 
-        // Mỗi giờ — dọn OTP hết hạn thường xuyên
+        var vnTimezone = TimeZoneInfo.FindSystemTimeZoneById("SE Asia Standard Time");
+
+        //  Mỗi 30 phút — dọn OTP hết hạn
         RecurringJob.AddOrUpdate<IAuthCleanupJob>(
-            "hourly-otp-cleanup",
+            "cleanup-expired-otp",
             job => job.CleanupExpiredOtpAsync(),
-            "0 * * * *");
+            "*/30 * * * *",
+            new RecurringJobOptions { TimeZone = vnTimezone });
 
-        // 3:00 AM — dọn user chưa verify
+        // 3:00 AM VN time — dọn user chưa verify
         RecurringJob.AddOrUpdate<IAuthCleanupJob>(
-            "daily-user-cleanup",
+            "cleanup-unverified-users",
             job => job.CleanupUnverifiedUsersAsync(),
-            "0 3 * * *");
+            "0 3 * * *",
+            new RecurringJobOptions { TimeZone = vnTimezone });
 
-        // 3:00 AM — dọn refresh token hết hạn
+        // 3:00 AM VN time — dọn refresh token hết hạn
         RecurringJob.AddOrUpdate<IAuthCleanupJob>(
-            "daily-token-cleanup",
+            "cleanup-expired-refresh-tokens",
             job => job.CleanupExpiredRefreshTokensAsync(),
-            "0 3 * * *");
+            "0 3 * * *",
+            new RecurringJobOptions { TimeZone = vnTimezone });
+
+        // 00:00 AM VN time — cập nhật trạng thái promotion
+        RecurringJob.AddOrUpdate<IPromotionJob>(
+            "update-promotion-status",
+            job => job.UpdateStatusAsync(),
+            "0 0 * * *",
+            new RecurringJobOptions { TimeZone = vnTimezone });
 
         return app;
     }
