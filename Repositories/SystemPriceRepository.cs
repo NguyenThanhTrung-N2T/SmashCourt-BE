@@ -1,4 +1,4 @@
-﻿using SmashCourt_BE.Data;
+using SmashCourt_BE.Data;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Repositories.IRepository;
 using Microsoft.EntityFrameworkCore;
@@ -32,7 +32,7 @@ namespace SmashCourt_BE.Repositories
         // Giá đang áp dụng — lấy effective_from mới nhất <= today
         public async Task<List<SystemPrice>> GetCurrentAsync(Guid? courtTypeId = null)
         {
-            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            var today = DateTimeHelper.GetTodayInVietnam();
 
             // Dùng raw SQL để DISTINCT ON hiệu quả hơn
             // EF Core: GroupBy + lấy first theo effectiveFrom DESC
@@ -88,14 +88,17 @@ namespace SmashCourt_BE.Repositories
         {
             var today = DateTimeHelper.GetTodayInVietnam();
 
-            return await _context.SystemPrices
+            var raw = await _context.SystemPrices
                 .Include(sp => sp.TimeSlot)
                 .Where(sp =>
                     sp.CourtTypeId == courtTypeId &&
                     sp.EffectiveFrom <= today)
-                .GroupBy(sp => new { sp.TimeSlotId })
-                .Select(g => g.OrderByDescending(sp => sp.EffectiveFrom).First())
                 .ToListAsync();
+
+            return raw
+                .GroupBy(sp => sp.TimeSlotId)
+                .Select(g => g.OrderByDescending(sp => sp.EffectiveFrom).First())
+                .ToList();
         }
 
     }

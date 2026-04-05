@@ -61,10 +61,10 @@ namespace SmashCourt_BE.Services
                 var slots = await _timeSlotRepo.GetByTimeRangeAsync(
                     slotPrice.StartTime, slotPrice.EndTime);
 
-                if (slots.Count < 2)
+                if (slots.Count != 2)
                     throw new AppException(400,
                         $"Không tìm thấy khung giờ {slotPrice.StartTime:HH\\:mm} - {slotPrice.EndTime:HH\\:mm}",
-                        ErrorCodes.NotFound);
+                        ErrorCodes.BadRequest);
 
                 var weekdaySlot = slots.First(ts => ts.DayType == DayType.WEEKDAY);
                 var weekendSlot = slots.First(ts => ts.DayType == DayType.WEEKEND);
@@ -116,6 +116,7 @@ namespace SmashCourt_BE.Services
                 })
                 .Select(g => new CurrentPriceDto
                 {
+                    CourtTypeId = g.Key.CourtTypeId,
                     CourtTypeName = g.First().CourtType?.Name ?? "N/A",
                     StartTime = g.Key.StartTime,
                     EndTime = g.Key.EndTime,

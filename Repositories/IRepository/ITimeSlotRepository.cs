@@ -13,6 +13,9 @@ namespace SmashCourt_BE.Repositories.IRepository
         // lấy time slot theo khoảng thời gian
         Task<List<TimeSlot>> GetByTimeRangeAsync(TimeOnly startTime, TimeOnly endTime);
 
+        // lấy time slot theo loại ngày (WEEKDAY / WEEKEND), sort theo startTime
+        Task<List<TimeSlot>> GetByDayTypeAsync(SmashCourt_BE.Models.Enums.DayType dayType);
+
         // kiểm tra overlap với slot khác — bỏ qua chính nó khi update
         Task<bool> HasOverlapAsync(TimeOnly startTime, TimeOnly endTime, Guid? excludeId = null);
 

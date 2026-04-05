@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using SmashCourt_BE.Common;
@@ -81,6 +81,7 @@ namespace SmashCourt_BE.Controllers
         /// Tính giá theo slot khách chọn
         /// </summary>
         [HttpPost("calculate")]
+        [AllowAnonymous] // Public — khách tính giá trước khi đặt sân
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]

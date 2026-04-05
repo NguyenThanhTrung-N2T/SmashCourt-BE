@@ -1,8 +1,8 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 
 namespace SmashCourt_BE.DTOs.PriceConfig
 {
-    public class CalculatePriceDto
+    public class CalculatePriceDto : IValidatableObject
     {
         [Required(ErrorMessage = "Sân không được để trống")]
         public Guid CourtId { get; set; }

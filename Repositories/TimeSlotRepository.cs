@@ -38,6 +38,14 @@ namespace SmashCourt_BE.Repositories
                 .ToListAsync();
         }
 
+        public async Task<List<TimeSlot>> GetByDayTypeAsync(DayType dayType)
+        {
+            return await _context.TimeSlots
+                .Where(ts => ts.DayType == dayType)
+                .OrderBy(ts => ts.StartTime)
+                .ToListAsync();
+        }
+
         // Check overlap với slot khác — bỏ qua chính nó khi update
         public async Task<bool> HasOverlapAsync(
             TimeOnly startTime, TimeOnly endTime, Guid? excludeId = null)

@@ -61,6 +61,13 @@ namespace SmashCourt_BE.Services
                     "Ngày hiệu lực không thể là ngày trong quá khứ",
                     ErrorCodes.BadRequest);
 
+            // 3. Validate court type belongs to branch
+            var isCourtTypeEnabled = await _branchRepo.IsCourtTypeEnabledAsync(branchId, dto.CourtTypeId);
+            if (!isCourtTypeEnabled)
+                throw new AppException(400,
+                    "Loại sân không hợp lệ hoặc không thuộc chi nhánh này",
+                    ErrorCodes.BadRequest);
+
             // 3. Build danh sách prices
             var overrides = new List<BranchPriceOverride>();
 
@@ -117,6 +124,11 @@ namespace SmashCourt_BE.Services
                 throw new AppException(404,
                     "Không tìm thấy cấu hình giá", ErrorCodes.NotFound);
 
+            var today = DateTimeHelper.GetTodayInVietnam();
+            if (override_.EffectiveFrom <= today)
+                throw new AppException(400,
+                    "Không thể xóa cấu hình giá đã hoặc đang có hiệu lực", ErrorCodes.BadRequest);
+
             await _repo.DeleteAsync(id);
         }
 
@@ -133,10 +145,14 @@ namespace SmashCourt_BE.Services
                 throw new AppException(400,
                     "Không thể tính giá cho ngày trong quá khứ", ErrorCodes.BadRequest);
 
-            // 2. Tìm court → lấy courtTypeId
+            // 2. Validate branch + tìm court → lấy courtTypeId
+            await ValidateBranchAsync(branchId);
+
             var court = await _courtRepo.GetByIdAsync(dto.CourtId, branchId);
             if (court == null)
                 throw new AppException(404, "Không tìm thấy sân", ErrorCodes.NotFound);
+            if (court.Status == CourtStatus.SUSPENDED || court.Status == CourtStatus.LOCKED)
+                throw new AppException(400, "Sân hiện đang bị khóa hoặc bảo trì", ErrorCodes.BadRequest);
 
             // 3. Xác định WEEKDAY / WEEKEND
             var dayOfWeek = dto.BookingDate.DayOfWeek;
@@ -145,12 +161,8 @@ namespace SmashCourt_BE.Services
                 ? DayType.WEEKEND
                 : DayType.WEEKDAY;
 
-            // 4. Lấy tất cả time slots theo dayType — sort theo startTime
-            var allSlots = await _timeSlotRepo.GetAllAsync();
-            var relevantSlots = allSlots
-                .Where(ts => ts.DayType == dayType)
-                .OrderBy(ts => ts.StartTime)
-                .ToList();
+            // 4. Lấy time slots theo dayType tại DB — sort theo startTime
+            var relevantSlots = await _timeSlotRepo.GetByDayTypeAsync(dayType);
 
             if (!relevantSlots.Any())
                 throw new AppException(400,
@@ -247,7 +259,8 @@ namespace SmashCourt_BE.Services
                 })
                 .Select(g => new CurrentPriceDto
                 {
-                    CourtTypeName = g.First().CourtType?.Name??"N/A",
+                    CourtTypeId = g.Key.CourtTypeId,
+                    CourtTypeName = g.First().CourtType?.Name ?? "N/A",
                     StartTime = g.Key.StartTime,
                     EndTime = g.Key.EndTime,
                     WeekdayPrice = g.FirstOrDefault(bp =>

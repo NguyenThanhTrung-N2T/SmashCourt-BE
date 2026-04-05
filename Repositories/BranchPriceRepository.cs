@@ -34,20 +34,21 @@ namespace SmashCourt_BE.Repositories
         public async Task<List<BranchPriceOverride>> GetCurrentAsync(
             Guid branchId, Guid? courtTypeId = null)
         {
-            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            var today = DateTimeHelper.GetTodayInVietnam();
 
-            var query = _context.BranchPriceOverrides
+            var raw = await _context.BranchPriceOverrides
                 .Include(bp => bp.CourtType)
                 .Include(bp => bp.TimeSlot)
                 .Where(bp =>
                     bp.BranchId == branchId &&
                     bp.EffectiveFrom <= today &&
-                    (courtTypeId == null || bp.CourtTypeId == courtTypeId));
+                    (courtTypeId == null || bp.CourtTypeId == courtTypeId))
+                .ToListAsync();
 
-            return await query
+            return raw
                 .GroupBy(bp => new { bp.CourtTypeId, bp.TimeSlotId })
                 .Select(g => g.OrderByDescending(bp => bp.EffectiveFrom).First())
-                .ToListAsync();
+                .ToList();
         }
 
         public async Task<BranchPriceOverride?> GetByIdAsync(Guid id)
@@ -93,19 +94,22 @@ namespace SmashCourt_BE.Repositories
         }
 
         public async Task<List<BranchPriceOverride>> GetCurrentRawAsync(
-    Guid branchId, Guid courtTypeId)
+            Guid branchId, Guid courtTypeId)
         {
             var today = DateTimeHelper.GetTodayInVietnam();
 
-            return await _context.BranchPriceOverrides
+            var raw = await _context.BranchPriceOverrides
                 .Include(bp => bp.TimeSlot)
                 .Where(bp =>
                     bp.BranchId == branchId &&
                     bp.CourtTypeId == courtTypeId &&
                     bp.EffectiveFrom <= today)
-                .GroupBy(bp => new { bp.TimeSlotId })
-                .Select(g => g.OrderByDescending(bp => bp.EffectiveFrom).First())
                 .ToListAsync();
+
+            return raw
+                .GroupBy(bp => bp.TimeSlotId)
+                .Select(g => g.OrderByDescending(bp => bp.EffectiveFrom).First())
+                .ToList();
         }
     }
 }
