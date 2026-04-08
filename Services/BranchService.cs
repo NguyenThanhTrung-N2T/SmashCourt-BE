@@ -151,7 +151,7 @@ namespace SmashCourt_BE.Services
             }
         }
 
-        // Cập nhật thông tin chi nhánh, có thể thay đổi manager
+        // Cập nhật thông tin chi nhánh
         public async Task<BranchDto> UpdateAsync(Guid id, UpdateBranchDto dto)
         {
             // 1. Tìm branch

@@ -25,18 +25,21 @@ namespace SmashCourt_BE.Services
             _courtTypeRepo = courtTypeRepo;
         }
 
+        // Lịch sử toàn bộ giá chung — filter theo court type nếu có
         public async Task<List<CurrentPriceDto>> GetAllAsync(Guid? courtTypeId = null)
         {
             var prices = await _repo.GetAllAsync(courtTypeId);
             return GroupPrices(prices);
         }
 
+        // Giá chung đang có hiệu lực — filter theo court type nếu có
         public async Task<List<CurrentPriceDto>> GetCurrentAsync(Guid? courtTypeId = null)
         {
             var prices = await _repo.GetCurrentAsync(courtTypeId);
             return GroupPrices(prices);
         }
 
+        // Tạo batch giá chung mới cho 1 court type với ngày hiệu lực cụ thể
         public async Task CreateBatchAsync(CreateSystemPriceDto dto)
         {
             // 1. Validate court type tồn tại
@@ -51,6 +54,14 @@ namespace SmashCourt_BE.Services
                 throw new AppException(400,
                     "Ngày hiệu lực không thể là ngày trong quá khứ",
                     ErrorCodes.BadRequest);
+
+            // 3. Check duplicate trong payload gửi lên
+            var hasDuplicates = dto.Prices
+                .GroupBy(p => new { p.StartTime, p.EndTime })
+                .Any(g => g.Count() > 1);
+            if (hasDuplicates)
+                throw new AppException(400,
+                    "Danh sách giá chứa các khung giờ bị trùng lặp", ErrorCodes.BadRequest);
 
             // 3. Validate + build danh sách prices
             var systemPrices = new List<SystemPrice>();

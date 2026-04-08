@@ -56,6 +56,29 @@ namespace SmashCourt_BE.Repositories
                 .ToList();
         }
 
+        // Giá tại một thời điểm cụ thể — lấy effective_from mới nhất <= targetDate
+        public async Task<List<SystemPrice>> GetCurrentForDateAsync(DateOnly targetDate, Guid? courtTypeId = null)
+        {
+            var query = _context.SystemPrices
+                .Include(sp => sp.CourtType)
+                .Include(sp => sp.TimeSlot)
+                .Where(sp =>
+                    sp.EffectiveFrom <= targetDate &&
+                    (courtTypeId == null || sp.CourtTypeId == courtTypeId));
+
+            var grouped = await query
+                .GroupBy(sp => new { sp.CourtTypeId, sp.TimeSlotId })
+                .Select(g => g.OrderByDescending(sp => sp.EffectiveFrom).First())
+                .ToListAsync();
+
+            return grouped
+                .OrderBy(sp => sp.CourtType.Name)
+                .ThenBy(sp => sp.TimeSlot.StartTime)
+                .ThenBy(sp => sp.TimeSlot.DayType)
+                .ToList();
+        }
+
+        // Kiểm tra tồn tại của một record với courtTypeId + timeSlotId + effectiveFrom
         public async Task<bool> ExistsAsync(
             Guid courtTypeId, Guid timeSlotId, DateOnly effectiveFrom)
         {
@@ -83,7 +106,7 @@ namespace SmashCourt_BE.Repositories
             }
         }
 
-
+        // Lấy giá chung hiện tại cho một court type cụ thể (dùng trong booking để tính giá)
         public async Task<List<SystemPrice>> GetCurrentRawAsync(Guid courtTypeId)
         {
             var today = DateTimeHelper.GetTodayInVietnam();

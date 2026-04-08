@@ -51,6 +51,24 @@ namespace SmashCourt_BE.Repositories
                 .ToList();
         }
 
+        public async Task<List<BranchPriceOverride>> GetCurrentForDateAsync(
+            Guid branchId, DateOnly targetDate, Guid? courtTypeId = null)
+        {
+            var raw = await _context.BranchPriceOverrides
+                .Include(bp => bp.CourtType)
+                .Include(bp => bp.TimeSlot)
+                .Where(bp =>
+                    bp.BranchId == branchId &&
+                    bp.EffectiveFrom <= targetDate &&
+                    (courtTypeId == null || bp.CourtTypeId == courtTypeId))
+                .ToListAsync();
+
+            return raw
+                .GroupBy(bp => new { bp.CourtTypeId, bp.TimeSlotId })
+                .Select(g => g.OrderByDescending(bp => bp.EffectiveFrom).First())
+                .ToList();
+        }
+
         public async Task<BranchPriceOverride?> GetByIdAsync(Guid id)
         {
             return await _context.BranchPriceOverrides

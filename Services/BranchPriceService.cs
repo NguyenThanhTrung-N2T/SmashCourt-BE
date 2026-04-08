@@ -68,7 +68,15 @@ namespace SmashCourt_BE.Services
                     "Loại sân không hợp lệ hoặc không thuộc chi nhánh này",
                     ErrorCodes.BadRequest);
 
-            // 3. Build danh sách prices
+            // 4. Check duplicate trong payload gửi lên
+            var hasDuplicates = dto.Prices
+                .GroupBy(p => new { p.StartTime, p.EndTime })
+                .Any(g => g.Count() > 1);
+            if (hasDuplicates)
+                throw new AppException(400,
+                    "Danh sách giá chứa các khung giờ bị trùng lặp", ErrorCodes.BadRequest);
+
+            // 5. Build danh sách prices
             var overrides = new List<BranchPriceOverride>();
 
             foreach (var slotPrice in dto.Prices)
@@ -168,9 +176,9 @@ namespace SmashCourt_BE.Services
                 throw new AppException(400,
                     "Chưa cấu hình khung giờ cho hệ thống", ErrorCodes.BadRequest);
 
-            // 5. Lấy giá hiện tại — branch override + system price
-            var branchPrices = await _repo.GetCurrentAsync(branchId, court.CourtTypeId);
-            var systemPrices = await _systemPriceRepo.GetCurrentAsync(court.CourtTypeId);
+            // 5. Lấy giá dựa trên ngày BookingDate thay vì ngày hôm nay (tránh lỗi giá tương lai)
+            var branchPrices = await _repo.GetCurrentForDateAsync(branchId, dto.BookingDate, court.CourtTypeId);
+            var systemPrices = await _systemPriceRepo.GetCurrentForDateAsync(dto.BookingDate, court.CourtTypeId);
 
             // 6. Chia sub-slot + tính tiền
             var breakdown = new List<PriceBreakdownDto>();
