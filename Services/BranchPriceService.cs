@@ -33,6 +33,7 @@ namespace SmashCourt_BE.Services
             _loyaltyRepo = loyaltyRepo;
         }
 
+        // Lấy tất cả cấu hình giá override của chi nhánh, có thể filter theo courtTypeId
         public async Task<List<CurrentPriceDto>> GetAllAsync(
             Guid branchId, Guid? courtTypeId = null)
         {
@@ -41,14 +42,69 @@ namespace SmashCourt_BE.Services
             return GroupPrices(prices);
         }
 
-        public async Task<List<CurrentPriceDto>> GetCurrentAsync(
+        // Lấy cấu hình giá effective hiện tại (dựa trên ngày hôm nay) của chi nhánh, có thể filter theo courtTypeId
+        public async Task<List<EffectivePriceDto>> GetEffectiveCurrentAsync(
             Guid branchId, Guid? courtTypeId = null)
         {
             await ValidateBranchAsync(branchId);
-            var prices = await _repo.GetCurrentAsync(branchId, courtTypeId);
-            return GroupPrices(prices);
+
+            var branchPrices = await _repo.GetCurrentAsync(branchId, courtTypeId);
+            var systemPrices = await _systemPriceRepo.GetCurrentAsync(courtTypeId);
+
+            // Index branch overrides theo (CourtTypeId, StartTime, EndTime)
+            var branchDict = branchPrices
+                .GroupBy(bp => new
+                {
+                    bp.CourtTypeId,
+                    bp.TimeSlot.StartTime,
+                    bp.TimeSlot.EndTime
+                })
+                .ToDictionary(
+                    g => g.Key,
+                    g => new
+                    {
+                        WeekdayPrice = g.FirstOrDefault(x => x.TimeSlot.DayType == DayType.WEEKDAY)?.Price ?? 0,
+                        WeekendPrice = g.FirstOrDefault(x => x.TimeSlot.DayType == DayType.WEEKEND)?.Price ?? 0,
+                        EffectiveFrom = g.First().EffectiveFrom
+                    });
+
+            // Merge: với mỗi slot trong system price, dùng branch override nếu có
+            var result = systemPrices
+                .GroupBy(sp => new
+                {
+                    sp.CourtTypeId,
+                    sp.TimeSlot.StartTime,
+                    sp.TimeSlot.EndTime
+                })
+                .Select(g =>
+                {
+                    var key = g.Key;
+                    var hasBranch = branchDict.TryGetValue(key, out var branch);
+
+                    return new EffectivePriceDto
+                    {
+                        CourtTypeId      = key.CourtTypeId,
+                        CourtTypeName    = g.First().CourtType?.Name ?? "N/A",
+                        StartTime        = key.StartTime,
+                        EndTime          = key.EndTime,
+                        WeekdayPrice     = hasBranch
+                            ? branch!.WeekdayPrice
+                            : (g.FirstOrDefault(x => x.TimeSlot.DayType == DayType.WEEKDAY)?.Price ?? 0),
+                        WeekendPrice     = hasBranch
+                            ? branch!.WeekendPrice
+                            : (g.FirstOrDefault(x => x.TimeSlot.DayType == DayType.WEEKEND)?.Price ?? 0),
+                        EffectiveFrom    = hasBranch ? branch!.EffectiveFrom : g.First().EffectiveFrom,
+                        PriceSource      = hasBranch ? "BRANCH_OVERRIDE" : "SYSTEM_PRICE"
+                    };
+                })
+                .OrderBy(p => p.CourtTypeName)
+                .ThenBy(p => p.StartTime)
+                .ToList();
+
+            return result;
         }
 
+        // Tạo mới 1 batch giá override cho 1 court type tại chi nhánh, có thể tạo nhiều khung giờ trong cùng 1 request
         public async Task CreateBatchAsync(Guid branchId, CreateBranchPriceDto dto)
         {
             // 1. Validate branch
@@ -123,23 +179,29 @@ namespace SmashCourt_BE.Services
             await _repo.CreateBatchAsync(overrides);
         }
 
-        public async Task DeleteAsync(Guid branchId, Guid id)
+        // Xóa 1 cấu hình giá override dựa trên courtTypeId + time slot + effectiveFrom. Chỉ xóa được với cấu hình giá chưa có hiệu lực (ngày hiệu lực > ngày hôm nay)
+        public async Task DeleteAsync(Guid branchId, DeleteBranchPriceDto dto)
         {
             await ValidateBranchAsync(branchId);
 
-            var override_ = await _repo.GetByIdAsync(id);
-            if (override_ == null || override_.BranchId != branchId)
-                throw new AppException(404,
-                    "Không tìm thấy cấu hình giá", ErrorCodes.NotFound);
-
             var today = DateTimeHelper.GetTodayInVietnam();
-            if (override_.EffectiveFrom <= today)
+            if (dto.EffectiveFrom <= today)
                 throw new AppException(400,
                     "Không thể xóa cấu hình giá đã hoặc đang có hiệu lực", ErrorCodes.BadRequest);
 
-            await _repo.DeleteAsync(id);
+            var deleted = await _repo.DeletePairAsync(
+                branchId,
+                dto.CourtTypeId,
+                dto.EffectiveFrom,
+                dto.StartTime,
+                dto.EndTime);
+
+            if (deleted == 0)
+                throw new AppException(404,
+                    "Không tìm thấy cấu hình giá", ErrorCodes.NotFound);
         }
 
+        // Tính giá thuê sân dựa trên thời gian đặt sân (startTime, endTime) + ngày đặt sân (bookingDate) + loại sân (courtTypeId). Lấy giá theo ngày bookingDate thay vì ngày hôm nay để tránh lỗi giá tương lai
         public async Task<CalculatePriceResultDto> CalculateAsync(
             Guid branchId, CalculatePriceDto dto)
         {
@@ -247,7 +309,7 @@ namespace SmashCourt_BE.Services
             };
         }
 
-        // ── Helpers ───────────────────────────────────────────────────────────
+        // Validate branch tồn tại
         private async Task ValidateBranchAsync(Guid branchId)
         {
             var branch = await _branchRepo.GetByIdAsync(branchId);
@@ -255,6 +317,7 @@ namespace SmashCourt_BE.Services
                 throw new AppException(404, "Không tìm thấy chi nhánh", ErrorCodes.NotFound);
         }
 
+        // Group giá override theo courtTypeId + time slot để trả về dạng dễ đọc cho frontend (1 record sẽ có weekdayPrice + weekendPrice)
         private static List<CurrentPriceDto> GroupPrices(List<BranchPriceOverride> prices)
         {
             return prices

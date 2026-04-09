@@ -35,7 +35,7 @@ namespace SmashCourt_BE.Controllers
         }
 
         /// <summary>
-        /// Giá override đang áp dụng tại chi nhánh
+        /// Giá thực tế đang áp dụng tại chi nhánh (branch override nếu có, fallback về system price)
         /// </summary>
         [HttpGet("current")]
         [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
@@ -43,8 +43,8 @@ namespace SmashCourt_BE.Controllers
         public async Task<IActionResult> GetCurrent(
             Guid branchId, [FromQuery] Guid? courtTypeId = null)
         {
-            var result = await _service.GetCurrentAsync(branchId, courtTypeId);
-            return Ok(ApiResponse<List<CurrentPriceDto>>.Ok(result));
+            var result = await _service.GetEffectiveCurrentAsync(branchId, courtTypeId);
+            return Ok(ApiResponse<List<EffectivePriceDto>>.Ok(result));
         }
 
         /// <summary>
@@ -67,13 +67,14 @@ namespace SmashCourt_BE.Controllers
         /// <summary>
         /// Xóa cấu hình giá override — fallback về system price
         /// </summary>
-        [HttpDelete("{id:guid}")]
+        [HttpDelete]
         [Authorize(Policy = AuthorizationPolicies.OwnerOnly)]
         [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<IActionResult> Delete(Guid branchId, Guid id)
+        public async Task<IActionResult> Delete(Guid branchId, [FromBody] DeleteBranchPriceDto dto)
         {
-            await _service.DeleteAsync(branchId, id);
+            await _service.DeleteAsync(branchId, dto);
             return Ok(ApiResponse<object>.Ok(null!, "Xóa cấu hình giá thành công"));
         }
 

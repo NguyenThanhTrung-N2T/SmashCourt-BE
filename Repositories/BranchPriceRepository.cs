@@ -15,6 +15,7 @@ namespace SmashCourt_BE.Repositories
             _context = context;
         }
 
+        // Lấy tất cả giá override của chi nhánh, có thể lọc theo loại sân
         public async Task<List<BranchPriceOverride>> GetAllAsync(
             Guid branchId, Guid? courtTypeId = null)
         {
@@ -31,6 +32,7 @@ namespace SmashCourt_BE.Repositories
                 .ToListAsync();
         }
 
+        // Lấy giá override hiện tại của chi nhánh, có thể lọc theo loại sân
         public async Task<List<BranchPriceOverride>> GetCurrentAsync(
             Guid branchId, Guid? courtTypeId = null)
         {
@@ -51,6 +53,7 @@ namespace SmashCourt_BE.Repositories
                 .ToList();
         }
 
+        // Lấy giá override của chi nhánh có hiệu lực tại một ngày cụ thể, có thể lọc theo loại sân
         public async Task<List<BranchPriceOverride>> GetCurrentForDateAsync(
             Guid branchId, DateOnly targetDate, Guid? courtTypeId = null)
         {
@@ -69,14 +72,8 @@ namespace SmashCourt_BE.Repositories
                 .ToList();
         }
 
-        public async Task<BranchPriceOverride?> GetByIdAsync(Guid id)
-        {
-            return await _context.BranchPriceOverrides
-                .Include(bp => bp.CourtType)
-                .Include(bp => bp.TimeSlot)
-                .FirstOrDefaultAsync(bp => bp.Id == id);
-        }
 
+        // Kiểm tra đã tồn tại giá override nào cho branch + court type + time slot + effective_from cụ thể chưa
         public async Task<bool> ExistsAsync(
             Guid branchId, Guid courtTypeId, Guid timeSlotId, DateOnly effectiveFrom)
         {
@@ -88,6 +85,7 @@ namespace SmashCourt_BE.Repositories
                     bp.EffectiveFrom == effectiveFrom);
         }
 
+        // Tạo batch giá override mới cho 1 branch + court type với ngày hiệu lực cụ thể. Cả cặp WEEKDAY + WEEKEND phải được tạo cùng lúc.
         public async Task CreateBatchAsync(List<BranchPriceOverride> prices)
         {
             using var transaction = await _context.Database.BeginTransactionAsync();
@@ -104,30 +102,25 @@ namespace SmashCourt_BE.Repositories
             }
         }
 
-        public async Task DeleteAsync(Guid id)
+        // Xóa cặp giá override (WEEKDAY + WEEKEND) của 1 branch + court type với ngày hiệu lực và khung giờ cụ thể
+        public async Task<int> DeletePairAsync(
+            Guid branchId, Guid courtTypeId, DateOnly effectiveFrom,
+            TimeOnly startTime, TimeOnly endTime)
         {
-            await _context.BranchPriceOverrides
-                .Where(bp => bp.Id == id)
-                .ExecuteDeleteAsync();
-        }
-
-        public async Task<List<BranchPriceOverride>> GetCurrentRawAsync(
-            Guid branchId, Guid courtTypeId)
-        {
-            var today = DateTimeHelper.GetTodayInVietnam();
-
-            var raw = await _context.BranchPriceOverrides
-                .Include(bp => bp.TimeSlot)
+            // Load Id của cả 2 bản ghi (WEEKDAY + WEEKEND) cùng khung giờ
+            var ids = await _context.BranchPriceOverrides
                 .Where(bp =>
                     bp.BranchId == branchId &&
                     bp.CourtTypeId == courtTypeId &&
-                    bp.EffectiveFrom <= today)
+                    bp.EffectiveFrom == effectiveFrom &&
+                    bp.TimeSlot.StartTime == startTime &&
+                    bp.TimeSlot.EndTime == endTime)
+                .Select(bp => bp.Id)
                 .ToListAsync();
 
-            return raw
-                .GroupBy(bp => bp.TimeSlotId)
-                .Select(g => g.OrderByDescending(bp => bp.EffectiveFrom).First())
-                .ToList();
+            return await _context.BranchPriceOverrides
+                .Where(bp => ids.Contains(bp.Id))
+                .ExecuteDeleteAsync();
         }
     }
 }
