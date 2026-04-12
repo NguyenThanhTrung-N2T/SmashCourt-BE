@@ -9,5 +9,8 @@ namespace SmashCourt_BE.Repositories.IRepository
 
         // tạo thông tin điểm tích lũy của khách hàng mới
         Task CreateAsync(CustomerLoyalty customerLoyalty);
+
+        // cập nhật thông tin điểm tích lũy của khách hàng
+        Task UpdateAsync(CustomerLoyalty loyalty);
     }
 }

@@ -1,4 +1,4 @@
-﻿using SmashCourt_BE.Data;
+using SmashCourt_BE.Data;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
@@ -38,14 +38,16 @@ namespace SmashCourt_BE.Repositories
                 .ToListAsync();
         }
 
-        // lấy thông tin sân theo id, chỉ lấy sân đang hoạt động + sân bị khóa + sân bị đặt + sân đang sử dụng
-        public async Task<Court?> GetByIdAsync(Guid id, Guid branchId)
+        // lấy thông tin sân theo id
+        // nếu branchId được truyền vào thì chỉ lấy sân thuộc chi nhánh đó (bảo mật cho staff)
+        // nếu branchId là null thì lấy theo id đơn thuần, không lọc branch (dùng trong booking khi chưa biết branchId)
+        public async Task<Court?> GetByIdAsync(Guid id, Guid? branchId = null)
         {
             return await _context.Courts
                 .Include(c => c.CourtType)
                 .FirstOrDefaultAsync(c =>
                     c.Id == id &&
-                    c.BranchId == branchId &&
+                    (branchId == null || c.BranchId == branchId) &&
                     c.Status != CourtStatus.INACTIVE);
         }
 

@@ -1,4 +1,4 @@
-﻿using SmashCourt_BE.Models.Entities;
+using SmashCourt_BE.Models.Entities;
 
 namespace SmashCourt_BE.Repositories.IRepository
 {
@@ -7,5 +7,8 @@ namespace SmashCourt_BE.Repositories.IRepository
         // lấy danh sách giao dịch của người dùng với phân trang
         Task<(IEnumerable<LoyaltyTransaction> Items, int Total)> GetByUserIdAsync(
         Guid userId, int page, int pageSize);
+
+        // ghi lịch sử giao dịch điểm mới (earn / redeem)
+        Task AddAsync(LoyaltyTransaction transaction);
     }
 }

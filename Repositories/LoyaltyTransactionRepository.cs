@@ -1,4 +1,4 @@
-﻿using SmashCourt_BE.Data;
+using SmashCourt_BE.Data;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Repositories.IRepository;
 using Microsoft.EntityFrameworkCore;
@@ -30,6 +30,13 @@ namespace SmashCourt_BE.Repositories
                 .ToListAsync();
 
             return (items, total);
+        }
+
+        // ghi giao dịch điểm mới
+        public async Task AddAsync(LoyaltyTransaction transaction)
+        {
+            await _db.LoyaltyTransactions.AddAsync(transaction);
+            await _db.SaveChangesAsync();
         }
     }
 }

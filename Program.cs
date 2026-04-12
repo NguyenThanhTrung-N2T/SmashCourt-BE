@@ -137,6 +137,18 @@ builder.Services.AddScoped<ISystemPriceService, SystemPriceService>();
 builder.Services.AddScoped<ISystemPriceRepository, SystemPriceRepository>();
 builder.Services.AddScoped<IBranchPriceService, BranchPriceService>();
 builder.Services.AddScoped<IBranchPriceRepository, BranchPriceRepository>();
+builder.Services.AddScoped<IBookingService, BookingService>();
+builder.Services.AddScoped<IBookingRepository, BookingRepository>();
+builder.Services.AddScoped<ISlotLockRepository, SlotLockRepository>();
+builder.Services.AddScoped<IInvoiceRepository, InvoiceRepository>();
+builder.Services.AddScoped<IPaymentRepository, PaymentRepository>();
+builder.Services.AddScoped<IRefundRepository, RefundRepository>();
+builder.Services.AddScoped<IBranchServiceRepository, BranchServiceRepository>();
+builder.Services.AddScoped<IPaymentService, PaymentService>();
+builder.Services.AddScoped<ITimeGridService, TimeGridService>();
+builder.Services.AddScoped<IBookingJob, BookingJob>();
+builder.Services.AddScoped<IVnPayService, VnPayService>();
+
 
 builder.Services.AddScoped<EmailService>();
 builder.Services.AddScoped<OtpService>();

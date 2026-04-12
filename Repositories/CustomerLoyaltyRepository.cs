@@ -13,6 +13,7 @@ namespace SmashCourt_BE.Repositories
             _db = db;
         }
 
+        // Lấy thông tin loyalty của khách hàng theo userId
         public async Task<CustomerLoyalty?> GetByUserIdAsync(Guid userId)
         {
             return await _db.CustomerLoyalties
@@ -20,9 +21,17 @@ namespace SmashCourt_BE.Repositories
                 .FirstOrDefaultAsync(cl => cl.UserId == userId);
         }
 
+        // Tạo mới loyalty cho khách hàng
         public async Task CreateAsync(CustomerLoyalty customerLoyalty)
         {
             await _db.CustomerLoyalties.AddAsync(customerLoyalty);
+            await _db.SaveChangesAsync();
+        }
+
+        // Cập nhật thông tin loyalty của khách hàng
+        public async Task UpdateAsync(CustomerLoyalty loyalty)
+        {
+            _db.CustomerLoyalties.Update(loyalty);
             await _db.SaveChangesAsync();
         }
     }

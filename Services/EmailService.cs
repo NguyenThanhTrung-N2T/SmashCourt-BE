@@ -82,6 +82,156 @@ public class EmailService
         await SendAsync(toEmail, subject, body);
     }
 
+    // Gửi email xác nhận đặt sân kèm link hủy
+    public async Task SendBookingConfirmationAsync(
+        string toEmail, string fullName, Guid bookingId, string cancelToken,
+        string courtName, DateOnly bookingDate, TimeOnly startTime, TimeOnly endTime)
+    {
+        var subject = "✅ Xác nhận đặt sân - SmashCourt";
+        var cancelUrl = $"https://smashcourt.vn/cancel?token={Uri.EscapeDataString(cancelToken)}";
+        var dateStr = bookingDate.ToString("dd/MM/yyyy");
+        var timeStr = $"{startTime:HH:mm} – {endTime:HH:mm}";
+
+        var body = $"""
+    <!DOCTYPE html>
+    <html lang="vi">
+    <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+    <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f4f7f6; margin: 0; padding: 0;">
+        <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f4f7f6; padding: 40px 0;">
+            <tr><td align="center">
+                <table width="100%" cellpadding="0" cellspacing="0" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; margin: 0 auto;">
+                    <tr><td style="background-color: #1e3a8a; padding: 35px 30px; text-align: center;">
+                        <h1 style="color: #ffffff; margin: 0; font-size: 32px; font-weight: 800; letter-spacing: 2px;">SMASHCOURT</h1>
+                        <p style="color: #bfdbfe; margin: 8px 0 0 0; font-size: 15px;">Nền Tảng Đặt Sân Thể Thao Hàng Đầu</p>
+                    </td></tr>
+                    <tr><td style="padding: 45px 35px;">
+                        <h2 style="color: #16a34a; margin: 0 0 20px 0; font-size: 22px; font-weight: 700;">✅ Đặt sân thành công!</h2>
+                        <p style="color: #475569; font-size: 16px; line-height: 1.6; margin: 0 0 25px 0;">Xin chào <strong style="color: #0f172a;">{fullName}</strong>, booking của bạn đã được xác nhận.</p>
+                        <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f8fafc; border-radius: 10px; margin-bottom: 30px; border: 1px solid #e2e8f0;">
+                            <tr><td style="padding: 25px;">
+                                <p style="margin: 0 0 12px 0; color: #64748b; font-size: 13px; text-transform: uppercase; font-weight: 700; letter-spacing: 1px;">Chi tiết đặt sân</p>
+                                <table width="100%"><tr>
+                                    <td style="color: #64748b; font-size: 14px; padding: 6px 0;">🏘️ Sân:</td>
+                                    <td style="color: #0f172a; font-size: 14px; font-weight: 600; text-align: right;">{courtName}</td>
+                                </tr><tr>
+                                    <td style="color: #64748b; font-size: 14px; padding: 6px 0;">📅 Ngày:</td>
+                                    <td style="color: #0f172a; font-size: 14px; font-weight: 600; text-align: right;">{dateStr}</td>
+                                </tr><tr>
+                                    <td style="color: #64748b; font-size: 14px; padding: 6px 0;">⏰ Giờ:</td>
+                                    <td style="color: #0f172a; font-size: 14px; font-weight: 600; text-align: right;">{timeStr}</td>
+                                </tr><tr>
+                                    <td style="color: #64748b; font-size: 14px; padding: 6px 0;">🆔 Mã booking:</td>
+                                    <td style="color: #2563eb; font-size: 13px; font-weight: 600; text-align: right; font-family: monospace;">{bookingId.ToString()[..8].ToUpper()}</td>
+                                </tr></table>
+                            </td></tr>
+                        </table>
+                        <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #fef2f2; border-radius: 8px; margin-bottom: 25px; border-left: 4px solid #ef4444;">
+                            <tr><td style="padding: 20px;">
+                                <p style="margin: 0 0 10px 0; color: #991b1b; font-size: 14px; font-weight: 700;">⚠️ Cần hủy lịch?</p>
+                                <p style="margin: 0 0 15px 0; color: #7f1d1d; font-size: 14px; line-height: 1.5;">Nếu bạn cần hủy, vui lòng nhấn vào nút bên dưới. Link hủy chỉ có hiệu lực trong 24 giờ hoặc trước giờ chơi.</p>
+                                <a href="{cancelUrl}" style="display: inline-block; background-color: #dc2626; color: #ffffff; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-size: 14px; font-weight: 600;">Hủy đặt sân</a>
+                            </td></tr>
+                        </table>
+                    </td></tr>
+                    <tr><td style="background-color: #f8fafc; padding: 25px 30px; text-align: center; border-top: 1px solid #e2e8f0;">
+                        <p style="margin: 0 0 5px 0; color: #64748b; font-size: 13px;">Trân trọng,</p>
+                        <p style="margin: 0; color: #0f172a; font-size: 15px; font-weight: 600;">Đội ngũ phát triển SmashCourt</p>
+                        <p style="margin: 12px 0 0 0; color: #94a3b8; font-size: 12px;">&copy; {DateTime.UtcNow.Year} SmashCourt. Tất cả các quyền được bảo lưu.</p>
+                    </td></tr>
+                </table>
+            </td></tr>
+        </table>
+    </body></html>
+    """;
+
+        await SendAsync(toEmail, subject, body);
+    }
+
+    // Gửi email thông báo hủy đặt sân thành công
+    public async Task SendCancelConfirmationAsync(
+        string toEmail, string fullName, Guid bookingId)
+    {
+        var subject = "❌ Xác nhận hủy đặt sân - SmashCourt";
+
+        var body = $"""
+    <!DOCTYPE html>
+    <html lang="vi">
+    <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+    <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f4f7f6; margin: 0; padding: 0;">
+        <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f4f7f6; padding: 40px 0;">
+            <tr><td align="center">
+                <table width="100%" cellpadding="0" cellspacing="0" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; margin: 0 auto;">
+                    <tr><td style="background-color: #1e3a8a; padding: 35px 30px; text-align: center;">
+                        <h1 style="color: #ffffff; margin: 0; font-size: 32px; font-weight: 800; letter-spacing: 2px;">SMASHCOURT</h1>
+                        <p style="color: #bfdbfe; margin: 8px 0 0 0; font-size: 15px;">Nền Tảng Đặt Sân Thể Thao Hàng Đầu</p>
+                    </td></tr>
+                    <tr><td style="padding: 45px 35px;">
+                        <h2 style="color: #dc2626; margin: 0 0 20px 0; font-size: 22px; font-weight: 700;">❌ Đặt sân đã được hủy</h2>
+                        <p style="color: #475569; font-size: 16px; line-height: 1.6; margin: 0 0 20px 0;">Xin chào <strong style="color: #0f172a;">{fullName}</strong>,</p>
+                        <p style="color: #475569; font-size: 16px; line-height: 1.6; margin: 0 0 25px 0;">Yêu cầu hủy đặt sân của bạn (mã <strong style="font-family: monospace; color: #2563eb;">{bookingId.ToString()[..8].ToUpper()}</strong>) đã được xử lý thành công. Nếu bạn được hoàn tiền, chúng tôi sẽ thông báo riêng sau khi xử lý.</p>
+                        <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #eff6ff; border-radius: 8px; margin-bottom: 25px; border-left: 4px solid #3b82f6;">
+                            <tr><td style="padding: 20px;">
+                                <p style="margin: 0; color: #1e3a8a; font-size: 14px; line-height: 1.6;">💡 Nếu đây không phải do bạn thực hiện, vui lòng liên hệ hỗ trợ ngay để được giải quyết.</p>
+                            </td></tr>
+                        </table>
+                    </td></tr>
+                    <tr><td style="background-color: #f8fafc; padding: 25px 30px; text-align: center; border-top: 1px solid #e2e8f0;">
+                        <p style="margin: 0 0 5px 0; color: #64748b; font-size: 13px;">Trân trọng,</p>
+                        <p style="margin: 0; color: #0f172a; font-size: 15px; font-weight: 600;">Đội ngũ phát triển SmashCourt</p>
+                        <p style="margin: 12px 0 0 0; color: #94a3b8; font-size: 12px;">&copy; {DateTime.UtcNow.Year} SmashCourt. Tất cả các quyền được bảo lưu.</p>
+                    </td></tr>
+                </table>
+            </td></tr>
+        </table>
+    </body></html>
+    """;
+
+        await SendAsync(toEmail, subject, body);
+    }
+
+    // Gửi email chúc mừng lên hạng loyalty
+    public async Task SendTierUpgradeAsync(
+        string toEmail, string fullName, string newTierName)
+    {
+        var subject = "🏆 Chúc mừng! Bạn đã lên hạng - SmashCourt";
+
+        var body = $"""
+    <!DOCTYPE html>
+    <html lang="vi">
+    <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+    <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f4f7f6; margin: 0; padding: 0;">
+        <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f4f7f6; padding: 40px 0;">
+            <tr><td align="center">
+                <table width="100%" cellpadding="0" cellspacing="0" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; margin: 0 auto;">
+                    <tr><td style="background-color: #1e3a8a; padding: 35px 30px; text-align: center;">
+                        <h1 style="color: #ffffff; margin: 0; font-size: 32px; font-weight: 800; letter-spacing: 2px;">SMASHCOURT</h1>
+                        <p style="color: #bfdbfe; margin: 8px 0 0 0; font-size: 15px;">Nền Tảng Đặt Sân Thể Thao Hàng Đầu</p>
+                    </td></tr>
+                    <tr><td style="padding: 45px 35px; text-align: center;">
+                        <div style="font-size: 64px; margin-bottom: 20px;">🏆</div>
+                        <h2 style="color: #d97706; margin: 0 0 15px 0; font-size: 24px; font-weight: 800;">Chúc mừng lên hạng!</h2>
+                        <p style="color: #475569; font-size: 16px; line-height: 1.6; margin: 0 0 20px 0;">Xin chào <strong style="color: #0f172a;">{fullName}</strong>,</p>
+                        <p style="color: #475569; font-size: 16px; line-height: 1.6; margin: 0 0 30px 0;">Chúc mừng! Bạn đã đạt đủ điểm tích lũy để nâng cấp hạng thành viên.</p>
+                        <div style="background: linear-gradient(135deg, #fef3c7, #fde68a); border-radius: 12px; padding: 25px; margin-bottom: 30px; border: 2px solid #f59e0b;">
+                            <p style="margin: 0 0 8px 0; color: #92400e; font-size: 13px; text-transform: uppercase; font-weight: 700; letter-spacing: 1px;">Hạng thành viên mới</p>
+                            <p style="margin: 0; color: #78350f; font-size: 28px; font-weight: 800;">{newTierName}</p>
+                        </div>
+                        <p style="color: #64748b; font-size: 14px; line-height: 1.6;">Tiếp tục đặt sân để tích lũy nhiều ưu đãi hơn!</p>
+                    </td></tr>
+                    <tr><td style="background-color: #f8fafc; padding: 25px 30px; text-align: center; border-top: 1px solid #e2e8f0;">
+                        <p style="margin: 0 0 5px 0; color: #64748b; font-size: 13px;">Trân trọng,</p>
+                        <p style="margin: 0; color: #0f172a; font-size: 15px; font-weight: 600;">Đội ngũ phát triển SmashCourt</p>
+                        <p style="margin: 12px 0 0 0; color: #94a3b8; font-size: 12px;">&copy; {DateTime.UtcNow.Year} SmashCourt. Tất cả các quyền được bảo lưu.</p>
+                    </td></tr>
+                </table>
+            </td></tr>
+        </table>
+    </body></html>
+    """;
+
+        await SendAsync(toEmail, subject, body);
+    }
+
     private string BuildEmailTemplate(string title, string fullName, string message, string otpCode, string extraNote)
     {
         return $"""

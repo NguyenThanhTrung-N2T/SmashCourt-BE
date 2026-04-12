@@ -23,6 +23,7 @@ public static class HangfireExtensions
         services.AddHangfireServer();
         services.AddScoped<IAuthCleanupJob, AuthCleanupJob>();
         services.AddScoped<IPromotionJob, PromotionJob>();
+        services.AddScoped<IBookingJob, BookingJob>();
 
         return services;
     }
@@ -75,6 +76,23 @@ public static class HangfireExtensions
             job => job.UpdateStatusAsync(),
             "0 0 * * *",
             new RecurringJobOptions { TimeZone = vnTimezone });
+
+        // Mỗi 1 phút — hủy PENDING hết hạn + xử lý booking hết giờ
+        RecurringJob.AddOrUpdate<IBookingJob>(
+            "cancel-expired-pending",
+            job => job.CancelExpiredPendingBookingsAsync(),
+            "* * * * *");
+
+        RecurringJob.AddOrUpdate<IBookingJob>(
+            "process-expired-bookings",
+            job => job.ProcessExpiredActiveBookingsAsync(),
+            "* * * * *");
+
+        // Mỗi 30 giây — xóa slot_locks hết hạn
+        RecurringJob.AddOrUpdate<IBookingJob>(
+            "cleanup-slot-locks",
+            job => job.CleanupExpiredSlotLocksAsync(),
+            "*/30 * * * * *"); // 6-field cron cho giây
 
         return app;
     }
