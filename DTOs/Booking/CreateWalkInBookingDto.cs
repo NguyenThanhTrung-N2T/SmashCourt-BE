@@ -1,4 +1,5 @@
-﻿using System.ComponentModel.DataAnnotations;
+using SmashCourt_BE.Helpers;
+using System.ComponentModel.DataAnnotations;
 
 namespace SmashCourt_BE.DTOs.Booking
 {
@@ -36,6 +37,11 @@ namespace SmashCourt_BE.DTOs.Booking
                     "Giờ bắt đầu phải nhỏ hơn giờ kết thúc",
                     new[] { nameof(StartTime), nameof(EndTime) });
 
+            var today = DateTimeHelper.GetTodayInVietnam();
+            if (BookingDate < today)
+                yield return new ValidationResult(
+                    "Không thể đặt sân cho ngày trong quá khứ",
+                    new[] { nameof(BookingDate) });
             // Phải có CustomerId hoặc thông tin khách vãng lai
             if (CustomerId == null &&
                 (string.IsNullOrEmpty(GuestName) || string.IsNullOrEmpty(GuestPhone)))

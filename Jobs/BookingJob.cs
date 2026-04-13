@@ -1,4 +1,4 @@
-﻿using SmashCourt_BE.Data;
+using SmashCourt_BE.Data;
 using SmashCourt_BE.Jobs.Interfaces;
 using SmashCourt_BE.Models.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -94,16 +94,18 @@ namespace SmashCourt_BE.Jobs
                     switch (booking.Status)
                     {
                         case BookingStatus.IN_PROGRESS:
-                            // Online + không có service → COMPLETED
+                            // Online + không có service fee phát sinh → tự động COMPLETED (đã thanh toán qua VNPay)
+                            // Walk-in hoặc online có service fee → PENDING_PAYMENT để staff checkout tại quầy
                             if (booking.Source == BookingSource.ONLINE &&
-                                (invoice?.ServiceFee ?? 0) == 0)
+                                invoice != null &&
+                                invoice.ServiceFee == 0)
                             {
                                 booking.Status = BookingStatus.COMPLETED;
-                                invoice!.PaymentStatus = InvoicePaymentStatus.PAID;
+                                invoice.PaymentStatus = InvoicePaymentStatus.PAID;
                             }
                             else
                             {
-                                // Còn service fee → PENDING_PAYMENT
+                                // Walk-in (chưa thanh toán gì) hoặc online có thêm service fee → chờ checkout
                                 booking.Status = BookingStatus.PENDING_PAYMENT;
                             }
                             break;

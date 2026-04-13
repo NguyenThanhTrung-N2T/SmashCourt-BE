@@ -145,9 +145,12 @@ namespace SmashCourt_BE.Services
             var existingLock = await _slotLockRepo.GetByCourtAndTimeAsync(
                 dto.CourtId, dto.BookingDate, dto.StartTime, dto.EndTime);
             if (existingLock != null)
+            {
+                var remaining = (int)(existingLock.ExpiresAt - DateTime.UtcNow).TotalMinutes;
                 throw new AppException(400,
-                    "Slot đang trong quá trình thanh toán, vui lòng thử lại sau",
+                    $"Slot này đang bị khóa bởi giao dịch online, còn khoảng {remaining} phút",
                     ErrorCodes.BadRequest);
+            }
 
             // 5. Tính giá
             var priceResult = await _priceService.CalculateAsync(
@@ -337,16 +340,19 @@ namespace SmashCourt_BE.Services
                 throw new AppException(400,
                     "Slot này đã được đặt", ErrorCodes.BadRequest);
 
-            // Walk-in không cần check slot_lock — nhân viên ưu tiên hơn
-            // Nhưng vẫn hiển thị warning nếu slot đang bị lock
+            // 3. Check slot_lock — ngăn đặt đè lên giao dịch online đang chờ thanh toán
+            await _slotLockRepo.DeleteExpiredAsync(dto.CourtId);
             var existingLock = await _slotLockRepo.GetByCourtAndTimeAsync(
                 dto.CourtId, dto.BookingDate, dto.StartTime, dto.EndTime);
             if (existingLock != null)
+            {
+                var remaining = (int)(existingLock.ExpiresAt - DateTime.UtcNow).TotalMinutes;
                 throw new AppException(400,
-                    "Slot này đang bị lock bởi giao dịch online, vui lòng chờ hoặc chọn slot khác",
+                    $"Slot này đang bị khóa bởi giao dịch online, còn khoảng {remaining} phút",
                     ErrorCodes.BadRequest);
+            }
 
-            // 3. Tính giá
+            // 4. Tính giá
             var priceResult = await _priceService.CalculateAsync(
                 court.BranchId,
                 new CalculatePriceDto

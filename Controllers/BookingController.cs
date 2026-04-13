@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using SmashCourt_BE.Common;
 using SmashCourt_BE.Configurations;
 using SmashCourt_BE.DTOs.Booking;
@@ -42,6 +43,7 @@ namespace SmashCourt_BE.Controllers
         }
 
         [HttpPost("online")]
+        [EnableRateLimiting("booking")]
         public async Task<IActionResult> CreateOnline([FromBody] CreateOnlineBookingDto dto)
         {
             Guid? customerId = User.Identity?.IsAuthenticated == true
