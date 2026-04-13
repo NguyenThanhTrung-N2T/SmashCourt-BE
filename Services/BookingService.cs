@@ -490,11 +490,15 @@ namespace SmashCourt_BE.Services
         }
 
         // ── CANCEL BY STAFF ───────────────────────────────────────────────────
-        public async Task CancelByStaffAsync(Guid id, Guid cancelledBy)
+        public async Task CancelByStaffAsync(
+            Guid id, Guid cancelledBy, string currentUserRole)
         {
             var booking = await _bookingRepo.GetByIdWithDetailsAsync(id);
             if (booking == null)
                 throw new AppException(404, "Không tìm thấy đơn đặt sân", ErrorCodes.NotFound);
+
+            // Validate branch access
+            await ValidateBranchAccessAsync(booking.BranchId, cancelledBy, currentUserRole);
 
             var cancellableStatuses = new[]
             {
@@ -521,8 +525,7 @@ namespace SmashCourt_BE.Services
             booking.UpdatedAt = now;
 
             // Deactivate booking_courts
-            foreach (var bc in booking.BookingCourts)
-                bc.IsActive = false;
+            await _bookingRepo.UpdateCourtActiveStatusAsync(booking.Id, false);
 
             // Xóa slot_lock nếu có
             await _slotLockRepo.DeleteByBookingIdAsync(booking.Id);
@@ -531,7 +534,7 @@ namespace SmashCourt_BE.Services
             var firstCourt = booking.BookingCourts.FirstOrDefault();
             if (firstCourt != null)
             {
-                var court = await _courtRepo.GetByIdAsync(firstCourt.CourtId, booking.BranchId);
+                var court = await _courtRepo.GetByIdAsync(firstCourt.CourtId);
                 if (court != null)
                 {
                     court.Status = CourtStatus.AVAILABLE;
@@ -551,13 +554,10 @@ namespace SmashCourt_BE.Services
 
                 if (payment != null)
                 {
-                    var refundAmount = Math.Round(
-                        payment.Amount * refundPercent / 100, 0);
-
                     await _refundRepo.CreateAsync(new Refund
                     {
                         PaymentId = payment.Id,
-                        Amount = refundAmount,
+                        Amount = Math.Round(payment.Amount * refundPercent / 100, 0),
                         RefundPercent = refundPercent,
                         Status = RefundStatus.PENDING,
                         CreatedAt = now
@@ -566,6 +566,19 @@ namespace SmashCourt_BE.Services
             }
 
             await _bookingRepo.UpdateAsync(booking);
+
+            // Gửi email thông báo hủy
+            try
+            {
+                var email = booking.Customer?.Email ?? booking.GuestEmail;
+                var name = booking.Customer?.FullName ?? booking.GuestName;
+                if (!string.IsNullOrEmpty(email))
+                    await _emailService.SendCancelConfirmationAsync(email, name!, booking.Id);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to send cancel email for booking {Id}", booking.Id);
+            }
 
             // TODO: Broadcast SignalR
         }
@@ -912,11 +925,15 @@ namespace SmashCourt_BE.Services
         }
 
         // ── CONFIRM REFUND ────────────────────────────────────────────────────
-        public async Task ConfirmRefundAsync(Guid id, Guid confirmedBy)
+        public async Task ConfirmRefundAsync(
+            Guid id, Guid confirmedBy, string currentUserRole)
         {
             var booking = await _bookingRepo.GetByIdWithDetailsAsync(id);
             if (booking == null)
                 throw new AppException(404, "Không tìm thấy đơn đặt sân", ErrorCodes.NotFound);
+
+            // Validate branch access
+            await ValidateBranchAccessAsync(booking.BranchId, confirmedBy, currentUserRole);
 
             if (booking.Status != BookingStatus.CANCELLED_PENDING_REFUND)
                 throw new AppException(400,

@@ -68,7 +68,8 @@ namespace SmashCourt_BE.Controllers
         public async Task<IActionResult> CancelByStaff(Guid id)
         {
             var cancelledBy = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            await _service.CancelByStaffAsync(id, cancelledBy);
+            var role = User.FindFirstValue(ClaimTypes.Role)!;
+            await _service.CancelByStaffAsync(id, cancelledBy, role);
             return Ok(ApiResponse.Ok(message: "Hủy đơn thành công"));
         }
 
@@ -77,7 +78,8 @@ namespace SmashCourt_BE.Controllers
         public async Task<IActionResult> ConfirmRefund(Guid id)
         {
             var confirmedBy = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            await _service.ConfirmRefundAsync(id, confirmedBy);
+            var role = User.FindFirstValue(ClaimTypes.Role)!;
+            await _service.ConfirmRefundAsync(id, confirmedBy, role);
             return Ok(ApiResponse.Ok(message: "Xác nhận hoàn tiền thành công"));
         }
 
