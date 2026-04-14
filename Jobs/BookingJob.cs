@@ -1,4 +1,5 @@
 using SmashCourt_BE.Data;
+using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Jobs.Interfaces;
 using SmashCourt_BE.Models.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -10,13 +11,21 @@ namespace SmashCourt_BE.Jobs
         private readonly SmashCourtContext _db;
         private readonly ILogger<BookingJob> _logger;
 
+        // Các status được coi là "booking đang chiếm sân"
+        private static readonly BookingStatus[] ActiveStatuses =
+        [
+            BookingStatus.CONFIRMED,
+            BookingStatus.PAID_ONLINE,
+            BookingStatus.IN_PROGRESS
+        ];
+
         public BookingJob(SmashCourtContext db, ILogger<BookingJob> logger)
         {
             _db = db;
             _logger = logger;
         }
 
-        // Hủy booking PENDING hết hạn
+        // ── Job-01: Hủy booking PENDING hết hạn (mỗi 1 phút) ─────────────────
         public async Task CancelExpiredPendingBookingsAsync()
         {
             try
@@ -30,6 +39,26 @@ namespace SmashCourt_BE.Jobs
                         b.ExpiresAt < now)
                     .ToListAsync();
 
+                if (expiredBookings.Count == 0) return;
+
+                // ✅ Batch load: lấy tất cả courtIds đang bị chiếm bởi booking active khác
+                // → 1 query thay vì N AnyAsync trong vòng foreach
+                var cancelledCourtIds = expiredBookings
+                    .SelectMany(b => b.BookingCourts)
+                    .Select(bc => bc.CourtId)
+                    .Distinct()
+                    .ToHashSet();
+
+                var busyCourtIds = (await _db.BookingCourts
+                    .Where(other =>
+                        cancelledCourtIds.Contains(other.CourtId) &&
+                        other.IsActive &&
+                        ActiveStatuses.Contains(other.Booking.Status))
+                    .Select(other => other.CourtId)
+                    .Distinct()
+                    .ToListAsync())
+                    .ToHashSet();
+
                 foreach (var booking in expiredBookings)
                 {
                     booking.Status = BookingStatus.CANCELLED;
@@ -40,7 +69,9 @@ namespace SmashCourt_BE.Jobs
                     foreach (var bc in booking.BookingCourts)
                     {
                         bc.IsActive = false;
-                        if (bc.Court != null)
+
+                        // ✅ Guard: chỉ set AVAILABLE nếu court không bị booking khác chiếm
+                        if (bc.Court != null && !busyCourtIds.Contains(bc.CourtId))
                         {
                             bc.Court.Status = CourtStatus.AVAILABLE;
                             bc.Court.UpdatedAt = now;
@@ -48,7 +79,7 @@ namespace SmashCourt_BE.Jobs
                     }
                 }
 
-                // Xóa slot_locks hết hạn liên quan
+                // Xóa slot_locks hết hạn (cùng ExpiresAt với booking PENDING)
                 await _db.SlotLocks
                     .Where(sl => sl.ExpiresAt <= now)
                     .ExecuteDeleteAsync();
@@ -64,7 +95,7 @@ namespace SmashCourt_BE.Jobs
             }
         }
 
-        // Xử lý booking IN_PROGRESS + PAID_ONLINE + CONFIRMED hết giờ
+        // ── Job-03+04: Xử lý booking hết giờ (mỗi 1 phút) ──────────────────
         public async Task ProcessExpiredActiveBookingsAsync()
         {
             try
@@ -81,44 +112,77 @@ namespace SmashCourt_BE.Jobs
                         b.Status == BookingStatus.CONFIRMED)
                     .ToListAsync();
 
+                if (activeBookings.Count == 0) return;
+
+                // ✅ Batch load: guard check court đang bị booking active khác dùng
+                var affectedCourtIds = activeBookings
+                    .SelectMany(b => b.BookingCourts)
+                    .Select(bc => bc.CourtId)
+                    .Distinct()
+                    .ToHashSet();
+
+                var busyCourtIds = (await _db.BookingCourts
+                    .Where(other =>
+                        affectedCourtIds.Contains(other.CourtId) &&
+                        other.IsActive &&
+                        ActiveStatuses.Contains(other.Booking.Status))
+                    .Select(other => other.CourtId)
+                    .Distinct()
+                    .ToListAsync())
+                    .ToHashSet();
+
+                int processed = 0;
+
                 foreach (var booking in activeBookings)
                 {
                     var bookingCourt = booking.BookingCourts.FirstOrDefault();
                     if (bookingCourt == null) continue;
 
-                    var endDateTime = booking.BookingDate.ToDateTime(bookingCourt.EndTime);
-                    if (endDateTime > now) continue;
+                    // ✅ Fix timezone: BookingDate + EndTime được lưu theo giờ VN
+                    // → convert sang UTC trước khi so sánh với DateTime.UtcNow
+                    var endDateTimeVn = booking.BookingDate.ToDateTime(bookingCourt.EndTime);
+                    var endDateTimeUtc = TimeZoneInfo.ConvertTimeToUtc(
+                        endDateTimeVn, DateTimeHelper.VNTimezone);
+
+                    if (endDateTimeUtc > now) continue;
 
                     var invoice = booking.Invoice;
 
                     switch (booking.Status)
                     {
                         case BookingStatus.IN_PROGRESS:
-                            // Online + không có service fee phát sinh → tự động COMPLETED (đã thanh toán qua VNPay)
-                            // Walk-in hoặc online có service fee → PENDING_PAYMENT để staff checkout tại quầy
+                            // Online đã thanh toán sân, không có service fee phát sinh
+                            // → tự động COMPLETED (VNPay đã thu tiền rồi)
                             if (booking.Source == BookingSource.ONLINE &&
                                 invoice != null &&
                                 invoice.ServiceFee == 0)
                             {
                                 booking.Status = BookingStatus.COMPLETED;
                                 invoice.PaymentStatus = InvoicePaymentStatus.PAID;
+                                invoice.UpdatedAt = now;
                             }
                             else
                             {
-                                // Walk-in (chưa thanh toán gì) hoặc online có thêm service fee → chờ checkout
+                                // Walk-in (chưa thu tiền) hoặc online có service fee
+                                // → PENDING_PAYMENT để staff checkout tại quầy
                                 booking.Status = BookingStatus.PENDING_PAYMENT;
+                                // Court giữ nguyên IN_USE cho đến khi staff checkout
                             }
                             break;
 
                         case BookingStatus.PAID_ONLINE:
-                            // Hết giờ, khách không đến → COMPLETED
+                            // Đã thanh toán online, hết giờ (dù có hoặc không check-in)
+                            // → COMPLETED, tiền đã thu
                             booking.Status = BookingStatus.COMPLETED;
                             if (invoice != null)
+                            {
                                 invoice.PaymentStatus = InvoicePaymentStatus.PAID;
+                                invoice.UpdatedAt = now;
+                            }
                             break;
 
                         case BookingStatus.CONFIRMED:
-                            // Hết giờ, walk-in không check-in → CANCELLED
+                            // Walk-in no-show: hết giờ mà chưa check-in → CANCELLED
                             booking.Status = BookingStatus.CANCELLED;
                             booking.CancelledAt = now;
                             booking.CancelSource = CancelSourceEnum.SYSTEM;
@@ -128,21 +192,27 @@ namespace SmashCourt_BE.Jobs
                     }
 
                     booking.UpdatedAt = now;
-                    if (invoice != null) invoice.UpdatedAt = now;
 
-                    // Cập nhật court → AVAILABLE
-                    if (bookingCourt.Court != null &&
-                        booking.Status != BookingStatus.PENDING_PAYMENT)
+                    // Cập nhật Court → AVAILABLE khi booking kết thúc hoàn toàn
+                    // Không set khi PENDING_PAYMENT — staff còn cần thao tác checkout
+                    if (booking.Status == BookingStatus.COMPLETED ||
+                        booking.Status == BookingStatus.CANCELLED)
                     {
-                        bookingCourt.Court.Status = CourtStatus.AVAILABLE;
-                        bookingCourt.Court.UpdatedAt = now;
+                        if (bookingCourt.Court != null &&
+                            !busyCourtIds.Contains(bookingCourt.CourtId))
+                        {
+                            bookingCourt.Court.Status = CourtStatus.AVAILABLE;
+                            bookingCourt.Court.UpdatedAt = now;
+                        }
                     }
+
+                    processed++;
                 }
 
                 await _db.SaveChangesAsync();
 
-                _logger.LogInformation("Processed {Count} expired active bookings",
-                    activeBookings.Count);
+                _logger.LogInformation(
+                    "Processed {Count} expired active bookings", processed);
             }
             catch (Exception ex)
             {
@@ -150,7 +220,10 @@ namespace SmashCourt_BE.Jobs
             }
         }
 
-        // Xóa slot_locks hết hạn
+        // ── Job-02: Xóa slot_locks hết hạn (mỗi 30 giây) ────────────────────
+        // Không cần update Court.Status ở đây:
+        // SlotLock.ExpiresAt == Booking.ExpiresAt (cùng variable trong CreateOnlineAsync)
+        // → Job-01 sẽ handle Court.Status khi booking PENDING expire cùng lúc
         public async Task CleanupExpiredSlotLocksAsync()
         {
             try
@@ -160,7 +233,8 @@ namespace SmashCourt_BE.Jobs
                     .ExecuteDeleteAsync();
 
                 if (deleted > 0)
-                    _logger.LogInformation("Cleaned up {Count} expired slot locks", deleted);
+                    _logger.LogInformation(
+                        "Cleaned up {Count} expired slot locks", deleted);
             }
             catch (Exception ex)
             {

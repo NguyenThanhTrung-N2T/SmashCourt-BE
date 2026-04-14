@@ -23,18 +23,11 @@ namespace SmashCourt_BE.DTOs.PriceConfig
                     "Thời gian bắt đầu phải nhỏ hơn thời gian kết thúc",
                     new[] { nameof(StartTime), nameof(EndTime) });
 
-            var today = GetVnToday();
+            var today = SmashCourt_BE.Helpers.DateTimeHelper.GetTodayInVietnam();
             if (BookingDate < today)
                 yield return new ValidationResult(
                     "Không thể đặt sân cho ngày trong quá khứ",
                     new[] { nameof(BookingDate) });
-        }
-
-        private static DateOnly GetVnToday()
-        {
-            var vnTimezone = TimeZoneInfo.FindSystemTimeZoneById("SE Asia Standard Time");
-            return DateOnly.FromDateTime(
-                TimeZoneInfo.ConvertTime(DateTime.UtcNow, vnTimezone));
         }
     }
 }

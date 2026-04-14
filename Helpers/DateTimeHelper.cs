@@ -1,8 +1,8 @@
-﻿namespace SmashCourt_BE.Helpers
+namespace SmashCourt_BE.Helpers
 {
     public static class DateTimeHelper
     {
-        private static readonly TimeZoneInfo VNTimezone =
+        public static readonly TimeZoneInfo VNTimezone =
             TimeZoneInfo.FindSystemTimeZoneById("SE Asia Standard Time");
 
         /// <summary>
