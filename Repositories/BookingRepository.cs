@@ -17,6 +17,8 @@ namespace SmashCourt_BE.Repositories
             _context = context;
         }
 
+        // Lấy danh sách booking với filter + phân quyền
+        // Owner → thấy tất cả, Manager/Staff → chỉ thấy booking của chi nhánh mình
         public async Task<PagedResult<Booking>> GetAllAsync(
             BookingListQuery query, string userRole, Guid userId)
         {
@@ -112,6 +114,7 @@ namespace SmashCourt_BE.Repositories
             return await _context.Bookings.FindAsync(id);
         }
 
+        // Lấy thông tin booking theo id, có phân quyền
         public async Task<Booking?> GetByIdWithDetailsAsync(Guid id)
         {
             return await _context.Bookings
@@ -127,6 +130,7 @@ namespace SmashCourt_BE.Repositories
                 .Include(b => b.BookingPromotion)
                 .FirstOrDefaultAsync(b => b.Id == id);
         }
+
 
         public async Task<Booking?> GetByCancelTokenAsync(string tokenHash)
         {
@@ -166,6 +170,7 @@ namespace SmashCourt_BE.Repositories
                 .ToListAsync();
         }
 
+        // tạo mới booking
         public async Task<Booking> CreateAsync(Booking booking)
         {
             _context.Bookings.Add(booking);
@@ -179,6 +184,7 @@ namespace SmashCourt_BE.Repositories
             await _context.SaveChangesAsync();
         }
 
+        // Thêm mới booking court
         public async Task<BookingCourt> AddCourtAsync(BookingCourt bookingCourt)
         {
             _context.BookingCourts.Add(bookingCourt);
@@ -186,12 +192,14 @@ namespace SmashCourt_BE.Repositories
             return bookingCourt; // Id đã được gen
         }
 
+        // thêm nhiều booking price item cùng lúc
         public async Task AddPriceItemsAsync(List<BookingPriceItem> items)
         {
             _context.BookingPriceItems.AddRange(items);
             await _context.SaveChangesAsync();
         }
 
+        // Thêm promotion vào booking
         public async Task AddPromotionAsync(BookingPromotion promotion)
         {
             _context.BookingPromotions.Add(promotion);

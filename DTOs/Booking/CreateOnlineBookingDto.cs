@@ -1,21 +1,16 @@
-﻿using SmashCourt_BE.Helpers;
+using SmashCourt_BE.Helpers;
 using System.ComponentModel.DataAnnotations;
 
 namespace SmashCourt_BE.DTOs.Booking
 {
     public class CreateOnlineBookingDto : IValidatableObject
     {
-        [Required(ErrorMessage = "Vui lòng chọn sân")]
-        public Guid CourtId { get; set; }
-
         [Required(ErrorMessage = "Ngày đặt không được để trống")]
         public DateOnly BookingDate { get; set; }
 
-        [Required(ErrorMessage = "Giờ bắt đầu không được để trống")]
-        public TimeOnly StartTime { get; set; }
-
-        [Required(ErrorMessage = "Giờ kết thúc không được để trống")]
-        public TimeOnly EndTime { get; set; }
+        [Required]
+        [MinLength(1, ErrorMessage = "Phải chọn ít nhất 1 sân")]
+        public List<CourtSlotDto> Courts { get; set; } = [];
 
         // Null nếu không dùng promotion
         public Guid? PromotionId { get; set; }
@@ -27,16 +22,29 @@ namespace SmashCourt_BE.DTOs.Booking
 
         public IEnumerable<ValidationResult> Validate(ValidationContext context)
         {
-            if (StartTime >= EndTime)
-                yield return new ValidationResult(
-                    "Giờ bắt đầu phải nhỏ hơn giờ kết thúc",
-                    new[] { nameof(StartTime), nameof(EndTime) });
-
             var today = DateTimeHelper.GetTodayInVietnam();
             if (BookingDate < today)
                 yield return new ValidationResult(
                     "Không thể đặt sân cho ngày trong quá khứ",
                     new[] { nameof(BookingDate) });
+
+            foreach (var court in Courts)
+            {
+                if (court.StartTime >= court.EndTime)
+                    yield return new ValidationResult(
+                        $"Giờ bắt đầu phải nhỏ hơn giờ kết thúc",
+                        new[] { nameof(Courts) });
+            }
+
+            // kiểm tra trùng lặp hoàn toàn trong cùng 1 lần đặt — không check overlap vì có thể đặt 2 slot khác nhau cùng sân cùng giờ
+            var exactDuplicates = Courts
+                .GroupBy(c => new { c.CourtId, c.StartTime, c.EndTime })
+                .Where(g => g.Count() > 1);
+
+            if (exactDuplicates.Any())
+                yield return new ValidationResult(
+                    "Không thể đặt các slot trùng lặp hoàn toàn trong cùng 1 lần",
+                    new[] { nameof(Courts) });
         }
     }
 }

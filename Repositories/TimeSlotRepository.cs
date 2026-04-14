@@ -15,6 +15,7 @@ namespace SmashCourt_BE.Repositories
             _context = context;
         }
 
+        // Lấy tất cả slot, sắp xếp theo startTime + dayType để dễ hiển thị
         public async Task<List<TimeSlot>> GetAllAsync()
         {
             return await _context.TimeSlots

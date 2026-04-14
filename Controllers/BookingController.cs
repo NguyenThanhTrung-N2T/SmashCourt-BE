@@ -22,6 +22,9 @@ namespace SmashCourt_BE.Controllers
             _service = service;
         }
 
+        /// <summary>
+        /// Lấy danh sách booking
+        /// </summary>
         [HttpGet]
         [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
         public async Task<IActionResult> GetAll([FromQuery] BookingListQuery query)
@@ -29,9 +32,13 @@ namespace SmashCourt_BE.Controllers
             var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
             var role = User.FindFirstValue(ClaimTypes.Role)!;
             var result = await _service.GetAllAsync(query, userId, role);
-            return Ok(ApiResponse<PagedResult<BookingDto>>.Ok(result));
+            return Ok(ApiResponse<PagedResult<BookingDto>>.Ok(result, "Lấy danh sách đặt sân thành công"));
         }
 
+
+        /// <summary>
+        /// Lấy thông tin booking theo id
+        /// </summary>
         [HttpGet("{id:guid}")]
         [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
         public async Task<IActionResult> GetById(Guid id)
@@ -39,9 +46,13 @@ namespace SmashCourt_BE.Controllers
             var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
             var role = User.FindFirstValue(ClaimTypes.Role)!;
             var result = await _service.GetByIdAsync(id, userId, role);
-            return Ok(ApiResponse<BookingDto>.Ok(result));
+            return Ok(ApiResponse<BookingDto>.Ok(result, "Lấy thông tin đặt sân thành công"));
         }
 
+
+        /// <summary>
+        /// Đặt sân online - khách hàng có thể đặt sân mà không cần đăng nhập, nhưng nếu đã đăng nhập thì sẽ gắn booking với tài khoản đó
+        /// </summary>
         [HttpPost("online")]
         [EnableRateLimiting("booking")]
         public async Task<IActionResult> CreateOnline([FromBody] CreateOnlineBookingDto dto)
@@ -51,9 +62,13 @@ namespace SmashCourt_BE.Controllers
                 : null;
 
             var result = await _service.CreateOnlineAsync(dto, customerId);
-            return StatusCode(201, ApiResponse<OnlineBookingResponse>.Ok(result));
+            return StatusCode(201, ApiResponse<OnlineBookingResponse>.Ok(result,"Đặt sân online thành công"));
         }
 
+
+        /// <summary>
+        /// Đặt sân tại quầy - chỉ nhân viên mới được tạo booking theo cách này, thường dùng cho khách walk-in hoặc khách gọi điện đặt sân
+        /// </summary>
         [HttpPost("walk-in")]
         [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
         public async Task<IActionResult> CreateWalkIn([FromBody] CreateWalkInBookingDto dto)
@@ -62,6 +77,9 @@ namespace SmashCourt_BE.Controllers
             var result = await _service.CreateWalkInAsync(dto, createdBy);
             return StatusCode(201, ApiResponse<BookingDto>.Ok(result, "Tạo đơn thành công"));
         }
+
+
+
 
         [HttpPost("{id:guid}/cancel")]
         [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]

@@ -5,6 +5,8 @@ namespace SmashCourt_BE.Repositories.IRepository
     public interface IPaymentRepository
     {
         Task<Payment?> GetByTransactionRefAsync(string transactionRef);
+
+        // tạo payment mới, trả về payment đã được tạo 
         Task<Payment> CreateAsync(Payment payment);
         Task UpdateAsync(Payment payment);
         Task CreateIpnLogAsync(PaymentIpnLog log);

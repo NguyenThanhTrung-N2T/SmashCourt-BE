@@ -5,10 +5,18 @@ namespace SmashCourt_BE.Services.IService
 {
     public interface IBookingService
     {
+        // lấy danh sách booking để hiển thị cho staff (có filter, phân trang)
         Task<PagedResult<BookingDto>> GetAllAsync(BookingListQuery query, Guid currentUserId, string currentUserRole);
+        
+        
         Task<PagedResult<BookingDto>> GetMyBookingsAsync(Guid customerId, PaginationQuery query);
+
+        // Lấy thông tin booking theo id, có phân quyền
         Task<BookingDto> GetByIdAsync(Guid id, Guid currentUserId, string currentUserRole);
+
+        // Tạo booking online (có thể có hoặc không có customerId, nếu không có thì sẽ tạo booking với thông tin khách vãng lai)
         Task<OnlineBookingResponse> CreateOnlineAsync(CreateOnlineBookingDto dto, Guid? customerId);
+
         Task<BookingDto> CreateWalkInAsync(CreateWalkInBookingDto dto, Guid createdBy);
         Task CancelByStaffAsync(Guid id, Guid cancelledBy, string currentUserRole);
         Task<CancelTokenInfoDto> GetCancelInfoAsync(string token);

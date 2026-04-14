@@ -14,6 +14,7 @@ namespace SmashCourt_BE.Repositories
             _context = context;
         }
 
+        // Lấy slot lock của sân vào một khoảng thời gian cụ thể, nếu có
         public async Task<SlotLock?> GetByCourtAndTimeAsync(
             Guid courtId, DateOnly date,
             TimeOnly startTime, TimeOnly endTime)
@@ -41,12 +42,17 @@ namespace SmashCourt_BE.Repositories
                 .ExecuteDeleteAsync();
         }
 
-        // Xóa expired locks của court trước khi INSERT mới
-        public async Task DeleteExpiredAsync(Guid courtId)
+        // Xóa expired locks của chi nhánh trước khi INSERT mới
+        public async Task DeleteExpiredByBranchAsync(Guid branchId)
         {
+            var courtIds = await _context.Courts
+                .Where(c => c.BranchId == branchId)
+                .Select(c => c.Id)
+                .ToListAsync();
+
             await _context.SlotLocks
                 .Where(sl =>
-                    sl.CourtId == courtId &&
+                    courtIds.Contains(sl.CourtId) &&
                     sl.ExpiresAt <= DateTime.UtcNow)
                 .ExecuteDeleteAsync();
         }

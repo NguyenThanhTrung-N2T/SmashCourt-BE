@@ -4,11 +4,18 @@ namespace SmashCourt_BE.Repositories.IRepository
 {
     public interface ISlotLockRepository
     {
+        // Lấy slot lock của sân vào một khoảng thời gian cụ thể, nếu có
         Task<SlotLock?> GetByCourtAndTimeAsync(Guid courtId, DateOnly date, TimeOnly startTime, TimeOnly endTime);
         Task<List<SlotLock>> GetByCourtAndDateAsync(Guid courtId, DateOnly date);
+
+        // tạo một slot lock mới
         Task<SlotLock> CreateAsync(SlotLock slotLock);
+
+
         Task DeleteAsync(Guid id);
-        Task DeleteExpiredAsync(Guid courtId);
+
+        // Xóa tất cả slot lock đã hết hạn của chi nhánh
+        Task DeleteExpiredByBranchAsync(Guid branchId);
         Task DeleteByBookingIdAsync(Guid bookingId);
     }
 }

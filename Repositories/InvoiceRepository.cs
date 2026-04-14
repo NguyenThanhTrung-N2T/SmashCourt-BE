@@ -20,6 +20,7 @@ namespace SmashCourt_BE.Repositories
                 .FirstOrDefaultAsync(i => i.BookingId == bookingId);
         }
 
+        // Tạo mới invoice, trả về invoice đã được tạo (có id)
         public async Task<Invoice> CreateAsync(Invoice invoice)
         {
             _context.Invoices.Add(invoice);
