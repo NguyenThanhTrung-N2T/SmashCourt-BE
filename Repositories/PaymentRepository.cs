@@ -1,4 +1,4 @@
-﻿using SmashCourt_BE.Data;
+using SmashCourt_BE.Data;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Repositories.IRepository;
 using Microsoft.EntityFrameworkCore;
@@ -19,6 +19,11 @@ namespace SmashCourt_BE.Repositories
             return await _context.Payments
                 .Include(p => p.Invoice)
                     .ThenInclude(i => i.Booking)
+                        .ThenInclude(b => b.BookingCourts)
+                            .ThenInclude(bc => bc.Court)
+                .Include(p => p.Invoice)
+                    .ThenInclude(i => i.Booking)
+                        .ThenInclude(b => b.Customer)
                 .FirstOrDefaultAsync(p => p.TransactionRef == transactionRef);
         }
 

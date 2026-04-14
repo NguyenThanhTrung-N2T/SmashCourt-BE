@@ -1,4 +1,4 @@
-﻿using SmashCourt_BE.Common;
+using SmashCourt_BE.Common;
 using SmashCourt_BE.DTOs.Booking;
 using SmashCourt_BE.Models.Entities;
 
@@ -11,6 +11,7 @@ namespace SmashCourt_BE.Repositories.IRepository
         Task<Booking?> GetByIdWithDetailsAsync(Guid id);
         Task<Booking?> GetByCancelTokenAsync(string tokenHash);
         Task<bool> HasOverlapAsync(Guid courtId, DateOnly date, TimeOnly startTime, TimeOnly endTime);
+        Task<List<BookingCourt>> GetActiveByCourtAndDateAsync(Guid courtId, DateOnly date);
         Task<Booking> CreateAsync(Booking booking);
         Task UpdateAsync(Booking booking);
 

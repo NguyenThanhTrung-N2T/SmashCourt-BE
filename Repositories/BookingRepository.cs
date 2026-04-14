@@ -1,4 +1,4 @@
-﻿using SmashCourt_BE.Common;
+using SmashCourt_BE.Common;
 using SmashCourt_BE.Data;
 using SmashCourt_BE.DTOs.Booking;
 using SmashCourt_BE.Models.Entities;
@@ -124,6 +124,18 @@ namespace SmashCourt_BE.Repositories
                     bc.StartTime < endTime &&
                     bc.EndTime > startTime)
                 .AnyAsync();
+        }
+
+        // Batch load tất cả BookingCourt active cho court trong ngày — dùng cho TimeGrid
+        public async Task<List<BookingCourt>> GetActiveByCourtAndDateAsync(
+            Guid courtId, DateOnly date)
+        {
+            return await _context.BookingCourts
+                .Where(bc =>
+                    bc.CourtId == courtId &&
+                    bc.Date == date &&
+                    bc.IsActive)
+                .ToListAsync();
         }
 
         public async Task<Booking> CreateAsync(Booking booking)

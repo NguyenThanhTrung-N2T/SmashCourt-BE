@@ -1,4 +1,4 @@
-﻿using SmashCourt_BE.Data;
+using SmashCourt_BE.Data;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Repositories.IRepository;
 using Microsoft.EntityFrameworkCore;
@@ -49,6 +49,18 @@ namespace SmashCourt_BE.Repositories
                     sl.CourtId == courtId &&
                     sl.ExpiresAt <= DateTime.UtcNow)
                 .ExecuteDeleteAsync();
+        }
+
+        // Batch load tất cả lock của court trong ngày — dùng cho TimeGrid
+        public async Task<List<SlotLock>> GetByCourtAndDateAsync(
+            Guid courtId, DateOnly date)
+        {
+            return await _context.SlotLocks
+                .Where(sl =>
+                    sl.CourtId == courtId &&
+                    sl.Date == date &&
+                    sl.ExpiresAt > DateTime.UtcNow)
+                .ToListAsync();
         }
 
         public async Task DeleteByBookingIdAsync(Guid bookingId)

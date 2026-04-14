@@ -1,4 +1,4 @@
-﻿using SmashCourt_BE.Common;
+using SmashCourt_BE.Common;
 using SmashCourt_BE.DTOs.Booking;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
@@ -42,13 +42,17 @@ namespace SmashCourt_BE.Services
                 .OrderBy(ts => ts.StartTime)
                 .ToList();
 
+            // ✅ Batch load — 2 queries thay vì 2N queries
+            var allLocks = await _slotLockRepo.GetByCourtAndDateAsync(courtId, date);
+            var allBookings = await _bookingRepo.GetActiveByCourtAndDateAsync(courtId, date);
+
             var result = new List<TimeGridSlotDto>();
 
             foreach (var slot in slots)
             {
-                // Check slot_lock
-                var slotLock = await _slotLockRepo.GetByCourtAndTimeAsync(
-                    courtId, date, slot.StartTime, slot.EndTime);
+                // Check lock — in-memory overlap check
+                var slotLock = allLocks.FirstOrDefault(sl =>
+                    sl.StartTime < slot.EndTime && sl.EndTime > slot.StartTime);
 
                 if (slotLock != null)
                 {
@@ -63,9 +67,9 @@ namespace SmashCourt_BE.Services
                     continue;
                 }
 
-                // Check booking
-                var hasBooking = await _bookingRepo.HasOverlapAsync(
-                    courtId, date, slot.StartTime, slot.EndTime);
+                // Check booking — in-memory overlap check
+                var hasBooking = allBookings.Any(bc =>
+                    bc.StartTime < slot.EndTime && bc.EndTime > slot.StartTime);
 
                 var status = hasBooking
                     ? court.Status == CourtStatus.IN_USE ? "IN_USE" : "BOOKED"
