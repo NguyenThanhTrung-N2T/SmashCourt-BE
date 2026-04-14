@@ -15,7 +15,7 @@ namespace SmashCourt_BE.Services.IService
         Task CheckInAsync(Guid id, Guid currentUserId, string currentUserRole);
         Task CheckoutAsync(Guid id, Guid currentUserId, string currentUserRole);
         Task<BookingDto> AddServiceAsync(Guid id, AddBookingServiceDto dto, Guid currentUserId, string currentUserRole);
-        Task RemoveServiceAsync(Guid id, Guid bookingServiceId, Guid currentUserId, string currentUserRole);
+        Task<BookingDto> RemoveServiceAsync(Guid id, Guid serviceId, Guid currentUserId, string currentUserRole);
         Task ConfirmRefundAsync(Guid id, Guid confirmedBy, string currentUserRole);
     }
 }

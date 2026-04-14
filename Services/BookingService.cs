@@ -826,7 +826,10 @@ namespace SmashCourt_BE.Services
                     "Không thể thêm dịch vụ ở trạng thái này", ErrorCodes.BadRequest);
 
             var invoice = booking.Invoice;
-            if (invoice?.PaymentStatus == InvoicePaymentStatus.PAID)
+            if (invoice == null)
+                throw new AppException(500, "Không tìm thấy hóa đơn", ErrorCodes.InternalError);
+
+            if (invoice.PaymentStatus == InvoicePaymentStatus.PAID)
                 throw new AppException(400,
                     "Hóa đơn đã thanh toán, không thể thêm dịch vụ", ErrorCodes.BadRequest);
 
@@ -876,8 +879,8 @@ namespace SmashCourt_BE.Services
         }
 
         // ── REMOVE SERVICE ────────────────────────────────────────────────────
-        public async Task RemoveServiceAsync(
-            Guid id, Guid bookingServiceId,
+        public async Task<BookingDto> RemoveServiceAsync(
+            Guid id, Guid serviceId,
             Guid currentUserId, string currentUserRole)
         {
             var booking = await _bookingRepo.GetByIdWithDetailsAsync(id);
@@ -898,21 +901,30 @@ namespace SmashCourt_BE.Services
                     "Không thể xóa dịch vụ ở trạng thái này", ErrorCodes.BadRequest);
 
             var invoice = booking.Invoice;
-            if (invoice?.PaymentStatus == InvoicePaymentStatus.PAID)
+            if (invoice == null)
+                throw new AppException(500, "Không tìm thấy hóa đơn", ErrorCodes.InternalError);
+
+            if (invoice.PaymentStatus == InvoicePaymentStatus.PAID)
                 throw new AppException(400,
                     "Hóa đơn đã thanh toán, không thể xóa dịch vụ", ErrorCodes.BadRequest);
 
+            // PARTIALLY_PAID chỉ cho xóa khi IN_PROGRESS
+            if (invoice?.PaymentStatus == InvoicePaymentStatus.PARTIALLY_PAID &&
+                booking.Status != BookingStatus.IN_PROGRESS)
+                throw new AppException(400,
+                    "Chỉ có thể xóa dịch vụ khi đang IN_PROGRESS", ErrorCodes.BadRequest);
+
             var bookingService = booking.BookingServices
-                .FirstOrDefault(bs => bs.Id == bookingServiceId);
+                .FirstOrDefault(bs => bs.Id == serviceId);
 
             if (bookingService == null)
                 throw new AppException(404, "Không tìm thấy dịch vụ", ErrorCodes.NotFound);
 
             await _bookingRepo.RemoveServiceAsync(bookingService);
 
-            // Cập nhật invoice
+            // Tái tính invoice
             var remainingServiceFee = booking.BookingServices
-                .Where(bs => bs.Id != bookingServiceId)
+                .Where(bs => bs.Id != serviceId)
                 .Sum(s => s.UnitPrice * s.Quantity);
 
             invoice!.ServiceFee = remainingServiceFee;
@@ -922,6 +934,9 @@ namespace SmashCourt_BE.Services
                                + remainingServiceFee;
             invoice.UpdatedAt = DateTime.UtcNow;
             await _invoiceRepo.UpdateAsync(invoice);
+
+            var result = await _bookingRepo.GetByIdWithDetailsAsync(booking.Id);
+            return MapToDto(result!);
         }
 
         // ── CONFIRM REFUND ────────────────────────────────────────────────────

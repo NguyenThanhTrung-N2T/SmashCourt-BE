@@ -125,17 +125,17 @@ namespace SmashCourt_BE.Controllers
             var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
             var role = User.FindFirstValue(ClaimTypes.Role)!;
             var result = await _service.AddServiceAsync(id, dto, userId, role);
-            return Ok(ApiResponse<BookingDto>.Ok(result));
+            return StatusCode(201, ApiResponse<BookingDto>.Ok(result, "Thêm dịch vụ thành công"));
         }
 
-        [HttpDelete("{id:guid}/services/{bookingServiceId:guid}")]
+        [HttpDelete("{id:guid}/services/{serviceId:guid}")]
         [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
-        public async Task<IActionResult> RemoveService(Guid id, Guid bookingServiceId)
+        public async Task<IActionResult> RemoveService(Guid id, Guid serviceId)
         {
             var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
             var role = User.FindFirstValue(ClaimTypes.Role)!;
-            await _service.RemoveServiceAsync(id, bookingServiceId, userId, role);
-            return Ok(ApiResponse.Ok(message: "Xóa dịch vụ thành công"));
+            var result = await _service.RemoveServiceAsync(id, serviceId, userId, role);
+            return Ok(ApiResponse<BookingDto>.Ok(result, "Xóa dịch vụ thành công"));
         }
     }
 

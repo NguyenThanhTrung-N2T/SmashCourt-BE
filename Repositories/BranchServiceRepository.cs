@@ -45,6 +45,7 @@ namespace SmashCourt_BE.Repositories
         public async Task<BranchService?> GetByBranchServiceAsync(Guid branchId, Guid serviceId)
         {
             return await _context.BranchServices
+                .Include(bs => bs.Service)
                 .FirstOrDefaultAsync(bs => bs.BranchId == branchId && bs.ServiceId == serviceId);
         }
 
