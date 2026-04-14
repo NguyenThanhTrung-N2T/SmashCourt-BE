@@ -156,12 +156,7 @@ namespace SmashCourt_BE.Controllers
         public async Task<IActionResult> GetMyBookings([FromQuery] PaginationQuery query)
         {
             var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            var bookingQuery = new BookingListQuery
-            {
-                Page = query.Page,
-                PageSize = query.PageSize
-            };
-            var result = await _service.GetAllAsync(bookingQuery, userId, UserRole.CUSTOMER.ToString());
+            var result = await _service.GetMyBookingsAsync(userId, query);
             return Ok(ApiResponse<PagedResult<BookingDto>>.Ok(result));
         }
 
@@ -169,6 +164,7 @@ namespace SmashCourt_BE.Controllers
         public async Task<IActionResult> GetMyBookingById(Guid id)
         {
             var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            // Service sẽ check booking.CustomerId == userId, throw 403 nếu sai
             var result = await _service.GetByIdAsync(id, userId, UserRole.CUSTOMER.ToString());
             return Ok(ApiResponse<BookingDto>.Ok(result));
         }

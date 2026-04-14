@@ -79,6 +79,34 @@ namespace SmashCourt_BE.Repositories
             };
         }
 
+        // Customer chỉ thấy booking của chính mình
+        public async Task<PagedResult<Booking>> GetByCustomerIdAsync(
+            Guid customerId, PaginationQuery query)
+        {
+            var q = _context.Bookings
+                .Include(b => b.Branch)
+                .Include(b => b.Customer)
+                .Include(b => b.BookingCourts)
+                    .ThenInclude(bc => bc.Court)
+                .Include(b => b.Invoice)
+                .Where(b => b.CustomerId == customerId)
+                .OrderByDescending(b => b.CreatedAt);
+
+            var totalItems = await q.CountAsync();
+            var items = await q
+                .Skip((query.Page - 1) * query.PageSize)
+                .Take(query.PageSize)
+                .ToListAsync();
+
+            return new PagedResult<Booking>
+            {
+                Items = items,
+                TotalItems = totalItems,
+                Page = query.Page,
+                PageSize = query.PageSize
+            };
+        }
+
         public async Task<Booking?> GetByIdAsync(Guid id)
         {
             return await _context.Bookings.FindAsync(id);

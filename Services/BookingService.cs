@@ -74,12 +74,27 @@ namespace SmashCourt_BE.Services
             _logger = logger;
         }
 
-        // ── GET ALL ──────────────────────────────────────────────────────────
+        // ── GET ALL (staff/owner) ─────────────────────────────────────────────
         public async Task<PagedResult<BookingDto>> GetAllAsync(
             BookingListQuery query, Guid currentUserId, string currentUserRole)
         {
             var pagedResult = await _bookingRepo.GetAllAsync(
                 query, currentUserRole, currentUserId);
+
+            return new PagedResult<BookingDto>
+            {
+                Items = pagedResult.Items.Select(MapToDto),
+                TotalItems = pagedResult.TotalItems,
+                Page = pagedResult.Page,
+                PageSize = pagedResult.PageSize
+            };
+        }
+
+        // ── GET MY BOOKINGS (customer) ────────────────────────────────────────
+        public async Task<PagedResult<BookingDto>> GetMyBookingsAsync(
+            Guid customerId, PaginationQuery query)
+        {
+            var pagedResult = await _bookingRepo.GetByCustomerIdAsync(customerId, query);
 
             return new PagedResult<BookingDto>
             {
@@ -97,6 +112,19 @@ namespace SmashCourt_BE.Services
             var booking = await _bookingRepo.GetByIdWithDetailsAsync(id);
             if (booking == null)
                 throw new AppException(404, "Không tìm thấy đơn đặt sân", ErrorCodes.NotFound);
+
+            // CUSTOMER chỉ xem booking của chính mình
+            // — Booking của guest (CustomerId = null) → customer không thể xem
+            // — Booking của customer khác → 403
+            if (currentUserRole == UserRole.CUSTOMER.ToString())
+            {
+                if (!booking.CustomerId.HasValue ||
+                    booking.CustomerId.Value != currentUserId)
+                    throw new AppException(403,
+                        "Bạn không có quyền xem đơn này", ErrorCodes.Forbidden);
+
+                return MapToDto(booking);
+            }
 
             // MANAGER/STAFF chỉ xem chi nhánh mình
             if (currentUserRole == UserRole.BRANCH_MANAGER.ToString() ||

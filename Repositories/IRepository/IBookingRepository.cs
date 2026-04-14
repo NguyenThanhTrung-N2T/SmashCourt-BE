@@ -7,6 +7,7 @@ namespace SmashCourt_BE.Repositories.IRepository
     public interface IBookingRepository
     {
         Task<PagedResult<Booking>> GetAllAsync(BookingListQuery query, string userRole, Guid userId);
+        Task<PagedResult<Booking>> GetByCustomerIdAsync(Guid customerId, PaginationQuery query);
         Task<Booking?> GetByIdAsync(Guid id);
         Task<Booking?> GetByIdWithDetailsAsync(Guid id);
         Task<Booking?> GetByCancelTokenAsync(string tokenHash);

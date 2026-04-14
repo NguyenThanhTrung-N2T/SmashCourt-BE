@@ -6,6 +6,7 @@ namespace SmashCourt_BE.Services.IService
     public interface IBookingService
     {
         Task<PagedResult<BookingDto>> GetAllAsync(BookingListQuery query, Guid currentUserId, string currentUserRole);
+        Task<PagedResult<BookingDto>> GetMyBookingsAsync(Guid customerId, PaginationQuery query);
         Task<BookingDto> GetByIdAsync(Guid id, Guid currentUserId, string currentUserRole);
         Task<OnlineBookingResponse> CreateOnlineAsync(CreateOnlineBookingDto dto, Guid? customerId);
         Task<BookingDto> CreateWalkInAsync(CreateWalkInBookingDto dto, Guid createdBy);
