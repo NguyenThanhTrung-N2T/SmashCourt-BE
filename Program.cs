@@ -29,6 +29,9 @@ using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Đảm bảo Npgsql enlist vào TransactionScope (hỗ trợ distributed transaction/ambient transaction)
+AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
+
 // Database 
 var dataSourceBuilder = new NpgsqlDataSourceBuilder(
     builder.Configuration.GetConnectionString("DefaultConnection"));

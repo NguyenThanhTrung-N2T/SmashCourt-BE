@@ -50,6 +50,16 @@ namespace SmashCourt_BE.DTOs.Booking
                     "Không thể đặt các slot trùng lặp hoàn toàn trong cùng 1 lần",
                     new[] { nameof(Courts) });
 
+            var distinctTimeSlots = Courts
+                .Select(c => new { c.StartTime, c.EndTime })
+                .Distinct()
+                .Count();
+
+            if (distinctTimeSlots > 1)
+                yield return new ValidationResult(
+                    "Tất cả các sân trong cùng một đơn đặt phải dùng chung một mốc giờ (StartTime và EndTime)",
+                    new[] { nameof(Courts) });
+
             // Phải có CustomerId hoặc thông tin khách vãng lai
             if (CustomerId == null &&
                 (string.IsNullOrEmpty(GuestName) || string.IsNullOrEmpty(GuestPhone)))

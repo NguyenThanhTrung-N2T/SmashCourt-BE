@@ -152,6 +152,10 @@ namespace SmashCourt_BE.Services
                 throw new AppException(400,
                     "Vui lòng nhập đầy đủ họ tên, SĐT và email", ErrorCodes.BadRequest);
 
+            if (!dto.Courts.Any())
+                throw new AppException(400,
+                    "Vui lòng chọn ít nhất 1 sân", ErrorCodes.BadRequest);
+
             // 2. Load + validate tất cả courts — fail fast trước khi tạo bất kỳ record nào
             var courtEntities = new List<(CourtSlotDto Slot, Court Court)>();
 
@@ -165,6 +169,10 @@ namespace SmashCourt_BE.Services
                 if (court.Status == CourtStatus.SUSPENDED)
                     throw new AppException(400,
                         $"Sân {court.Name} đang tạm ngưng hoạt động", ErrorCodes.BadRequest);
+
+                if (court.Status == CourtStatus.IN_USE)
+                    throw new AppException(400,
+                        $"Sân {court.Name} đang có khách chơi", ErrorCodes.BadRequest);
 
                 // Tất cả courts phải cùng branch
                 if (courtEntities.Any() &&
@@ -390,10 +398,13 @@ namespace SmashCourt_BE.Services
             };
         }
 
-        // Đặt sân trực tiếp tại quầy, luôn tạo booking ở trạng thái CONFIRMED
         public async Task<BookingDto> CreateWalkInAsync(
             CreateWalkInBookingDto dto, Guid createdBy)
         {
+            if (!dto.Courts.Any())
+                throw new AppException(400,
+                    "Vui lòng chọn ít nhất 1 sân", ErrorCodes.BadRequest);
+
             // 1. Load + validate tất cả courts
             var courtEntities = new List<(CourtSlotDto Slot, Court Court)>();
 
@@ -408,6 +419,10 @@ namespace SmashCourt_BE.Services
                     throw new AppException(400,
                         $"Sân {court.Name} đang tạm ngưng hoạt động", ErrorCodes.BadRequest);
 
+                if (court.Status == CourtStatus.IN_USE)
+                    throw new AppException(400,
+                        $"Sân {court.Name} đang có khách chơi", ErrorCodes.BadRequest);
+
                 if (courtEntities.Any() &&
                     court.BranchId != courtEntities.First().Court.BranchId)
                     throw new AppException(400,
@@ -417,6 +432,12 @@ namespace SmashCourt_BE.Services
             }
 
             var branchId = courtEntities.First().Court.BranchId;
+
+            // Staff chỉ được đặt sân tại chi nhánh mình
+            var isInBranch = await _userBranchRepo.IsUserInBranchAsync(createdBy, branchId);
+            if (!isInBranch)
+                throw new AppException(403,
+                    "Bạn không có quyền đặt sân tại chi nhánh này", ErrorCodes.Forbidden);
 
             // bắt đầu transaction scope để đảm bảo toàn bộ quá trình đặt sân là atomic, tránh trường hợp đã tạo booking nhưng lỗi ở bước tạo slot lock hoặc ngược lại
             using var transaction = new System.Transactions.TransactionScope(
@@ -581,8 +602,6 @@ namespace SmashCourt_BE.Services
             });
 
             // 9. Cập nhật court → BOOKED
-            var minStartTime = dto.Courts.Min(c => c.StartTime);
-            var maxEndTime = dto.Courts.Max(c => c.EndTime);
 
             foreach (var (slot, court) in courtEntities)
             {
@@ -592,8 +611,7 @@ namespace SmashCourt_BE.Services
             }
 
             // 10. Gửi email xác nhận
-            var representativeCourt = courtEntities.First().Court; // Dùng 1 sân đại diện để gửi email hoặc sau này có thể update hàm gửi list
-            await SendConfirmationEmailAsync(booking, representativeCourt, minStartTime, maxEndTime);
+            await SendConfirmationEmailAsync(booking, courtEntities.Select(c => (c.Slot, c.Court)).ToList());
 
             // 11. COMMIT TRANSACTION
             transaction.Complete();
@@ -1186,8 +1204,7 @@ namespace SmashCourt_BE.Services
 
         // Gửi email xác nhận booking với token hủy (nếu có) và log lỗi nếu thất bại nhưng không rollback booking
         private async Task SendConfirmationEmailAsync(
-            Booking booking, Court court,
-            TimeOnly startTime, TimeOnly endTime)
+            Booking booking, List<(CourtSlotDto Slot, Court Court)> courts)
         {
             try
             {
@@ -1198,6 +1215,11 @@ namespace SmashCourt_BE.Services
                 // Tạo cancel token
                 var rawToken = GenerateCancelToken();
                 var tokenHash = HashToken(rawToken);
+
+                // DTO đã validate các sân đều có chung thời gian (StartTime, EndTime)
+                var startTime = courts.First().Slot.StartTime;
+                var endTime = courts.First().Slot.EndTime;
+
                 var tokenExpiry = new DateTime[] {
                     booking.BookingDate.ToDateTime(startTime),
                     DateTime.UtcNow.AddHours(24)
@@ -1207,9 +1229,12 @@ namespace SmashCourt_BE.Services
                 booking.CancelTokenExpiresAt = tokenExpiry;
                 await _bookingRepo.UpdateAsync(booking);
 
+                // Court names để hiển thị trong email
+                var courtNames = string.Join(", ", courts.Select(c => c.Court.Name));
+
                 await _emailService.SendBookingConfirmationAsync(
                     email, name!, booking.Id, rawToken,
-                    court.Name, booking.BookingDate, startTime, endTime);
+                    courtNames, booking.BookingDate, startTime, endTime);
             }
             catch (Exception ex)
             {

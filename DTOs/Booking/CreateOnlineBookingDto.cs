@@ -36,7 +36,7 @@ namespace SmashCourt_BE.DTOs.Booking
                         new[] { nameof(Courts) });
             }
 
-            // kiểm tra trùng lặp hoàn toàn trong cùng 1 lần đặt — không check overlap vì có thể đặt 2 slot khác nhau cùng sân cùng giờ
+            // kiểm tra trùng lặp hoàn toàn trong cùng 1 lần đặt
             var exactDuplicates = Courts
                 .GroupBy(c => new { c.CourtId, c.StartTime, c.EndTime })
                 .Where(g => g.Count() > 1);
@@ -44,6 +44,17 @@ namespace SmashCourt_BE.DTOs.Booking
             if (exactDuplicates.Any())
                 yield return new ValidationResult(
                     "Không thể đặt các slot trùng lặp hoàn toàn trong cùng 1 lần",
+                    new[] { nameof(Courts) });
+
+            // Ràng buộc 1: Tất cả sân phải có cùng khung giờ (StartTime, EndTime)
+            var distinctTimeSlots = Courts
+                .Select(c => new { c.StartTime, c.EndTime })
+                .Distinct()
+                .Count();
+
+            if (distinctTimeSlots > 1)
+                yield return new ValidationResult(
+                    "Tất cả các sân trong cùng một đơn đặt phải dùng chung một mốc giờ (StartTime và EndTime)",
                     new[] { nameof(Courts) });
         }
     }
