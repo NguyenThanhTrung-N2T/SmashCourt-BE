@@ -1,4 +1,4 @@
-﻿using SmashCourt_BE.Models.Entities;
+using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
 using SmashCourt_BE.Services.IService;
@@ -99,11 +99,9 @@ namespace SmashCourt_BE.Services
                 await _slotLockRepo.DeleteByBookingIdAsync(booking.Id);
 
                 // Cập nhật court → BOOKED
-                var bookingCourt = booking.BookingCourts?.FirstOrDefault();
-                if (bookingCourt != null)
+                foreach (var bc in booking.BookingCourts ?? [])
                 {
-                    var court = await _courtRepo.GetByIdAsync(
-                        bookingCourt.CourtId, booking.BranchId);
+                    var court = await _courtRepo.GetByIdAsync(bc.CourtId, booking.BranchId);
                     if (court != null)
                     {
                         court.Status = CourtStatus.BOOKED;
@@ -143,11 +141,9 @@ namespace SmashCourt_BE.Services
 
                 await _slotLockRepo.DeleteByBookingIdAsync(booking.Id);
 
-                var bookingCourt = booking.BookingCourts?.FirstOrDefault();
-                if (bookingCourt != null)
+                foreach (var bc in booking.BookingCourts ?? [])
                 {
-                    var court = await _courtRepo.GetByIdAsync(
-                        bookingCourt.CourtId, booking.BranchId);
+                    var court = await _courtRepo.GetByIdAsync(bc.CourtId, booking.BranchId);
                     if (court != null)
                     {
                         court.Status = CourtStatus.AVAILABLE;
@@ -168,8 +164,11 @@ namespace SmashCourt_BE.Services
 
             var rawToken = GenerateCancelToken();
             var tokenHash = HashToken(rawToken);
-            var bookingCourt = booking.BookingCourts?.FirstOrDefault();
-            var startTime = bookingCourt?.StartTime ?? default;
+            
+            // Lấy First() an toàn vì đơn luôn có Courts 
+            var firstCourtSlot = booking.BookingCourts?.FirstOrDefault();
+            if (firstCourtSlot == null) return;
+            var startTime = firstCourtSlot.StartTime;
 
             var tokenExpiry = new DateTime[]
             {
@@ -181,11 +180,21 @@ namespace SmashCourt_BE.Services
             booking.CancelTokenExpiresAt = tokenExpiry;
             await _bookingRepo.UpdateAsync(booking);
 
+            // Fetch lại Court Entity chứa thông tin Sân cho Dto
+            var courts = booking.BookingCourts ?? [];
+            var courtNamesBuilder = new List<string>();
+            foreach (var bc in courts)
+            {
+                var court = await _courtRepo.GetByIdAsync(bc.CourtId, booking.BranchId);
+                if (court != null) courtNamesBuilder.Add(court.Name);
+            }
+            var courtNames = string.Join(", ", courtNamesBuilder);
+
             await _emailService.SendBookingConfirmationAsync(
                 email, name!, booking.Id, rawToken,
-                bookingCourt?.Court?.Name ?? "",
+                string.IsNullOrEmpty(courtNames) ? "Hệ thống" : courtNames,
                 booking.BookingDate, startTime,
-                bookingCourt?.EndTime ?? default);
+                firstCourtSlot.EndTime);
         }
 
         private static string GenerateCancelToken()

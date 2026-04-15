@@ -135,12 +135,11 @@ namespace SmashCourt_BE.Jobs
 
                 foreach (var booking in activeBookings)
                 {
-                    var bookingCourt = booking.BookingCourts.FirstOrDefault();
-                    if (bookingCourt == null) continue;
+                    if (!booking.BookingCourts.Any()) continue;
 
-                    // ✅ Fix timezone: BookingDate + EndTime được lưu theo giờ VN
-                    // → convert sang UTC trước khi so sánh với DateTime.UtcNow
-                    var endDateTimeVn = booking.BookingDate.ToDateTime(bookingCourt.EndTime);
+                    // ✅ FIX: Use Max(EndTime) across all courts for multi-court bookings
+                    var maxEndTime = booking.BookingCourts.Max(bc => bc.EndTime);
+                    var endDateTimeVn = booking.BookingDate.ToDateTime(maxEndTime);
                     var endDateTimeUtc = TimeZoneInfo.ConvertTimeToUtc(
                         endDateTimeVn, DateTimeHelper.VNTimezone);
 
@@ -193,16 +192,18 @@ namespace SmashCourt_BE.Jobs
 
                     booking.UpdatedAt = now;
 
-                    // Cập nhật Court → AVAILABLE khi booking kết thúc hoàn toàn
+                    // ✅ FIX: Update ALL courts → AVAILABLE when booking ends
                     // Không set khi PENDING_PAYMENT — staff còn cần thao tác checkout
                     if (booking.Status == BookingStatus.COMPLETED ||
                         booking.Status == BookingStatus.CANCELLED)
                     {
-                        if (bookingCourt.Court != null &&
-                            !busyCourtIds.Contains(bookingCourt.CourtId))
+                        foreach (var bc in booking.BookingCourts)
                         {
-                            bookingCourt.Court.Status = CourtStatus.AVAILABLE;
-                            bookingCourt.Court.UpdatedAt = now;
+                            if (bc.Court != null && !busyCourtIds.Contains(bc.CourtId))
+                            {
+                                bc.Court.Status = CourtStatus.AVAILABLE;
+                                bc.Court.UpdatedAt = now;
+                            }
                         }
                     }
 

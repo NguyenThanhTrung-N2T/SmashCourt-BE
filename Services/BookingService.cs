@@ -398,6 +398,7 @@ namespace SmashCourt_BE.Services
             };
         }
 
+        // Đặt sân trực tiếp tại quầy, luôn tạo booking ở trạng thái CONFIRMED
         public async Task<BookingDto> CreateWalkInAsync(
             CreateWalkInBookingDto dto, Guid createdBy)
         {
@@ -662,10 +663,9 @@ namespace SmashCourt_BE.Services
             await _slotLockRepo.DeleteByBookingIdAsync(booking.Id);
 
             // Cập nhật court → AVAILABLE
-            var firstCourt = booking.BookingCourts.FirstOrDefault();
-            if (firstCourt != null)
+            foreach (var bc in booking.BookingCourts)
             {
-                var court = await _courtRepo.GetByIdAsync(firstCourt.CourtId);
+                var court = await _courtRepo.GetByIdAsync(bc.CourtId);
                 if (court != null)
                 {
                     court.Status = CourtStatus.AVAILABLE;
@@ -800,10 +800,9 @@ namespace SmashCourt_BE.Services
 
             await _slotLockRepo.DeleteByBookingIdAsync(booking.Id);
 
-            var firstCourt = booking.BookingCourts.FirstOrDefault();
-            if (firstCourt != null)
+            foreach (var bc in booking.BookingCourts)
             {
-                var court = await _courtRepo.GetByIdAsync(firstCourt.CourtId, booking.BranchId);
+                var court = await _courtRepo.GetByIdAsync(bc.CourtId, booking.BranchId);
                 if (court != null)
                 {
                     court.Status = CourtStatus.AVAILABLE;
@@ -871,10 +870,9 @@ namespace SmashCourt_BE.Services
             await _bookingRepo.UpdateAsync(booking);
 
             // Cập nhật court → IN_USE
-            var firstCourt = booking.BookingCourts.FirstOrDefault();
-            if (firstCourt != null)
+            foreach (var bc in booking.BookingCourts)
             {
-                var court = await _courtRepo.GetByIdAsync(firstCourt.CourtId, booking.BranchId);
+                var court = await _courtRepo.GetByIdAsync(bc.CourtId, booking.BranchId);
                 if (court != null)
                 {
                     court.Status = CourtStatus.IN_USE;
@@ -915,10 +913,9 @@ namespace SmashCourt_BE.Services
             await _bookingRepo.UpdateAsync(booking);
 
             // Cập nhật court → AVAILABLE
-            var firstCourt = booking.BookingCourts.FirstOrDefault();
-            if (firstCourt != null)
+            foreach (var bc in booking.BookingCourts)
             {
-                var court = await _courtRepo.GetByIdAsync(firstCourt.CourtId, booking.BranchId);
+                var court = await _courtRepo.GetByIdAsync(bc.CourtId, booking.BranchId);
                 if (court != null)
                 {
                     court.Status = CourtStatus.AVAILABLE;
