@@ -1,4 +1,5 @@
 using SmashCourt_BE.Common;
+using SmashCourt_BE.Helpers;
 using SmashCourt_BE.DTOs.Booking;
 using SmashCourt_BE.DTOs.PriceConfig;
 using SmashCourt_BE.Models.Entities;
@@ -621,7 +622,7 @@ namespace SmashCourt_BE.Services
             return MapToDto(result!);
         }
 
-        // ── CANCEL BY STAFF ───────────────────────────────────────────────────
+        // Hủy sân bởi nhân viên 
         public async Task CancelByStaffAsync(
             Guid id, Guid cancelledBy, string currentUserRole)
         {
@@ -629,7 +630,7 @@ namespace SmashCourt_BE.Services
             if (booking == null)
                 throw new AppException(404, "Không tìm thấy đơn đặt sân", ErrorCodes.NotFound);
 
-            // Validate branch access
+            // kiểm tra quyền hủy booking theo chi nhánh
             await ValidateBranchAccessAsync(booking.BranchId, cancelledBy, currentUserRole);
 
             var cancellableStatuses = new[]
@@ -656,7 +657,7 @@ namespace SmashCourt_BE.Services
             booking.CancelSource = CancelSourceEnum.STAFF;
             booking.UpdatedAt = now;
 
-            // Deactivate booking_courts
+            // cập nhật booking_court → is_active = false
             await _bookingRepo.UpdateCourtActiveStatusAsync(booking.Id, false);
 
             // Xóa slot_lock nếu có
@@ -714,7 +715,7 @@ namespace SmashCourt_BE.Services
             // TODO: Broadcast SignalR
         }
 
-        // ── CANCEL BY TOKEN ───────────────────────────────────────────────────
+        // Lấy thông tin hủy booking theo token (dùng cho khách hàng hủy booking online)
         public async Task<CancelTokenInfoDto> GetCancelInfoAsync(string token)
         {
             var tokenHash = HashToken(token);
@@ -761,6 +762,7 @@ namespace SmashCourt_BE.Services
             };
         }
 
+        // Hủy booking theo token (dùng cho khách hàng hủy booking online)
         public async Task CancelByTokenAsync(string token)
         {
             var tokenHash = HashToken(token);
@@ -850,7 +852,7 @@ namespace SmashCourt_BE.Services
             // TODO: Broadcast SignalR
         }
 
-        // ── CHECK-IN ──────────────────────────────────────────────────────────
+        // check in sân, chỉ cho phép check-in khi booking đang CONFIRMED hoặc PAID_ONLINE
         public async Task CheckInAsync(Guid id, Guid currentUserId, string currentUserRole)
         {
             var booking = await _bookingRepo.GetByIdWithDetailsAsync(id);
@@ -862,7 +864,7 @@ namespace SmashCourt_BE.Services
             if (booking.Status != BookingStatus.CONFIRMED &&
                 booking.Status != BookingStatus.PAID_ONLINE)
                 throw new AppException(400,
-                    "Chỉ có thể check-in đơn đang CONFIRMED hoặc PAID_ONLINE",
+                    "Chỉ có thể check-in đơn đang xác nhận hoặc đã thanh toán trực tuyến",
                     ErrorCodes.BadRequest);
 
             booking.Status = BookingStatus.IN_PROGRESS;
@@ -884,7 +886,7 @@ namespace SmashCourt_BE.Services
             // TODO: Broadcast SignalR
         }
 
-        // ── CHECKOUT ──────────────────────────────────────────────────────────
+        // check out sân, chỉ cho phép check-out khi booking đang PENDING_PAYMENT
         public async Task CheckoutAsync(Guid id, Guid currentUserId, string currentUserRole)
         {
             var booking = await _bookingRepo.GetByIdWithDetailsAsync(id);
@@ -895,7 +897,7 @@ namespace SmashCourt_BE.Services
 
             if (booking.Status != BookingStatus.PENDING_PAYMENT)
                 throw new AppException(400,
-                    "Chỉ có thể checkout đơn đang PENDING_PAYMENT",
+                    "Chỉ có thể checkout đơn đang chờ thanh toán",
                     ErrorCodes.BadRequest);
 
             var invoice = booking.Invoice;
@@ -931,7 +933,7 @@ namespace SmashCourt_BE.Services
             // TODO: Broadcast SignalR
         }
 
-        // ── ADD SERVICE ───────────────────────────────────────────────────────
+        // thêm dịch vụ vào booking, chỉ cho phép thêm khi booking đang CONFIRMED, IN_PROGRESS hoặc PENDING_PAYMENT
         public async Task<BookingDto> AddServiceAsync(
             Guid id, AddBookingServiceDto dto,
             Guid currentUserId, string currentUserRole)
@@ -965,7 +967,7 @@ namespace SmashCourt_BE.Services
             if (invoice?.PaymentStatus == InvoicePaymentStatus.PARTIALLY_PAID &&
                 booking.Status != BookingStatus.IN_PROGRESS)
                 throw new AppException(400,
-                    "Chỉ có thể thêm dịch vụ khi đang IN_PROGRESS", ErrorCodes.BadRequest);
+                    "Chỉ có thể thêm dịch vụ khi đang tiến hành", ErrorCodes.BadRequest);
 
             // Tìm branch service
             var branchService = await _branchServiceRepo.GetByBranchServiceAsync(
@@ -1006,7 +1008,7 @@ namespace SmashCourt_BE.Services
             return MapToDto(result!);
         }
 
-        // ── REMOVE SERVICE ────────────────────────────────────────────────────
+        // Xóa dịch vụ khỏi booking, chỉ cho phép xóa khi booking đang CONFIRMED, IN_PROGRESS hoặc PENDING_PAYMENT
         public async Task<BookingDto> RemoveServiceAsync(
             Guid id, Guid serviceId,
             Guid currentUserId, string currentUserRole)
@@ -1067,7 +1069,7 @@ namespace SmashCourt_BE.Services
             return MapToDto(result!);
         }
 
-        // ── CONFIRM REFUND ────────────────────────────────────────────────────
+        // Xác nhận hoàn tiền bởi nhân viên
         public async Task ConfirmRefundAsync(
             Guid id, Guid confirmedBy, string currentUserRole)
         {
@@ -1075,7 +1077,7 @@ namespace SmashCourt_BE.Services
             if (booking == null)
                 throw new AppException(404, "Không tìm thấy đơn đặt sân", ErrorCodes.NotFound);
 
-            // Validate branch access
+            // kiểm tra quyền thao tác chi nhánh của user, nếu là OWNER thì bỏ qua
             await ValidateBranchAccessAsync(booking.BranchId, confirmedBy, currentUserRole);
 
             if (booking.Status != BookingStatus.CANCELLED_PENDING_REFUND)
@@ -1109,7 +1111,7 @@ namespace SmashCourt_BE.Services
             await _bookingRepo.UpdateAsync(booking);
         }
 
-        // ── HELPERS ───────────────────────────────────────────────────────────
+        // Kiểm tra quyền thao tác chi nhánh của user, nếu là OWNER thì bỏ qua
         private async Task ValidateBranchAccessAsync(
             Guid branchId, Guid userId, string userRole)
         {
@@ -1121,11 +1123,19 @@ namespace SmashCourt_BE.Services
                     "Bạn không có quyền thao tác chi nhánh này", ErrorCodes.Forbidden);
         }
 
+        // Tính phần trăm hoàn tiền dựa trên cancel policy
         private async Task<decimal> CalculateRefundPercentAsync(
             TimeOnly startTime, DateOnly bookingDate)
         {
+            // lấy thời gian hiện tại ở VN để tính số giờ còn lại trước khi bắt đầu booking
             var bookingDateTime = bookingDate.ToDateTime(startTime);
-            var hoursUntilStart = (bookingDateTime - DateTime.UtcNow).TotalHours;
+            var vnNow = DateTimeHelper.GetNowInVietnam();
+            
+            var hoursUntilStart = (bookingDateTime - vnNow).TotalHours;
+
+            // Đã qua giờ bắt đầu → không hoàn tiền
+            if (hoursUntilStart < 0)
+                return 0;
 
             var policies = await _cancelPolicyRepo.GetAllAsync();
             var applicable = policies
@@ -1136,7 +1146,7 @@ namespace SmashCourt_BE.Services
             return applicable?.RefundPercent ?? 0;
         }
 
-        // ── EARN LOYALTY ──────────────────────────────────────────────────────
+        // Tích điểm loyalty dựa trên court_fee, tạo transaction và gửi email nếu lên hạng
         private async Task EarnLoyaltyPointsAsync(Booking booking, decimal courtFee)
         {
             try
@@ -1254,6 +1264,7 @@ namespace SmashCourt_BE.Services
             return Convert.ToHexString(bytes).ToLower();
         }
 
+        // map data từ entity Booking sang DTO BookingDto, bao gồm courts, price items và services
         private static BookingDto MapToDto(Booking b) => new()
         {
             Id = b.Id,

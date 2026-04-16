@@ -16,6 +16,8 @@ namespace SmashCourt_BE.Repositories.IRepository
 
         // Xóa tất cả slot lock đã hết hạn của chi nhánh
         Task DeleteExpiredByBranchAsync(Guid branchId);
+
+        // Xóa tất cả slot lock liên quan đến một booking cụ thể
         Task DeleteByBookingIdAsync(Guid bookingId);
     }
 }

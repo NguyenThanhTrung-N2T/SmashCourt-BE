@@ -1,4 +1,5 @@
-﻿using SmashCourt_BE.Services.IService;
+﻿using SmashCourt_BE.Helpers;
+using SmashCourt_BE.Services.IService;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -28,7 +29,7 @@ namespace SmashCourt_BE.Services
                 ["vnp_Command"] = "pay",
                 ["vnp_TmnCode"] = TmnCode,
                 ["vnp_Amount"] = ((long)(amount * 100)).ToString(),
-                ["vnp_CreateDate"] = DateTime.UtcNow.AddHours(7)
+                ["vnp_CreateDate"] = DateTimeHelper.GetNowInVietnam()
                     .ToString("yyyyMMddHHmmss"),
                 ["vnp_CurrCode"] = "VND",
                 ["vnp_IpAddr"] = "127.0.0.1",
@@ -37,7 +38,7 @@ namespace SmashCourt_BE.Services
                 ["vnp_OrderType"] = "other",
                 ["vnp_ReturnUrl"] = ReturnUrl,
                 ["vnp_TxnRef"] = transactionRef,
-                ["vnp_ExpireDate"] = DateTime.UtcNow.AddHours(7).AddMinutes(15)
+                ["vnp_ExpireDate"] = DateTimeHelper.GetNowInVietnam().AddMinutes(15)
                     .ToString("yyyyMMddHHmmss")
             };
 

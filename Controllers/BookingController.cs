@@ -79,8 +79,9 @@ namespace SmashCourt_BE.Controllers
         }
 
 
-
-
+        /// <summary>
+        /// Hủy đơn đặt sân
+        /// </summary>
         [HttpPost("{id:guid}/cancel")]
         [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
         public async Task<IActionResult> CancelByStaff(Guid id)
@@ -91,6 +92,10 @@ namespace SmashCourt_BE.Controllers
             return Ok(ApiResponse.Ok(message: "Hủy đơn thành công"));
         }
 
+
+        /// <summary>
+        /// Xác nhận hoàn tiền
+        /// </summary>
         [HttpPost("{id:guid}/confirm-refund")]
         [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
         public async Task<IActionResult> ConfirmRefund(Guid id)
@@ -101,13 +106,21 @@ namespace SmashCourt_BE.Controllers
             return Ok(ApiResponse.Ok(message: "Xác nhận hoàn tiền thành công"));
         }
 
+
+        /// <summary>
+        /// Xem thông tin hủy đơn qua link (token) 
+        /// </summary>
         [HttpGet("cancel/{token}")]
         public async Task<IActionResult> GetCancelInfo(string token)
         {
             var result = await _service.GetCancelInfoAsync(token);
-            return Ok(ApiResponse<CancelTokenInfoDto>.Ok(result));
+            return Ok(ApiResponse<CancelTokenInfoDto>.Ok(result,"Lấy thông tin đặt sân thành công"));
         }
 
+
+        /// <summary>
+        /// Hủy đơn đặt sân qua link (token)
+        /// </summary>
         [HttpPost("cancel/{token}")]
         public async Task<IActionResult> CancelByToken(string token)
         {
@@ -115,6 +128,10 @@ namespace SmashCourt_BE.Controllers
             return Ok(ApiResponse.Ok(message: "Hủy đơn thành công"));
         }
 
+
+        /// <summary>
+        /// Check - in khách hàng đến sân, chỉ nhân viên mới được check-in
+        /// </summary>
         [HttpPost("{id:guid}/check-in")]
         [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
         public async Task<IActionResult> CheckIn(Guid id)
@@ -125,6 +142,10 @@ namespace SmashCourt_BE.Controllers
             return Ok(ApiResponse.Ok(message: "Check-in thành công"));
         }
 
+
+        /// <summary>
+        /// Check out khách hàng rời sân, chỉ nhân viên mới được check-out
+        /// </summary>
         [HttpPost("{id:guid}/checkout")]
         [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
         public async Task<IActionResult> Checkout(Guid id)
@@ -135,6 +156,10 @@ namespace SmashCourt_BE.Controllers
             return Ok(ApiResponse.Ok(message: "Checkout thành công"));
         }
 
+
+        /// <summary>
+        /// Thêm dịch vụ cho booking, chỉ nhân viên mới được thêm dịch vụ
+        /// </summary>
         [HttpPost("{id:guid}/services")]
         [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
         public async Task<IActionResult> AddService(
@@ -146,6 +171,10 @@ namespace SmashCourt_BE.Controllers
             return StatusCode(201, ApiResponse<BookingDto>.Ok(result, "Thêm dịch vụ thành công"));
         }
 
+
+        /// <summary>
+        /// Xoá dịch vụ khỏi booking, chỉ nhân viên mới được xoá dịch vụ
+        /// </summary>
         [HttpDelete("{id:guid}/services/{serviceId:guid}")]
         [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
         public async Task<IActionResult> RemoveService(Guid id, Guid serviceId)

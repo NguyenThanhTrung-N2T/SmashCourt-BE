@@ -28,6 +28,7 @@ namespace SmashCourt_BE.Repositories
             return invoice;
         }
 
+        // Cập nhật invoice
         public async Task UpdateAsync(Invoice invoice)
         {
             _context.Invoices.Update(invoice);

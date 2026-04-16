@@ -1,5 +1,6 @@
 using SmashCourt_BE.Common;
 using SmashCourt_BE.DTOs.Booking;
+using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
 using SmashCourt_BE.Services.IService;
@@ -56,7 +57,8 @@ namespace SmashCourt_BE.Services
 
                 if (slotLock != null)
                 {
-                    var remainingSeconds = (int)(slotLock.ExpiresAt - DateTime.UtcNow).TotalSeconds;
+                    var vnNow = DateTimeHelper.GetNowInVietnam();
+                    var remainingSeconds = (int)(slotLock.ExpiresAt - vnNow).TotalSeconds;
                     result.Add(new TimeGridSlotDto
                     {
                         StartTime = slot.StartTime,

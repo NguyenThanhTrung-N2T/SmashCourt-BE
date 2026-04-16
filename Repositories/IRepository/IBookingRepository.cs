@@ -15,6 +15,7 @@ namespace SmashCourt_BE.Repositories.IRepository
         // Lấy thông tin booking theo id, có phân quyền
         Task<Booking?> GetByIdWithDetailsAsync(Guid id);
 
+        // Lấy thông tin booking theo token hủy (dùng cho khách hàng hủy booking online)
         Task<Booking?> GetByCancelTokenAsync(string tokenHash);
 
         // Kiểm tra xem có booking nào đã tồn tại trên sân vào khung giờ đó hay không (dùng để validate khi tạo hoặc cập nhật booking)
@@ -27,7 +28,7 @@ namespace SmashCourt_BE.Repositories.IRepository
         // Tạo mới booking, trả về booking đã được tạo (có id)
         Task<Booking> CreateAsync(Booking booking);
 
-        
+        // Cập nhật booking
         Task UpdateAsync(Booking booking);
 
         // Thêm mới booking court, trả về booking court đã được tạo (có id)
@@ -38,8 +39,14 @@ namespace SmashCourt_BE.Repositories.IRepository
 
         // Thêm promotion vào booking
         Task AddPromotionAsync(BookingPromotion promotion);
+
+        // Thêm dịch vụ vào booking
         Task AddServiceAsync(BookingService service);
+
+        // Xóa dịch vụ khỏi booking
         Task RemoveServiceAsync(BookingService service);
+
+        // Cập nhật trạng thái active của booking court (dùng để check-in/check-out)
         Task UpdateCourtActiveStatusAsync(Guid bookingId, bool isActive);
     }
 }

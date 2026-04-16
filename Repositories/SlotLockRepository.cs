@@ -69,6 +69,7 @@ namespace SmashCourt_BE.Repositories
                 .ToListAsync();
         }
 
+        // Xóa tất cả lock của booking khi booking được hủy hoặc hoàn thành
         public async Task DeleteByBookingIdAsync(Guid bookingId)
         {
             await _context.SlotLocks

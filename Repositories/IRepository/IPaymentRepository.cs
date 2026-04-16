@@ -8,6 +8,8 @@ namespace SmashCourt_BE.Repositories.IRepository
 
         // tạo payment mới, trả về payment đã được tạo 
         Task<Payment> CreateAsync(Payment payment);
+
+        // cập nhật payment
         Task UpdateAsync(Payment payment);
         Task CreateIpnLogAsync(PaymentIpnLog log);
     }

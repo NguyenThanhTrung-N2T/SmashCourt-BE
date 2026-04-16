@@ -8,6 +8,8 @@ namespace SmashCourt_BE.Repositories.IRepository
 
         // Tạo mới invoice, trả về invoice đã được tạo (có id)
         Task<Invoice> CreateAsync(Invoice invoice);
+
+        // Cập nhật invoice
         Task UpdateAsync(Invoice invoice);
     }
 }

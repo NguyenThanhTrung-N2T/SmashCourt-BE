@@ -1,3 +1,4 @@
+using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
@@ -173,7 +174,7 @@ namespace SmashCourt_BE.Services
             var tokenExpiry = new DateTime[]
             {
             booking.BookingDate.ToDateTime(startTime),
-            DateTime.UtcNow.AddHours(24)
+            DateTimeHelper.GetNowInVietnam().AddHours(24)
             }.Min();
 
             booking.CancelTokenHash = tokenHash;

@@ -132,6 +132,7 @@ namespace SmashCourt_BE.Repositories
         }
 
 
+        // Lấy thông tin booking theo token hủy (dùng cho khách hàng hủy booking online)
         public async Task<Booking?> GetByCancelTokenAsync(string tokenHash)
         {
             return await _context.Bookings
@@ -178,6 +179,7 @@ namespace SmashCourt_BE.Repositories
             return booking;
         }
 
+        // cập nhật booking
         public async Task UpdateAsync(Booking booking)
         {
             _context.Bookings.Update(booking);
@@ -206,18 +208,21 @@ namespace SmashCourt_BE.Repositories
             await _context.SaveChangesAsync();
         }
 
+        // Thêm dịch vụ vào booking
         public async Task AddServiceAsync(BookingService service)
         {
             _context.BookingServices.Add(service);
             await _context.SaveChangesAsync();
         }
 
+        // Xóa dịch vụ khỏi booking
         public async Task RemoveServiceAsync(BookingService service)
         {
             _context.BookingServices.Remove(service);
             await _context.SaveChangesAsync();
         }
 
+        // Cập nhật trạng thái active của booking court (dùng để check-in/check-out)
         public async Task UpdateCourtActiveStatusAsync(Guid bookingId, bool isActive)
         {
             await _context.BookingCourts
