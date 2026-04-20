@@ -109,11 +109,6 @@ namespace SmashCourt_BE.Repositories
             };
         }
 
-        public async Task<Booking?> GetByIdAsync(Guid id)
-        {
-            return await _context.Bookings.FindAsync(id);
-        }
-
         // Lấy thông tin booking theo id, có phân quyền
         public async Task<Booking?> GetByIdWithDetailsAsync(Guid id)
         {

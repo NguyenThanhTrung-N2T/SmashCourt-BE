@@ -18,6 +18,9 @@ namespace SmashCourt_BE.Controllers
             _service = service;
         }
 
+        /// <summary>
+        /// Lấy lịch trống của sân theo ngày
+        /// </summary>
         [HttpGet]
         public async Task<IActionResult> GetTimeGrid(
             Guid branchId, Guid courtId,

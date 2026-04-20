@@ -8,9 +8,9 @@ namespace SmashCourt_BE.Repositories.IRepository
     {
         // Lấy danh sách booking để hiển thị cho staff (có filter, phân trang)
         Task<PagedResult<Booking>> GetAllAsync(BookingListQuery query, string userRole, Guid userId);
-        
+
+        // Lấy danh sách booking của khách hàng (có phân trang)
         Task<PagedResult<Booking>> GetByCustomerIdAsync(Guid customerId, PaginationQuery query);
-        Task<Booking?> GetByIdAsync(Guid id);
 
         // Lấy thông tin booking theo id, có phân quyền
         Task<Booking?> GetByIdWithDetailsAsync(Guid id);
@@ -21,8 +21,7 @@ namespace SmashCourt_BE.Repositories.IRepository
         // Kiểm tra xem có booking nào đã tồn tại trên sân vào khung giờ đó hay không (dùng để validate khi tạo hoặc cập nhật booking)
         Task<bool> HasOverlapAsync(Guid courtId, DateOnly date, TimeOnly startTime, TimeOnly endTime);
 
-
-
+        // Lấy danh sách booking court đang active (đang check-in) của một sân trong một ngày cụ thể
         Task<List<BookingCourt>> GetActiveByCourtAndDateAsync(Guid courtId, DateOnly date);
 
         // Tạo mới booking, trả về booking đã được tạo (có id)

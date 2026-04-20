@@ -6,6 +6,8 @@ namespace SmashCourt_BE.Repositories.IRepository
     {
         // Lấy slot lock của sân vào một khoảng thời gian cụ thể, nếu có
         Task<SlotLock?> GetByCourtAndTimeAsync(Guid courtId, DateOnly date, TimeOnly startTime, TimeOnly endTime);
+
+        // Lấy tất cả slot lock của sân vào một ngày cụ thể
         Task<List<SlotLock>> GetByCourtAndDateAsync(Guid courtId, DateOnly date);
 
         // tạo một slot lock mới

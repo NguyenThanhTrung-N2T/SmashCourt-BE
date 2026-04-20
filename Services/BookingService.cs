@@ -91,7 +91,7 @@ namespace SmashCourt_BE.Services
             };
         }
 
-        // ── GET MY BOOKINGS (customer) ────────────────────────────────────────
+        // Lấy danh sách booking của chính khách hàng (customer)
         public async Task<PagedResult<BookingDto>> GetMyBookingsAsync(
             Guid customerId, PaginationQuery query)
         {

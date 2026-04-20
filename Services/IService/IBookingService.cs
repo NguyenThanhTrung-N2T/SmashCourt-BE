@@ -7,8 +7,8 @@ namespace SmashCourt_BE.Services.IService
     {
         // lấy danh sách booking để hiển thị cho staff (có filter, phân trang)
         Task<PagedResult<BookingDto>> GetAllAsync(BookingListQuery query, Guid currentUserId, string currentUserRole);
-        
-        
+
+        // Lấy danh sách booking của khách hàng (có phân trang)
         Task<PagedResult<BookingDto>> GetMyBookingsAsync(Guid customerId, PaginationQuery query);
 
         // Lấy thông tin booking theo id, có phân quyền

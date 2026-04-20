@@ -185,35 +185,4 @@ namespace SmashCourt_BE.Controllers
             return Ok(ApiResponse<BookingDto>.Ok(result, "Xóa dịch vụ thành công"));
         }
     }
-
-    // CustomerBookingController
-    [ApiController]
-    [Route("api/me/bookings")]
-    [Authorize(Policy = AuthorizationPolicies.CustomerOnly)]
-    public class CustomerBookingController : ControllerBase
-    {
-        private readonly IBookingService _service;
-
-        public CustomerBookingController(IBookingService service)
-        {
-            _service = service;
-        }
-
-        [HttpGet]
-        public async Task<IActionResult> GetMyBookings([FromQuery] PaginationQuery query)
-        {
-            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            var result = await _service.GetMyBookingsAsync(userId, query);
-            return Ok(ApiResponse<PagedResult<BookingDto>>.Ok(result));
-        }
-
-        [HttpGet("{id:guid}")]
-        public async Task<IActionResult> GetMyBookingById(Guid id)
-        {
-            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            // Service sẽ check booking.CustomerId == userId, throw 403 nếu sai
-            var result = await _service.GetByIdAsync(id, userId, UserRole.CUSTOMER.ToString());
-            return Ok(ApiResponse<BookingDto>.Ok(result));
-        }
-    }
 }

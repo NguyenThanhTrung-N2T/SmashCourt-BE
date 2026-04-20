@@ -26,6 +26,8 @@ namespace SmashCourt_BE.Services
             _courtRepo = courtRepo;
         }
 
+
+        // Lấy danh sách các khung giờ của một sân trong một ngày cụ thể
         public async Task<List<TimeGridSlotDto>> GetTimeGridAsync(
             Guid branchId, Guid courtId, DateOnly date)
         {
@@ -37,13 +39,14 @@ namespace SmashCourt_BE.Services
                           date.DayOfWeek == DayOfWeek.Sunday
                 ? DayType.WEEKEND : DayType.WEEKDAY;
 
+            // lấy tất cả các khung giờ từ cơ sở dữ liệu và lọc theo loại ngày (weekday/weekend)
             var allSlots = await _timeSlotRepo.GetAllAsync();
             var slots = allSlots
                 .Where(ts => ts.DayType == dayType)
                 .OrderBy(ts => ts.StartTime)
                 .ToList();
 
-            // ✅ Batch load — 2 queries thay vì 2N queries
+            // Lấy tất cả các lock và booking của sân trong ngày đó
             var allLocks = await _slotLockRepo.GetByCourtAndDateAsync(courtId, date);
             var allBookings = await _bookingRepo.GetActiveByCourtAndDateAsync(courtId, date);
 
