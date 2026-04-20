@@ -1,10 +1,11 @@
-﻿namespace SmashCourt_BE.DTOs.Booking
+namespace SmashCourt_BE.DTOs.Booking
 {
     public class CancelTokenInfoDto
     {
         public Guid BookingId { get; set; }
         public string BranchName { get; set; } = null!;
-        public string CourtName { get; set; } = null!;
+        /// <summary>Tên tất cả sân trong booking (hỗ trợ multi-court)</summary>
+        public List<string> CourtNames { get; set; } = [];
         public DateOnly BookingDate { get; set; }
         public TimeOnly StartTime { get; set; }
         public TimeOnly EndTime { get; set; }

@@ -231,6 +231,60 @@ public class EmailService
 
         await SendAsync(toEmail, subject, body);
     }
+    // Gửi email xác nhận hoàn tiền thành công
+    public async Task SendRefundConfirmedAsync(
+        string toEmail, string fullName, Guid bookingId, decimal refundAmount)
+    {
+        var subject = "💰 Xác nhận hoàn tiền - SmashCourt";
+        var amountStr = refundAmount.ToString("N0") + " đ";
+
+        var body = $"""
+    <!DOCTYPE html>
+    <html lang="vi">
+    <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+    <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f4f7f6; margin: 0; padding: 0;">
+        <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f4f7f6; padding: 40px 0;">
+            <tr><td align="center">
+                <table width="100%" cellpadding="0" cellspacing="0" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; margin: 0 auto;">
+                    <tr><td style="background-color: #1e3a8a; padding: 35px 30px; text-align: center;">
+                        <h1 style="color: #ffffff; margin: 0; font-size: 32px; font-weight: 800; letter-spacing: 2px;">SMASHCOURT</h1>
+                        <p style="color: #bfdbfe; margin: 8px 0 0 0; font-size: 15px;">Nền Tảng Đặt Sân Thể Thao Hàng Đầu</p>
+                    </td></tr>
+                    <tr><td style="padding: 45px 35px;">
+                        <div style="text-align: center; margin-bottom: 25px; font-size: 56px;">💰</div>
+                        <h2 style="color: #16a34a; margin: 0 0 20px 0; font-size: 22px; font-weight: 700; text-align: center;">Hoàn tiền thành công!</h2>
+                        <p style="color: #475569; font-size: 16px; line-height: 1.6; margin: 0 0 25px 0;">Xin chào <strong style="color: #0f172a;">{fullName}</strong>, yêu cầu hoàn tiền cho đơn đặt sân của bạn đã được xử lý thành công.</p>
+                        <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f0fdf4; border-radius: 10px; margin-bottom: 30px; border: 1px solid #bbf7d0;">
+                            <tr><td style="padding: 25px;">
+                                <p style="margin: 0 0 12px 0; color: #15803d; font-size: 13px; text-transform: uppercase; font-weight: 700; letter-spacing: 1px;">Chi tiết hoàn tiền</p>
+                                <table width="100%"><tr>
+                                    <td style="color: #64748b; font-size: 14px; padding: 6px 0;">🆔 Mã booking:</td>
+                                    <td style="color: #2563eb; font-size: 13px; font-weight: 600; text-align: right; font-family: monospace;">{bookingId.ToString()[..8].ToUpper()}</td>
+                                </tr><tr>
+                                    <td style="color: #64748b; font-size: 14px; padding: 6px 0;">💵 Số tiền hoàn:</td>
+                                    <td style="color: #16a34a; font-size: 16px; font-weight: 800; text-align: right;">{amountStr}</td>
+                                </tr></table>
+                            </td></tr>
+                        </table>
+                        <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #eff6ff; border-radius: 8px; margin-bottom: 25px; border-left: 4px solid #3b82f6;">
+                            <tr><td style="padding: 20px;">
+                                <p style="margin: 0; color: #1e3a8a; font-size: 14px; line-height: 1.6;">💡 Thời gian nhận tiền có thể mất từ <strong>1–5 ngày làm việc</strong> tùy theo ngân hàng hoặc ví điện tử của bạn. Nếu có thắc mắc, vui lòng liên hệ bộ phận hỗ trợ.</p>
+                            </td></tr>
+                        </table>
+                    </td></tr>
+                    <tr><td style="background-color: #f8fafc; padding: 25px 30px; text-align: center; border-top: 1px solid #e2e8f0;">
+                        <p style="margin: 0 0 5px 0; color: #64748b; font-size: 13px;">Trân trọng,</p>
+                        <p style="margin: 0; color: #0f172a; font-size: 15px; font-weight: 600;">Đội ngũ phát triển SmashCourt</p>
+                        <p style="margin: 12px 0 0 0; color: #94a3b8; font-size: 12px;">&copy; {DateTime.UtcNow.Year} SmashCourt. Tất cả các quyền được bảo lưu.</p>
+                    </td></tr>
+                </table>
+            </td></tr>
+        </table>
+    </body></html>
+    """;
+
+        await SendAsync(toEmail, subject, body);
+    }
 
     private string BuildEmailTemplate(string title, string fullName, string message, string otpCode, string extraNote)
     {

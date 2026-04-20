@@ -1,4 +1,5 @@
 using SmashCourt_BE.Data;
+using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Repositories.IRepository;
 using Microsoft.EntityFrameworkCore;
@@ -25,7 +26,7 @@ namespace SmashCourt_BE.Repositories
                     sl.Date == date &&
                     sl.StartTime < endTime &&
                     sl.EndTime > startTime &&
-                    sl.ExpiresAt > DateTime.UtcNow);
+                    sl.ExpiresAt > DateTimeHelper.GetNowInVietnam());
         }
 
         public async Task<SlotLock> CreateAsync(SlotLock slotLock)
@@ -53,7 +54,7 @@ namespace SmashCourt_BE.Repositories
             await _context.SlotLocks
                 .Where(sl =>
                     courtIds.Contains(sl.CourtId) &&
-                    sl.ExpiresAt <= DateTime.UtcNow)
+                    sl.ExpiresAt <= DateTimeHelper.GetNowInVietnam())
                 .ExecuteDeleteAsync();
         }
 
@@ -65,7 +66,7 @@ namespace SmashCourt_BE.Repositories
                 .Where(sl =>
                     sl.CourtId == courtId &&
                     sl.Date == date &&
-                    sl.ExpiresAt > DateTime.UtcNow)
+                    sl.ExpiresAt > DateTimeHelper.GetNowInVietnam())
                 .ToListAsync();
         }
 

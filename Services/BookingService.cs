@@ -260,7 +260,8 @@ namespace SmashCourt_BE.Services
             var finalTotal = totalAfterLoyalty - promotionDiscountAmount;
 
             // 7. Tạo booking PENDING — 1 booking cho tất cả courts
-            var expiresAt = DateTime.UtcNow.AddMinutes(10);
+            // Dùng giờ VN để đồng bộ toàn hệ thống (test ở VN)
+            var expiresAt = DateTimeHelper.GetNowInVietnam().AddMinutes(10);
             var booking = new Booking
             {
                 BranchId = branchId,
@@ -461,7 +462,8 @@ namespace SmashCourt_BE.Services
                     slot.CourtId, dto.BookingDate, slot.StartTime, slot.EndTime);
                 if (existingLock != null)
                 {
-                    var remaining = (int)(existingLock.ExpiresAt - DateTime.UtcNow).TotalMinutes;
+                    // ExpiresAt lưu giờ VN → so sánh với giờ VN
+                    var remaining = (int)(existingLock.ExpiresAt - DateTimeHelper.GetNowInVietnam()).TotalMinutes;
                     throw new AppException(400,
                         $"Sân {court.Name} đang bị khóa thanh toán ({remaining} phút)",
                         ErrorCodes.BadRequest);
@@ -729,7 +731,7 @@ namespace SmashCourt_BE.Services
                 throw new AppException(400,
                     "Link hủy đã được sử dụng", ErrorCodes.BadRequest);
 
-            if (booking.CancelTokenExpiresAt < DateTime.UtcNow)
+            if (booking.CancelTokenExpiresAt < DateTimeHelper.GetNowInVietnam())
                 throw new AppException(400,
                     "Link hủy đã hết hạn", ErrorCodes.BadRequest);
 
@@ -739,9 +741,11 @@ namespace SmashCourt_BE.Services
                     "Tài khoản bị khóa, vui lòng liên hệ nhân viên để được hỗ trợ",
                     ErrorCodes.AccountLocked);
 
-            var bookingCourt = booking.BookingCourts.First();
+            // Các sân trong cùng booking đều có chung StartTime/EndTime
+            // → lấy First() cho thời gian là đúng; CourtNames liệt kê tất cả sân
+            var firstCourt = booking.BookingCourts.First();
             var refundPercent = await CalculateRefundPercentAsync(
-                bookingCourt.StartTime, booking.BookingDate);
+                firstCourt.StartTime, booking.BookingDate);
 
             var invoice = booking.Invoice;
             var refundAmount = invoice != null
@@ -752,10 +756,13 @@ namespace SmashCourt_BE.Services
             {
                 BookingId = booking.Id,
                 BranchName = booking.Branch.Name,
-                CourtName = bookingCourt.Court.Name,
+                CourtNames = booking.BookingCourts
+                    .Select(bc => bc.Court?.Name ?? string.Empty)
+                    .Where(n => !string.IsNullOrEmpty(n))
+                    .ToList(),
                 BookingDate = booking.BookingDate,
-                StartTime = bookingCourt.StartTime,
-                EndTime = bookingCourt.EndTime,
+                StartTime = firstCourt.StartTime,
+                EndTime = firstCourt.EndTime,
                 RefundAmount = refundAmount,
                 RefundPercent = refundPercent,
                 Status = booking.Status.ToString()
@@ -776,7 +783,7 @@ namespace SmashCourt_BE.Services
                 throw new AppException(400,
                     "Link hủy đã được sử dụng", ErrorCodes.BadRequest);
 
-            if (booking.CancelTokenExpiresAt < DateTime.UtcNow)
+            if (booking.CancelTokenExpiresAt < DateTimeHelper.GetNowInVietnam())
                 throw new AppException(400,
                     "Link hủy đã hết hạn", ErrorCodes.BadRequest);
 
@@ -814,8 +821,8 @@ namespace SmashCourt_BE.Services
             booking.CancelTokenUsedAt = now;
             booking.UpdatedAt = now;
 
-            foreach (var bc in booking.BookingCourts)
-                bc.IsActive = false;
+            // Dùng repository call rõ ràng thay vì set trực tiếp trên RAM (nhất quán với CancelByStaffAsync)
+            await _bookingRepo.UpdateCourtActiveStatusAsync(booking.Id, false);
 
             await _slotLockRepo.DeleteByBookingIdAsync(booking.Id);
 
@@ -1126,6 +1133,20 @@ namespace SmashCourt_BE.Services
             booking.Status = BookingStatus.CANCELLED_REFUNDED;
             booking.UpdatedAt = now;
             await _bookingRepo.UpdateAsync(booking);
+
+            // Gửi email thông báo hoàn tiền cho khách
+            try
+            {
+                var email = booking.Customer?.Email ?? booking.GuestEmail;
+                var name = booking.Customer?.FullName ?? booking.GuestName;
+                if (!string.IsNullOrEmpty(email))
+                    await _emailService.SendRefundConfirmedAsync(
+                        email, name!, booking.Id, refund.Amount);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to send refund email for booking {Id}", booking.Id);
+            }
         }
 
         // Kiểm tra quyền thao tác chi nhánh của user, nếu là OWNER thì bỏ qua
@@ -1244,9 +1265,10 @@ namespace SmashCourt_BE.Services
                 var startTime = courts.First().Slot.StartTime;
                 var endTime = courts.First().Slot.EndTime;
 
+                // Lấy VN time để nhất quán với PaymentService.SendConfirmationWithCancelTokenAsync
                 var tokenExpiry = new DateTime[] {
                     booking.BookingDate.ToDateTime(startTime),
-                    DateTime.UtcNow.AddHours(24)
+                    DateTimeHelper.GetNowInVietnam().AddHours(24)
                 }.Min();
 
                 booking.CancelTokenHash = tokenHash;

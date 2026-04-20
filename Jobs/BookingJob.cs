@@ -30,7 +30,8 @@ namespace SmashCourt_BE.Jobs
         {
             try
             {
-                var now = DateTime.UtcNow;
+                // Dùng giờ VN để đồng bộ với ExpiresAt lưu giờ VN
+                var now = DateTimeHelper.GetNowInVietnam();
                 var expiredBookings = await _db.Bookings
                     .Include(b => b.BookingCourts)
                         .ThenInclude(bc => bc.Court)
@@ -79,9 +80,8 @@ namespace SmashCourt_BE.Jobs
                     }
                 }
 
-                // Xóa slot_locks hết hạn (cùng ExpiresAt với booking PENDING)
                 await _db.SlotLocks
-                    .Where(sl => sl.ExpiresAt <= now)
+                    .Where(sl => sl.ExpiresAt <= now)  // now = VN time (đồng bộ với ExpiresAt)
                     .ExecuteDeleteAsync();
 
                 await _db.SaveChangesAsync();
@@ -100,7 +100,8 @@ namespace SmashCourt_BE.Jobs
         {
             try
             {
-                var now = DateTime.UtcNow;
+                // Dùng giờ VN để đồng bộ với endDateTimeVn bên dưới
+                var now = DateTimeHelper.GetNowInVietnam();
 
                 var activeBookings = await _db.Bookings
                     .Include(b => b.BookingCourts)
@@ -139,11 +140,9 @@ namespace SmashCourt_BE.Jobs
 
                     // ✅ FIX: Use Max(EndTime) across all courts for multi-court bookings
                     var maxEndTime = booking.BookingCourts.Max(bc => bc.EndTime);
+                    // So sánh trực tiếp: endDateTimeVn vs now (cả hai đều VN time)
                     var endDateTimeVn = booking.BookingDate.ToDateTime(maxEndTime);
-                    var endDateTimeUtc = TimeZoneInfo.ConvertTimeToUtc(
-                        endDateTimeVn, DateTimeHelper.VNTimezone);
-
-                    if (endDateTimeUtc > now) continue;
+                    if (endDateTimeVn > now) continue;
 
                     var invoice = booking.Invoice;
 
@@ -230,7 +229,7 @@ namespace SmashCourt_BE.Jobs
             try
             {
                 var deleted = await _db.SlotLocks
-                    .Where(sl => sl.ExpiresAt <= DateTime.UtcNow)
+                    .Where(sl => sl.ExpiresAt <= DateTimeHelper.GetNowInVietnam())  // VN time
                     .ExecuteDeleteAsync();
 
                 if (deleted > 0)

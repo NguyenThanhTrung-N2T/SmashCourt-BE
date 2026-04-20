@@ -122,6 +122,7 @@ namespace SmashCourt_BE.Repositories
                         .ThenInclude(bpi => bpi.TimeSlot)
                 .Include(b => b.BookingServices)
                 .Include(b => b.Invoice)
+                    .ThenInclude(i => i.Payments)   // cần để tạo refund record khi hủy
                 .Include(b => b.BookingPromotion)
                 .FirstOrDefaultAsync(b => b.Id == id);
         }
@@ -136,6 +137,7 @@ namespace SmashCourt_BE.Repositories
                 .Include(b => b.BookingCourts)
                     .ThenInclude(bc => bc.Court)
                 .Include(b => b.Invoice)
+                    .ThenInclude(i => i.Payments)   // cần để tạo refund record khi hủy
                 .FirstOrDefaultAsync(b => b.CancelTokenHash == tokenHash);
         }
 
