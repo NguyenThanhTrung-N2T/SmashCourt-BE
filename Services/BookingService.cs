@@ -785,6 +785,23 @@ namespace SmashCourt_BE.Services
                     "Tài khoản bị khóa, vui lòng liên hệ nhân viên",
                     ErrorCodes.AccountLocked);
 
+            // Token chỉ được tạo sau khi booking CONFIRMED (walk-in) hoặc PAID_ONLINE (online).
+            // Các trạng thái khác đều không hợp lệ để hủy qua link:
+            //   — PENDING       : chưa có token (token chưa được sinh)
+            //   — IN_PROGRESS   : đang chơi, không cho hủy
+            //   — PENDING_PAYMENT / COMPLETED : đã kết thúc
+            //   — CANCELLED*   : đã hủy trước đó
+            var cancellableStatuses = new[]
+            {
+                BookingStatus.CONFIRMED,
+                BookingStatus.PAID_ONLINE
+            };
+
+            if (!cancellableStatuses.Contains(booking.Status))
+                throw new AppException(400,
+                    "Đơn đặt sân không thể hủy ở trạng thái hiện tại",
+                    ErrorCodes.BadRequest);
+
             var now = DateTime.UtcNow;
             var invoice = booking.Invoice;
 
