@@ -246,12 +246,23 @@ namespace SmashCourt_BE.Services
             // 6. Promotion discount
             decimal promotionDiscountAmount = 0;
             Promotion? promotion = null;
-            if (dto.PromotionId.HasValue && customerId.HasValue)
+            if (dto.PromotionId.HasValue)
             {
+                // #3: Khách vãng lai không được dùng promotion — báo lỗi rõ thay vì im lặng bỏ qua
+                if (!customerId.HasValue)
+                    throw new AppException(400,
+                        "Khách vãng lai không thể sử dụng khuyến mãi", ErrorCodes.BadRequest);
+
                 promotion = await _promotionRepo.GetByIdAsync(dto.PromotionId.Value);
+
                 if (promotion == null || promotion.Status != PromotionStatus.ACTIVE)
                     throw new AppException(400,
                         "Khuyến mãi không hợp lệ hoặc đã hết hạn", ErrorCodes.BadRequest);
+
+                // #2: Check ngày áp dụng — tránh trường hợp job update status chậm
+                if (dto.BookingDate < promotion.StartDate || dto.BookingDate > promotion.EndDate)
+                    throw new AppException(400,
+                        "Khuyến mãi không áp dụng cho ngày đặt sân này", ErrorCodes.BadRequest);
 
                 promotionDiscountAmount = Math.Round(
                     totalAfterLoyalty * promotion.DiscountRate / 100, 0);
@@ -260,8 +271,8 @@ namespace SmashCourt_BE.Services
             var finalTotal = totalAfterLoyalty - promotionDiscountAmount;
 
             // 7. Tạo booking PENDING — 1 booking cho tất cả courts
-            // Dùng giờ VN để đồng bộ toàn hệ thống (test ở VN)
-            var expiresAt = DateTimeHelper.GetNowInVietnam().AddMinutes(10);
+            // Dùng UTC để Npgsql lưu timestamptz đúng (Kind=Utc). Frontend tự convert sang VN time.
+            var expiresAt = DateTime.UtcNow.AddMinutes(10);
             var booking = new Booking
             {
                 BranchId = branchId,
@@ -349,8 +360,12 @@ namespace SmashCourt_BE.Services
                 UpdatedAt = DateTime.UtcNow
             });
 
-            // 11. SlotLock + Court → LOCKED cho từng court
-            foreach (var (slot, court) in courtEntities)
+            // 11. Tạo SlotLock cho từng court — ngăn double-booking trong thời gian thanh toán
+            // Court.Status KHÔNG thay đổi ở bước này:
+            //   - SlotLock đã đủ để block slot trong 10 phút (HasOverlapAsync + GetByCourtAndTimeAsync)
+            //   - Court.Status chỉ đổi khi payment xác nhận (PAID_ONLINE) hoặc check-in (IN_USE)
+            //   - Scheduled job sẽ cleanup SlotLock + reset court status nếu booking PENDING expire
+            foreach (var (slot, _) in courtEntities)
             {
                 await _slotLockRepo.CreateAsync(new SlotLock
                 {
@@ -362,10 +377,6 @@ namespace SmashCourt_BE.Services
                     ExpiresAt = expiresAt,
                     CreatedAt = DateTime.UtcNow
                 });
-
-                court.Status = CourtStatus.LOCKED;
-                court.UpdatedAt = DateTime.UtcNow;
-                await _courtRepo.UpdateAsync(court);
             }
 
             // 12. Payment + VNPay URL
@@ -462,8 +473,8 @@ namespace SmashCourt_BE.Services
                     slot.CourtId, dto.BookingDate, slot.StartTime, slot.EndTime);
                 if (existingLock != null)
                 {
-                    // ExpiresAt lưu giờ VN → so sánh với giờ VN
-                    var remaining = (int)(existingLock.ExpiresAt - DateTimeHelper.GetNowInVietnam()).TotalMinutes;
+                    // ExpiresAt lưu UTC (Kind=Utc khi đọc từ DB) → so sánh với UTC
+                    var remaining = (int)(existingLock.ExpiresAt - DateTime.UtcNow).TotalMinutes;
                     throw new AppException(400,
                         $"Sân {court.Name} đang bị khóa thanh toán ({remaining} phút)",
                         ErrorCodes.BadRequest);

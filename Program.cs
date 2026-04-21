@@ -75,6 +75,10 @@ builder.Services.AddControllers()
     {
         options.JsonSerializerOptions.Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping;
         options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+
+        // Tự động convert DateTime UTC → giờ VN "dd/MM/yyyy HH:mm:ss" trong mọi API response
+        options.JsonSerializerOptions.Converters.Add(new SmashCourt_BE.Helpers.VietnamDateTimeConverter());
+        options.JsonSerializerOptions.Converters.Add(new SmashCourt_BE.Helpers.NullableVietnamDateTimeConverter());
     });
 
 // Custom model validation response — KHÔNG tắt auto validation, chỉ override format trả về
