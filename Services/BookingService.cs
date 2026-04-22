@@ -616,14 +616,8 @@ namespace SmashCourt_BE.Services
                 UpdatedAt = DateTime.UtcNow
             });
 
-            // 9. Cập nhật court → BOOKED
-
-            foreach (var (slot, court) in courtEntities)
-            {
-                court.Status = CourtStatus.BOOKED;
-                court.UpdatedAt = DateTime.UtcNow;
-                await _courtRepo.UpdateAsync(court);
-            }
+            // 9. Court status sẽ được update bởi scheduled job khi đến StartTime
+            // KHÔNG update court ở đây để cho phép overbooking
 
             // 10. Gửi email xác nhận
             await SendConfirmationEmailAsync(booking, courtEntities.Select(c => (c.Slot, c.Court)).ToList());

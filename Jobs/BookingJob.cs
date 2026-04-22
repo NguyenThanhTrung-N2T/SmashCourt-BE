@@ -63,6 +63,7 @@ namespace SmashCourt_BE.Jobs
                 foreach (var booking in expiredBookings)
                 {
                     booking.Status = BookingStatus.CANCELLED;
+                    booking.ExpiresAt = null;         
                     booking.CancelledAt = now;
                     booking.CancelSource = CancelSourceEnum.SYSTEM;
                     booking.UpdatedAt = now;
@@ -100,9 +101,45 @@ namespace SmashCourt_BE.Jobs
         {
             try
             {
-                // timestamptz đọc từ DB ra là Kind=Utc → so sánh với UTC
                 var now = DateTime.UtcNow;
 
+                // Update court status sang BOOKED khi booking bắt đầu (StartTime)
+                var bookingsToStart = await _db.Bookings
+                    .Include(b => b.BookingCourts)
+                        .ThenInclude(bc => bc.Court)
+                    .Where(b =>
+                        (b.Status == BookingStatus.PAID_ONLINE ||
+                         b.Status == BookingStatus.CONFIRMED) &&
+                        b.BookingCourts.Any())
+                    .ToListAsync();
+
+                foreach (var booking in bookingsToStart)
+                {
+                    if (!booking.BookingCourts.Any()) continue;
+
+                    // Lấy min StartTime, convert sang UTC
+                    var minStartTime = booking.BookingCourts.Min(bc => bc.StartTime);
+                    var vnStartDateTime = booking.BookingDate.ToDateTime(minStartTime);
+                    var utcStartDateTime = TimeZoneInfo.ConvertTimeToUtc(
+                        DateTime.SpecifyKind(vnStartDateTime, DateTimeKind.Unspecified),
+                        DateTimeHelper.VNTimezone);
+
+                    // Chỉ update court khi đã đến giờ bắt đầu
+                    if (utcStartDateTime <= now)
+                    {
+                        foreach (var bc in booking.BookingCourts)
+                        {
+                            if (bc.Court != null && bc.Court.Status == CourtStatus.AVAILABLE)
+                            {
+                                bc.Court.Status = CourtStatus.BOOKED;
+                                bc.Court.UpdatedAt = now;
+                            }
+                        }
+                    }
+                }
+
+
+                // Lấy tất cả booking đang active (IN_PROGRESS, PAID_ONLINE, CONFIRMED) để xử lý hết giờ
                 var activeBookings = await _db.Bookings
                     .Include(b => b.BookingCourts)
                         .ThenInclude(bc => bc.Court)
@@ -113,7 +150,11 @@ namespace SmashCourt_BE.Jobs
                         b.Status == BookingStatus.CONFIRMED)
                     .ToListAsync();
 
-                if (activeBookings.Count == 0) return;
+                if (activeBookings.Count == 0)
+                {
+                    await _db.SaveChangesAsync();
+                    return;
+                }
 
                 // ✅ Batch load: guard check court đang bị booking active khác dùng
                 var affectedCourtIds = activeBookings
@@ -138,14 +179,14 @@ namespace SmashCourt_BE.Jobs
                 {
                     if (!booking.BookingCourts.Any()) continue;
 
-                    // ✅ FIX: Use Max(EndTime) across all courts for multi-court bookings
+                    // Lấy max EndTime, convert sang UTC
                     var maxEndTime = booking.BookingCourts.Max(bc => bc.EndTime);
-                    // Convert endTime sang UTC để so sánh với now (UTC)
-                    var endDateTimeVn = booking.BookingDate.ToDateTime(maxEndTime);
-                    var endDateTimeUtc = TimeZoneInfo.ConvertTimeToUtc(
-                        endDateTimeVn, DateTimeHelper.VNTimezone);
-
-                    if (endDateTimeUtc > now) continue;
+                    var vnEndDateTime = booking.BookingDate.ToDateTime(maxEndTime);
+                    var utcEndDateTime = TimeZoneInfo.ConvertTimeToUtc(
+                        DateTime.SpecifyKind(vnEndDateTime, DateTimeKind.Unspecified),
+                        DateTimeHelper.VNTimezone);
+                    
+                    if (utcEndDateTime > now) continue;
 
                     var invoice = booking.Invoice;
 
@@ -172,14 +213,17 @@ namespace SmashCourt_BE.Jobs
                             break;
 
                         case BookingStatus.PAID_ONLINE:
-                            // Đã thanh toán online, hết giờ (dù có hoặc không check-in)
-                            // → COMPLETED, tiền đã thu
+                            // Khách đã thanh toán nhưng không check-in, hết giờ
+                            // → COMPLETED (tiền đã thu)
                             booking.Status = BookingStatus.COMPLETED;
                             if (invoice != null)
                             {
                                 invoice.PaymentStatus = InvoicePaymentStatus.PAID;
                                 invoice.UpdatedAt = now;
                             }
+                            // Deactivate booking courts
+                            foreach (var bc in booking.BookingCourts)
+                                bc.IsActive = false;
                             break;
 
                         case BookingStatus.CONFIRMED:
@@ -194,13 +238,15 @@ namespace SmashCourt_BE.Jobs
 
                     booking.UpdatedAt = now;
 
-                    // ✅ FIX: Update ALL courts → AVAILABLE when booking ends
-                    // Không set khi PENDING_PAYMENT — staff còn cần thao tác checkout
+                    // ✅ Update court status → AVAILABLE khi booking kết thúc
+                    // Áp dụng cho: COMPLETED hoặc CANCELLED
+                    // KHÔNG áp dụng cho: PENDING_PAYMENT (staff còn cần checkout)
                     if (booking.Status == BookingStatus.COMPLETED ||
                         booking.Status == BookingStatus.CANCELLED)
                     {
                         foreach (var bc in booking.BookingCourts)
                         {
+                            // Guard: chỉ set AVAILABLE nếu court không bị booking khác chiếm
                             if (bc.Court != null && !busyCourtIds.Contains(bc.CourtId))
                             {
                                 bc.Court.Status = CourtStatus.AVAILABLE;

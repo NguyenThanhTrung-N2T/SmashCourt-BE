@@ -99,17 +99,8 @@ namespace SmashCourt_BE.Services
                 // Xóa slot_lock
                 await _slotLockRepo.DeleteByBookingIdAsync(booking.Id);
 
-                // Cập nhật court → BOOKED
-                foreach (var bc in booking.BookingCourts ?? [])
-                {
-                    var court = await _courtRepo.GetByIdAsync(bc.CourtId, booking.BranchId);
-                    if (court != null)
-                    {
-                        court.Status = CourtStatus.BOOKED;
-                        court.UpdatedAt = now;
-                        await _courtRepo.UpdateAsync(court);
-                    }
-                }
+                // Court status sẽ được update bởi scheduled job khi đến StartTime
+                // KHÔNG update court ở đây để cho phép overbooking
 
                 // Gửi email xác nhận + cancel token
                 try
