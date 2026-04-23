@@ -25,7 +25,7 @@ namespace SmashCourt_BE.Jobs
             _logger = logger;
         }
 
-        // ── Job-01: Hủy booking PENDING hết hạn (mỗi 1 phút) ─────────────────
+        // Job-01: Hủy booking PENDING hết hạn (mỗi 1 phút)
         public async Task CancelExpiredPendingBookingsAsync()
         {
             try
@@ -42,7 +42,7 @@ namespace SmashCourt_BE.Jobs
 
                 if (expiredBookings.Count == 0) return;
 
-                // ✅ Batch load: lấy tất cả courtIds đang bị chiếm bởi booking active khác
+                // lấy tất cả courtIds đang bị chiếm bởi booking active khác
                 // → 1 query thay vì N AnyAsync trong vòng foreach
                 var cancelledCourtIds = expiredBookings
                     .SelectMany(b => b.BookingCourts)
@@ -50,10 +50,14 @@ namespace SmashCourt_BE.Jobs
                     .Distinct()
                     .ToHashSet();
 
+                // Loại trừ chính các booking đang xử lý
+                var cancelledBookingIds = expiredBookings.Select(b => b.Id).ToHashSet();
+
                 var busyCourtIds = (await _db.BookingCourts
                     .Where(other =>
                         cancelledCourtIds.Contains(other.CourtId) &&
                         other.IsActive &&
+                        !cancelledBookingIds.Contains(other.BookingId) && // ← loại trừ booking đang xử lý
                         ActiveStatuses.Contains(other.Booking.Status))
                     .Select(other => other.CourtId)
                     .Distinct()
@@ -72,7 +76,7 @@ namespace SmashCourt_BE.Jobs
                     {
                         bc.IsActive = false;
 
-                        // ✅ Guard: chỉ set AVAILABLE nếu court không bị booking khác chiếm
+                        // chỉ set AVAILABLE nếu court không bị booking khác chiếm
                         if (bc.Court != null && !busyCourtIds.Contains(bc.CourtId))
                         {
                             bc.Court.Status = CourtStatus.AVAILABLE;
@@ -96,14 +100,14 @@ namespace SmashCourt_BE.Jobs
             }
         }
 
-        // ── Job-03+04: Xử lý booking hết giờ (mỗi 1 phút) ──────────────────
+        // Job-02: Xử lý booking hết giờ (mỗi 1 phút)
         public async Task ProcessExpiredActiveBookingsAsync()
         {
             try
             {
                 var now = DateTime.UtcNow;
 
-                // Update court status sang BOOKED khi booking bắt đầu (StartTime)
+                // PHẦN 1: Update court → BOOKED khi đến giờ bắt đầu (StartTime)
                 var bookingsToStart = await _db.Bookings
                     .Include(b => b.BookingCourts)
                         .ThenInclude(bc => bc.Court)
@@ -129,6 +133,8 @@ namespace SmashCourt_BE.Jobs
                     {
                         foreach (var bc in booking.BookingCourts)
                         {
+                            // Chỉ set BOOKED nếu court đang AVAILABLE
+                            // (nếu court đang bị chiếm thì Status đã không phải AVAILABLE)
                             if (bc.Court != null && bc.Court.Status == CourtStatus.AVAILABLE)
                             {
                                 bc.Court.Status = CourtStatus.BOOKED;
@@ -138,8 +144,7 @@ namespace SmashCourt_BE.Jobs
                     }
                 }
 
-
-                // Lấy tất cả booking đang active (IN_PROGRESS, PAID_ONLINE, CONFIRMED) để xử lý hết giờ
+                // PHẦN 2: Xử lý booking hết giờ (EndTime)
                 var activeBookings = await _db.Bookings
                     .Include(b => b.BookingCourts)
                         .ThenInclude(bc => bc.Court)
@@ -156,17 +161,21 @@ namespace SmashCourt_BE.Jobs
                     return;
                 }
 
-                // ✅ Batch load: guard check court đang bị booking active khác dùng
+                // guard check court đang bị booking active khác dùng
                 var affectedCourtIds = activeBookings
                     .SelectMany(b => b.BookingCourts)
                     .Select(bc => bc.CourtId)
                     .Distinct()
                     .ToHashSet();
 
+                // Loại trừ chính các booking đang xử lý
+                var processingBookingIds = activeBookings.Select(b => b.Id).ToHashSet();
+
                 var busyCourtIds = (await _db.BookingCourts
                     .Where(other =>
                         affectedCourtIds.Contains(other.CourtId) &&
                         other.IsActive &&
+                        !processingBookingIds.Contains(other.BookingId) && // ← loại trừ booking đang xử lý
                         ActiveStatuses.Contains(other.Booking.Status))
                     .Select(other => other.CourtId)
                     .Distinct()
@@ -238,7 +247,7 @@ namespace SmashCourt_BE.Jobs
 
                     booking.UpdatedAt = now;
 
-                    // ✅ Update court status → AVAILABLE khi booking kết thúc
+                    // Update court status → AVAILABLE khi booking kết thúc
                     // Áp dụng cho: COMPLETED hoặc CANCELLED
                     // KHÔNG áp dụng cho: PENDING_PAYMENT (staff còn cần checkout)
                     if (booking.Status == BookingStatus.COMPLETED ||
@@ -269,7 +278,7 @@ namespace SmashCourt_BE.Jobs
             }
         }
 
-        // ── Job-02: Xóa slot_locks hết hạn (mỗi 30 giây) ────────────────────
+        // Job-03: Xóa slot_locks hết hạn (mỗi 30 giây)
         // Không cần update Court.Status ở đây:
         // SlotLock.ExpiresAt == Booking.ExpiresAt (cùng variable trong CreateOnlineAsync)
         // → Job-01 sẽ handle Court.Status khi booking PENDING expire cùng lúc

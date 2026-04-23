@@ -655,10 +655,8 @@ namespace SmashCourt_BE.Services
             var invoice = booking.Invoice;
             var now = DateTime.UtcNow;
 
-            booking.Status = invoice?.PaymentStatus == InvoicePaymentStatus.UNPAID
-                ? BookingStatus.CANCELLED
-                : BookingStatus.CANCELLED_PENDING_REFUND;
-
+            // Set CANCELLED trước (default)
+            booking.Status = BookingStatus.CANCELLED;
             booking.CancelledBy = cancelledBy;
             booking.CancelledAt = now;
             booking.CancelSource = CancelSourceEnum.STAFF;
@@ -670,38 +668,52 @@ namespace SmashCourt_BE.Services
             // Xóa slot_lock nếu có
             await _slotLockRepo.DeleteByBookingIdAsync(booking.Id);
 
-            // Cập nhật court → AVAILABLE
+            // Cập nhật court → AVAILABLE (với guard check)
             foreach (var bc in booking.BookingCourts)
             {
                 var court = await _courtRepo.GetByIdAsync(bc.CourtId);
                 if (court != null)
                 {
-                    court.Status = CourtStatus.AVAILABLE;
-                    court.UpdatedAt = now;
-                    await _courtRepo.UpdateAsync(court);
+                    // Chỉ set AVAILABLE nếu court không ở trạng thái đặc biệt
+                    if (court.Status != CourtStatus.SUSPENDED &&
+                        court.Status != CourtStatus.IN_USE &&
+                        court.Status != CourtStatus.INACTIVE)
+                    {
+                        court.Status = CourtStatus.AVAILABLE;
+                        court.UpdatedAt = now;
+                        await _courtRepo.UpdateAsync(court);
+                    }
                 }
             }
 
-            // Tạo refund record nếu đã có tiền
-            if (booking.Status == BookingStatus.CANCELLED_PENDING_REFUND && invoice != null)
+            // Xử lý refund nếu đã thanh toán
+            if (invoice?.PaymentStatus != InvoicePaymentStatus.UNPAID)
             {
                 var refundPercent = await CalculateRefundPercentAsync(
                     booking.BookingCourts.First().StartTime, booking.BookingDate);
 
-                var payment = invoice.Payments?.FirstOrDefault(
+                var payment = invoice?.Payments?.FirstOrDefault(
                     p => p.Status == PaymentTxStatus.SUCCESS);
 
-                if (payment != null)
+                // Chỉ tạo refund và set CANCELLED_PENDING_REFUND khi thực sự có tiền hoàn
+                if (payment != null && refundPercent > 0)
                 {
+                    // Dùng invoice.FinalTotal thay vì payment.Amount để nhất quán với GetCancelInfoAsync
+                    var refundAmount = Math.Round(invoice!.FinalTotal * refundPercent / 100, 0);
+
                     await _refundRepo.CreateAsync(new Refund
                     {
                         PaymentId = payment.Id,
-                        Amount = Math.Round(payment.Amount * refundPercent / 100, 0),
+                        Amount = refundAmount,
                         RefundPercent = refundPercent,
                         Status = RefundStatus.PENDING,
                         CreatedAt = now
                     });
+
+                    // Chỉ set CANCELLED_PENDING_REFUND khi thực sự có tiền cần hoàn
+                    booking.Status = BookingStatus.CANCELLED_PENDING_REFUND;
                 }
+                // refundPercent = 0 → giữ CANCELLED, không tạo refund
             }
 
             await _bookingRepo.UpdateAsync(booking);
@@ -817,10 +829,8 @@ namespace SmashCourt_BE.Services
             var now = DateTime.UtcNow;
             var invoice = booking.Invoice;
 
-            booking.Status = invoice?.PaymentStatus == InvoicePaymentStatus.UNPAID
-                ? BookingStatus.CANCELLED
-                : BookingStatus.CANCELLED_PENDING_REFUND;
-
+            // Set CANCELLED trước (default)
+            booking.Status = BookingStatus.CANCELLED;
             booking.CancelledAt = now;
             booking.CancelSource = CancelSourceEnum.LINK;
             booking.CancelTokenUsedAt = now;
@@ -836,31 +846,46 @@ namespace SmashCourt_BE.Services
                 var court = await _courtRepo.GetByIdAsync(bc.CourtId, booking.BranchId);
                 if (court != null)
                 {
-                    court.Status = CourtStatus.AVAILABLE;
-                    court.UpdatedAt = now;
-                    await _courtRepo.UpdateAsync(court);
+                    // Chỉ set AVAILABLE nếu court không ở trạng thái đặc biệt
+                    if (court.Status != CourtStatus.SUSPENDED &&
+                        court.Status != CourtStatus.IN_USE &&
+                        court.Status != CourtStatus.INACTIVE)
+                    {
+                        court.Status = CourtStatus.AVAILABLE;
+                        court.UpdatedAt = now;
+                        await _courtRepo.UpdateAsync(court);
+                    }
                 }
             }
 
-            if (booking.Status == BookingStatus.CANCELLED_PENDING_REFUND && invoice != null)
+            // Xử lý refund nếu đã thanh toán
+            if (invoice?.PaymentStatus != InvoicePaymentStatus.UNPAID)
             {
                 var refundPercent = await CalculateRefundPercentAsync(
                     booking.BookingCourts.First().StartTime, booking.BookingDate);
 
-                var payment = invoice.Payments?.FirstOrDefault(
+                var payment = invoice?.Payments?.FirstOrDefault(
                     p => p.Status == PaymentTxStatus.SUCCESS);
 
-                if (payment != null)
+                // Chỉ tạo refund và set CANCELLED_PENDING_REFUND khi thực sự có tiền hoàn
+                if (payment != null && refundPercent > 0)
                 {
+                    // Dùng invoice.FinalTotal thay vì payment.Amount để nhất quán với GetCancelInfoAsync
+                    var refundAmount = Math.Round(invoice!.FinalTotal * refundPercent / 100, 0);
+
                     await _refundRepo.CreateAsync(new Refund
                     {
                         PaymentId = payment.Id,
-                        Amount = Math.Round(payment.Amount * refundPercent / 100, 0),
+                        Amount = refundAmount,
                         RefundPercent = refundPercent,
                         Status = RefundStatus.PENDING,
                         CreatedAt = now
                     });
+
+                    // Chỉ set CANCELLED_PENDING_REFUND khi thực sự có tiền cần hoàn
+                    booking.Status = BookingStatus.CANCELLED_PENDING_REFUND;
                 }
+                // refundPercent = 0 → giữ CANCELLED, không tạo refund
             }
 
             await _bookingRepo.UpdateAsync(booking);
