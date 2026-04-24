@@ -61,20 +61,24 @@ namespace SmashCourt_BE.Services
         // Tạo mới khuyến mãi
         public async Task<PromotionDto> CreateAsync(CreatePromotionDto dto)
         {
-            // 1. Validate start_date <= end_date
-            if (dto.StartDate > dto.EndDate)
+            // 1. Convert DateTime → DateOnly
+            var startDate = DateOnly.FromDateTime(dto.StartDate);
+            var endDate = DateOnly.FromDateTime(dto.EndDate);
+
+            // 2. Validate start_date <= end_date
+            if (startDate > endDate)
                 throw new AppException(400,
                     "Ngày bắt đầu phải nhỏ hơn hoặc bằng ngày kết thúc",
                     ErrorCodes.BadRequest);
 
-            // 2. Tự tính status theo ngày
+            // 3. Tự tính status theo ngày
             var promotion = new Promotion
             {
                 Name = dto.Name.Trim(),
                 DiscountRate = dto.DiscountRate,
-                StartDate = dto.StartDate,
-                EndDate = dto.EndDate,
-                Status = CalculateStatus(dto.StartDate, dto.EndDate),
+                StartDate = startDate,
+                EndDate = endDate,
+                Status = CalculateStatus(startDate, endDate),
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
@@ -96,18 +100,22 @@ namespace SmashCourt_BE.Services
                 throw new AppException(400,
                     "Không thể cập nhật khuyến mãi đã bị xóa", ErrorCodes.BadRequest);
 
-            // 3. Validate start_date <= end_date
-            if (dto.StartDate > dto.EndDate)
+            // 3. Convert DateTime → DateOnly
+            var startDate = DateOnly.FromDateTime(dto.StartDate);
+            var endDate = DateOnly.FromDateTime(dto.EndDate);
+
+            // 4. Validate start_date <= end_date
+            if (startDate > endDate)
                 throw new AppException(400,
                     "Ngày bắt đầu phải nhỏ hơn hoặc bằng ngày kết thúc",
                     ErrorCodes.BadRequest);
 
-            // 4. Update + tính lại status
+            // 5. Update + tính lại status
             promotion.Name = dto.Name.Trim();
             promotion.DiscountRate = dto.DiscountRate;
-            promotion.StartDate = dto.StartDate;
-            promotion.EndDate = dto.EndDate;
-            promotion.Status = CalculateStatus(dto.StartDate, dto.EndDate);
+            promotion.StartDate = startDate;
+            promotion.EndDate = endDate;
+            promotion.Status = CalculateStatus(startDate, endDate);
             promotion.UpdatedAt = DateTime.UtcNow;
 
             await _repo.UpdateAsync(promotion);
@@ -140,8 +148,8 @@ namespace SmashCourt_BE.Services
             Id = p.Id,
             Name = p.Name,
             DiscountRate = p.DiscountRate,
-            StartDate = p.StartDate,
-            EndDate = p.EndDate,
+            StartDate = p.StartDate.ToDateTime(TimeOnly.MinValue),
+            EndDate = p.EndDate.ToDateTime(TimeOnly.MinValue),
             Status = p.Status,
             CreatedAt = p.CreatedAt,
             UpdatedAt = p.UpdatedAt
