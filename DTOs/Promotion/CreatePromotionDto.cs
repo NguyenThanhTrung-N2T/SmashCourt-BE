@@ -13,9 +13,9 @@ namespace SmashCourt_BE.DTOs.Promotion
         public decimal DiscountRate { get; set; }
 
         [Required(ErrorMessage = "Ngày bắt đầu không được để trống")]
-        public DateOnly StartDate { get; set; }
+        public DateTime StartDate { get; set; }
 
         [Required(ErrorMessage = "Ngày kết thúc không được để trống")]
-        public DateOnly EndDate { get; set; }
+        public DateTime EndDate { get; set; }
     }
 }

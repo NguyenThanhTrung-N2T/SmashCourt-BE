@@ -1,3 +1,4 @@
+using SmashCourt_BE.Helpers;
 using System.ComponentModel.DataAnnotations;
 
 namespace SmashCourt_BE.DTOs.PriceConfig
@@ -8,13 +9,13 @@ namespace SmashCourt_BE.DTOs.PriceConfig
         public Guid CourtId { get; set; }
 
         [Required(ErrorMessage = "Ngày đặt không được để trống")]
-        public DateOnly BookingDate { get; set; }
+        public DateTime BookingDate { get; set; }
 
         [Required(ErrorMessage = "Thời gian bắt đầu không được để trống")]
-        public TimeOnly StartTime { get; set; }
+        public TimeSpan StartTime { get; set; }
 
         [Required(ErrorMessage = "Thời gian kết thúc không được để trống")]
-        public TimeOnly EndTime { get; set; }
+        public TimeSpan EndTime { get; set; }
 
         public IEnumerable<ValidationResult> Validate(ValidationContext context)
         {
@@ -23,8 +24,10 @@ namespace SmashCourt_BE.DTOs.PriceConfig
                     "Thời gian bắt đầu phải nhỏ hơn thời gian kết thúc",
                     new[] { nameof(StartTime), nameof(EndTime) });
 
-            var today = SmashCourt_BE.Helpers.DateTimeHelper.GetTodayInVietnam();
-            if (BookingDate < today)
+            var today = DateTimeHelper.GetTodayInVietnam();
+            var bookingDateOnly = DateOnly.FromDateTime(BookingDate);
+            
+            if (bookingDateOnly < today)
                 yield return new ValidationResult(
                     "Không thể đặt sân cho ngày trong quá khứ",
                     new[] { nameof(BookingDate) });

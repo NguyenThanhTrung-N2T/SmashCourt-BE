@@ -8,8 +8,8 @@
 
     public class PriceBreakdownDto
     {
-        public TimeOnly StartTime { get; set; }
-        public TimeOnly EndTime { get; set; }
+        public TimeSpan StartTime { get; set; }
+        public TimeSpan EndTime { get; set; }
         public decimal UnitPrice { get; set; }
         public decimal Hours { get; set; }
         public decimal SubTotal { get; set; }
