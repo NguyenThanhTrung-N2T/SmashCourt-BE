@@ -11,8 +11,8 @@ namespace SmashCourt_BE.DTOs.Branch
         public decimal? Longitude { get; set; }
         public string? Phone { get; set; }
         public string? AvatarUrl { get; set; }
-        public TimeOnly OpenTime { get; set; }
-        public TimeOnly CloseTime { get; set; }
+        public TimeSpan OpenTime { get; set; }
+        public TimeSpan CloseTime { get; set; }
         public BranchStatus Status { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }

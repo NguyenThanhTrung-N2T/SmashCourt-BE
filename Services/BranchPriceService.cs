@@ -85,15 +85,15 @@ namespace SmashCourt_BE.Services
                     {
                         CourtTypeId      = key.CourtTypeId,
                         CourtTypeName    = g.First().CourtType?.Name ?? "N/A",
-                        StartTime        = key.StartTime,
-                        EndTime          = key.EndTime,
+                        StartTime        = key.StartTime.ToTimeSpan(),
+                        EndTime          = key.EndTime.ToTimeSpan(),
                         WeekdayPrice     = hasBranch
                             ? branch!.WeekdayPrice
                             : (g.FirstOrDefault(x => x.TimeSlot.DayType == DayType.WEEKDAY)?.Price ?? 0),
                         WeekendPrice     = hasBranch
                             ? branch!.WeekendPrice
                             : (g.FirstOrDefault(x => x.TimeSlot.DayType == DayType.WEEKEND)?.Price ?? 0),
-                        EffectiveFrom    = hasBranch ? branch!.EffectiveFrom : g.First().EffectiveFrom,
+                        EffectiveFrom    = (hasBranch ? branch!.EffectiveFrom : g.First().EffectiveFrom).ToDateTime(TimeOnly.MinValue),
                         PriceSource      = hasBranch ? "BRANCH_OVERRIDE" : "SYSTEM_PRICE"
                     };
                 })
@@ -304,8 +304,8 @@ namespace SmashCourt_BE.Services
 
                 breakdown.Add(new PriceBreakdownDto
                 {
-                    StartTime = overlapStart,
-                    EndTime = overlapEnd,
+                    StartTime = overlapStart.ToTimeSpan(),
+                    EndTime = overlapEnd.ToTimeSpan(),
                     UnitPrice = unitPrice,
                     Hours = hours,
                     SubTotal = subTotal,
@@ -348,13 +348,13 @@ namespace SmashCourt_BE.Services
                 {
                     CourtTypeId = g.Key.CourtTypeId,
                     CourtTypeName = g.First().CourtType?.Name ?? "N/A",
-                    StartTime = g.Key.StartTime,
-                    EndTime = g.Key.EndTime,
+                    StartTime = g.Key.StartTime.ToTimeSpan(),
+                    EndTime = g.Key.EndTime.ToTimeSpan(),
                     WeekdayPrice = g.FirstOrDefault(bp =>
                         bp.TimeSlot.DayType == DayType.WEEKDAY)?.Price ?? 0,
                     WeekendPrice = g.FirstOrDefault(bp =>
                         bp.TimeSlot.DayType == DayType.WEEKEND)?.Price ?? 0,
-                    EffectiveFrom = g.Key.EffectiveFrom
+                    EffectiveFrom = g.Key.EffectiveFrom.ToDateTime(TimeOnly.MinValue)
                 })
                 .OrderBy(p => p.CourtTypeName)
                 .ThenBy(p => p.StartTime)

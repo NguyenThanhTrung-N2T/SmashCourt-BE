@@ -135,13 +135,13 @@ namespace SmashCourt_BE.Services
                 {
                     CourtTypeId = g.Key.CourtTypeId,
                     CourtTypeName = g.First().CourtType?.Name ?? "N/A",
-                    StartTime = g.Key.StartTime,
-                    EndTime = g.Key.EndTime,
+                    StartTime = g.Key.StartTime.ToTimeSpan(),
+                    EndTime = g.Key.EndTime.ToTimeSpan(),
                     WeekdayPrice = g.FirstOrDefault(sp =>
                         sp.TimeSlot.DayType == DayType.WEEKDAY)?.Price ?? 0,
                     WeekendPrice = g.FirstOrDefault(sp =>
                         sp.TimeSlot.DayType == DayType.WEEKEND)?.Price ?? 0,
-                    EffectiveFrom = g.Key.EffectiveFrom
+                    EffectiveFrom = g.Key.EffectiveFrom.ToDateTime(TimeOnly.MinValue)
                 })
                 .OrderBy(p => p.CourtTypeName)
                 .ThenBy(p => p.StartTime)
