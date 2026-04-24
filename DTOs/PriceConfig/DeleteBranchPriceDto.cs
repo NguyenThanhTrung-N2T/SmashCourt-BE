@@ -7,12 +7,12 @@ namespace SmashCourt_BE.DTOs.PriceConfig
         public Guid CourtTypeId { get; set; }
 
         [Required(ErrorMessage = "Thời gian bắt đầu không được để trống")]
-        public TimeOnly StartTime { get; set; }
+        public TimeSpan StartTime { get; set; }
 
         [Required(ErrorMessage = "Thời gian kết thúc không được để trống")]
-        public TimeOnly EndTime { get; set; }
+        public TimeSpan EndTime { get; set; }
 
         [Required(ErrorMessage = "Ngày hiệu lực không được để trống")]
-        public DateOnly EffectiveFrom { get; set; }
+        public DateTime EffectiveFrom { get; set; }
     }
 }

@@ -48,14 +48,17 @@ namespace SmashCourt_BE.Services
                 throw new AppException(404,
                     "Không tìm thấy loại sân", ErrorCodes.NotFound);
 
-            // 2. Validate effective_from không phải quá khứ
+            // 2. Convert DateTime → DateOnly
+            var effectiveFromDate = DateOnly.FromDateTime(dto.EffectiveFrom);
+
+            // 3. Validate effective_from không phải quá khứ
             var today = DateTimeHelper.GetTodayInVietnam();
-            if (dto.EffectiveFrom < today)
+            if (effectiveFromDate < today)
                 throw new AppException(400,
                     "Ngày hiệu lực không thể là ngày trong quá khứ",
                     ErrorCodes.BadRequest);
 
-            // 3. Check duplicate trong payload gửi lên
+            // 4. Check duplicate trong payload gửi lên
             var hasDuplicates = dto.Prices
                 .GroupBy(p => new { p.StartTime, p.EndTime })
                 .Any(g => g.Count() > 1);
@@ -63,18 +66,21 @@ namespace SmashCourt_BE.Services
                 throw new AppException(400,
                     "Danh sách giá chứa các khung giờ bị trùng lặp", ErrorCodes.BadRequest);
 
-            // 3. Validate + build danh sách prices
+            // 5. Validate + build danh sách prices
             var systemPrices = new List<SystemPrice>();
 
             foreach (var slotPrice in dto.Prices)
             {
+                // Convert TimeSpan → TimeOnly
+                var startTime = TimeOnly.FromTimeSpan(slotPrice.StartTime);
+                var endTime = TimeOnly.FromTimeSpan(slotPrice.EndTime);
+
                 // Tìm WEEKDAY + WEEKEND slot theo startTime + endTime
-                var slots = await _timeSlotRepo.GetByTimeRangeAsync(
-                    slotPrice.StartTime, slotPrice.EndTime);
+                var slots = await _timeSlotRepo.GetByTimeRangeAsync(startTime, endTime);
 
                 if (slots.Count != 2)
                     throw new AppException(400,
-                        $"Không tìm thấy khung giờ {slotPrice.StartTime:HH\\:mm} - {slotPrice.EndTime:HH\\:mm}",
+                        $"Không tìm thấy khung giờ {startTime:HH\\:mm} - {endTime:HH\\:mm}",
                         ErrorCodes.BadRequest);
 
                 var weekdaySlot = slots.First(ts => ts.DayType == DayType.WEEKDAY);
@@ -82,13 +88,13 @@ namespace SmashCourt_BE.Services
 
                 // Check trùng effective_from
                 var weekdayExists = await _repo.ExistsAsync(
-                    dto.CourtTypeId, weekdaySlot.Id, dto.EffectiveFrom);
+                    dto.CourtTypeId, weekdaySlot.Id, effectiveFromDate);
                 var weekendExists = await _repo.ExistsAsync(
-                    dto.CourtTypeId, weekendSlot.Id, dto.EffectiveFrom);
+                    dto.CourtTypeId, weekendSlot.Id, effectiveFromDate);
 
                 if (weekdayExists || weekendExists)
                     throw new AppException(409,
-                        $"Đã tồn tại cấu hình giá cho khung giờ {slotPrice.StartTime:HH\\:mm} - {slotPrice.EndTime:HH\\:mm} với ngày hiệu lực này",
+                        $"Đã tồn tại cấu hình giá cho khung giờ {startTime:HH\\:mm} - {endTime:HH\\:mm} với ngày hiệu lực này",
                         ErrorCodes.Conflict);
 
                 systemPrices.Add(new SystemPrice
@@ -96,7 +102,7 @@ namespace SmashCourt_BE.Services
                     CourtTypeId = dto.CourtTypeId,
                     TimeSlotId = weekdaySlot.Id,
                     Price = slotPrice.WeekdayPrice,
-                    EffectiveFrom = dto.EffectiveFrom,
+                    EffectiveFrom = effectiveFromDate,
                     CreatedAt = DateTime.UtcNow
                 });
 
@@ -105,12 +111,12 @@ namespace SmashCourt_BE.Services
                     CourtTypeId = dto.CourtTypeId,
                     TimeSlotId = weekendSlot.Id,
                     Price = slotPrice.WeekendPrice,
-                    EffectiveFrom = dto.EffectiveFrom,
+                    EffectiveFrom = effectiveFromDate,
                     CreatedAt = DateTime.UtcNow
                 });
             }
 
-            // 4. Insert batch
+            // 6. Insert batch
             await _repo.CreateBatchAsync(systemPrices);
         }
 

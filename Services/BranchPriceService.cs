@@ -110,21 +110,24 @@ namespace SmashCourt_BE.Services
             // 1. Validate branch
             await ValidateBranchAsync(branchId);
 
-            // 2. Validate effective_from
+            // 2. Convert DateTime → DateOnly
+            var effectiveFromDate = DateOnly.FromDateTime(dto.EffectiveFrom);
+
+            // 3. Validate effective_from
             var today = DateTimeHelper.GetTodayInVietnam();
-            if (dto.EffectiveFrom < today)
+            if (effectiveFromDate < today)
                 throw new AppException(400,
                     "Ngày hiệu lực không thể là ngày trong quá khứ",
                     ErrorCodes.BadRequest);
 
-            // 3. Validate court type belongs to branch
+            // 4. Validate court type belongs to branch
             var isCourtTypeEnabled = await _branchRepo.IsCourtTypeEnabledAsync(branchId, dto.CourtTypeId);
             if (!isCourtTypeEnabled)
                 throw new AppException(400,
                     "Loại sân không hợp lệ hoặc không thuộc chi nhánh này",
                     ErrorCodes.BadRequest);
 
-            // 4. Check duplicate trong payload gửi lên
+            // 5. Check duplicate trong payload gửi lên
             var hasDuplicates = dto.Prices
                 .GroupBy(p => new { p.StartTime, p.EndTime })
                 .Any(g => g.Count() > 1);
@@ -132,27 +135,30 @@ namespace SmashCourt_BE.Services
                 throw new AppException(400,
                     "Danh sách giá chứa các khung giờ bị trùng lặp", ErrorCodes.BadRequest);
 
-            // 5. Build danh sách prices
+            // 6. Build danh sách prices
             var overrides = new List<BranchPriceOverride>();
 
             foreach (var slotPrice in dto.Prices)
             {
-                var slots = await _timeSlotRepo.GetByTimeRangeAsync(
-                    slotPrice.StartTime, slotPrice.EndTime);
+                // Convert TimeSpan → TimeOnly
+                var startTime = TimeOnly.FromTimeSpan(slotPrice.StartTime);
+                var endTime = TimeOnly.FromTimeSpan(slotPrice.EndTime);
+
+                var slots = await _timeSlotRepo.GetByTimeRangeAsync(startTime, endTime);
 
                 if (slots.Count != 2)
                     throw new AppException(400,
-                        $"Khung giờ {slotPrice.StartTime:HH\\:mm} - {slotPrice.EndTime:HH\\:mm} không hợp lệ",
+                        $"Khung giờ {startTime:HH\\:mm} - {endTime:HH\\:mm} không hợp lệ",
                         ErrorCodes.BadRequest);
 
                 var weekdaySlot = slots.First(ts => ts.DayType == DayType.WEEKDAY);
                 var weekendSlot = slots.First(ts => ts.DayType == DayType.WEEKEND);
 
                 // Check trùng
-                if (await _repo.ExistsAsync(branchId, dto.CourtTypeId, weekdaySlot.Id, dto.EffectiveFrom) ||
-                    await _repo.ExistsAsync(branchId, dto.CourtTypeId, weekendSlot.Id, dto.EffectiveFrom))
+                if (await _repo.ExistsAsync(branchId, dto.CourtTypeId, weekdaySlot.Id, effectiveFromDate) ||
+                    await _repo.ExistsAsync(branchId, dto.CourtTypeId, weekendSlot.Id, effectiveFromDate))
                     throw new AppException(409,
-                        $"Đã tồn tại giá override cho khung giờ {slotPrice.StartTime:HH\\:mm} - {slotPrice.EndTime:HH\\:mm}",
+                        $"Đã tồn tại giá override cho khung giờ {startTime:HH\\:mm} - {endTime:HH\\:mm}",
                         ErrorCodes.Conflict);
 
                 overrides.Add(new BranchPriceOverride
@@ -161,7 +167,7 @@ namespace SmashCourt_BE.Services
                     CourtTypeId = dto.CourtTypeId,
                     TimeSlotId = weekdaySlot.Id,
                     Price = slotPrice.WeekdayPrice,
-                    EffectiveFrom = dto.EffectiveFrom,
+                    EffectiveFrom = effectiveFromDate,
                     CreatedAt = DateTime.UtcNow
                 });
 
@@ -171,7 +177,7 @@ namespace SmashCourt_BE.Services
                     CourtTypeId = dto.CourtTypeId,
                     TimeSlotId = weekendSlot.Id,
                     Price = slotPrice.WeekendPrice,
-                    EffectiveFrom = dto.EffectiveFrom,
+                    EffectiveFrom = effectiveFromDate,
                     CreatedAt = DateTime.UtcNow
                 });
             }
@@ -184,17 +190,22 @@ namespace SmashCourt_BE.Services
         {
             await ValidateBranchAsync(branchId);
 
+            // Convert DateTime → DateOnly và TimeSpan → TimeOnly
+            var effectiveFromDate = DateOnly.FromDateTime(dto.EffectiveFrom);
+            var startTime = TimeOnly.FromTimeSpan(dto.StartTime);
+            var endTime = TimeOnly.FromTimeSpan(dto.EndTime);
+
             var today = DateTimeHelper.GetTodayInVietnam();
-            if (dto.EffectiveFrom <= today)
+            if (effectiveFromDate <= today)
                 throw new AppException(400,
                     "Không thể xóa cấu hình giá đã hoặc đang có hiệu lực", ErrorCodes.BadRequest);
 
             var deleted = await _repo.DeletePairAsync(
                 branchId,
                 dto.CourtTypeId,
-                dto.EffectiveFrom,
-                dto.StartTime,
-                dto.EndTime);
+                effectiveFromDate,
+                startTime,
+                endTime);
 
             if (deleted == 0)
                 throw new AppException(404,
@@ -205,17 +216,22 @@ namespace SmashCourt_BE.Services
         public async Task<CalculatePriceResultDto> CalculateAsync(
             Guid branchId, CalculatePriceDto dto)
         {
-            // 1. Validate
-            if (dto.StartTime >= dto.EndTime)
+            // 1. Convert TimeSpan → TimeOnly và DateTime → DateOnly
+            var startTime = TimeOnly.FromTimeSpan(dto.StartTime);
+            var endTime = TimeOnly.FromTimeSpan(dto.EndTime);
+            var bookingDate = DateOnly.FromDateTime(dto.BookingDate);
+
+            // 2. Validate
+            if (startTime >= endTime)
                 throw new AppException(400,
                     "Giờ bắt đầu phải nhỏ hơn giờ kết thúc", ErrorCodes.BadRequest);
             // Booking date không được là ngày trong quá khứ            
             var today = DateTimeHelper.GetTodayInVietnam();
-            if (dto.BookingDate < today)
+            if (bookingDate < today)
                 throw new AppException(400,
                     "Không thể tính giá cho ngày trong quá khứ", ErrorCodes.BadRequest);
 
-            // 2. Validate branch + tìm court → lấy courtTypeId
+            // 3. Validate branch + tìm court → lấy courtTypeId
             await ValidateBranchAsync(branchId);
 
             var court = await _courtRepo.GetByIdAsync(dto.CourtId, branchId);
@@ -224,37 +240,37 @@ namespace SmashCourt_BE.Services
             if (court.Status == CourtStatus.SUSPENDED || court.Status == CourtStatus.LOCKED)
                 throw new AppException(400, "Sân hiện đang bị khóa hoặc bảo trì", ErrorCodes.BadRequest);
 
-            // 3. Xác định WEEKDAY / WEEKEND
+            // 4. Xác định WEEKDAY / WEEKEND
             var dayOfWeek = dto.BookingDate.DayOfWeek;
             var dayType = (dayOfWeek == DayOfWeek.Saturday ||
                            dayOfWeek == DayOfWeek.Sunday)
                 ? DayType.WEEKEND
                 : DayType.WEEKDAY;
 
-            // 4. Lấy time slots theo dayType tại DB — sort theo startTime
+            // 5. Lấy time slots theo dayType tại DB — sort theo startTime
             var relevantSlots = await _timeSlotRepo.GetByDayTypeAsync(dayType);
 
             if (!relevantSlots.Any())
                 throw new AppException(400,
                     "Chưa cấu hình khung giờ cho hệ thống", ErrorCodes.BadRequest);
 
-            // 5. Lấy giá dựa trên ngày BookingDate thay vì ngày hôm nay (tránh lỗi giá tương lai)
-            var branchPrices = await _repo.GetCurrentForDateAsync(branchId, dto.BookingDate, court.CourtTypeId);
-            var systemPrices = await _systemPriceRepo.GetCurrentForDateAsync(dto.BookingDate, court.CourtTypeId);
+            // 6. Lấy giá dựa trên ngày BookingDate thay vì ngày hôm nay (tránh lỗi giá tương lai)
+            var branchPrices = await _repo.GetCurrentForDateAsync(branchId, bookingDate, court.CourtTypeId);
+            var systemPrices = await _systemPriceRepo.GetCurrentForDateAsync(bookingDate, court.CourtTypeId);
 
-            // 6. Chia sub-slot + tính tiền
+            // 7. Chia sub-slot + tính tiền
             var breakdown = new List<PriceBreakdownDto>();
             decimal courtFee = 0;
 
             foreach (var slot in relevantSlots)
             {
-                // Tìm overlap giữa slot và range đặt sân
-                var overlapStart = slot.StartTime > dto.StartTime
+                // Tìm overlap giữa slot và range đặt sân (dùng startTime/endTime đã convert)
+                var overlapStart = slot.StartTime > startTime
                     ? slot.StartTime
-                    : dto.StartTime;
-                var overlapEnd = slot.EndTime < dto.EndTime
+                    : startTime;
+                var overlapEnd = slot.EndTime < endTime
                     ? slot.EndTime
-                    : dto.EndTime;
+                    : endTime;
 
                 if (overlapStart >= overlapEnd) continue;
 

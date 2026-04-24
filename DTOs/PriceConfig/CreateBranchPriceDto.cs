@@ -8,7 +8,7 @@ namespace SmashCourt_BE.DTOs.PriceConfig
         public Guid CourtTypeId { get; set; }
 
         [Required(ErrorMessage = "Ngày hiệu lực không được để trống")]
-        public DateOnly EffectiveFrom { get; set; }
+        public DateTime EffectiveFrom { get; set; }
 
         [Required(ErrorMessage = "Phải có ít nhất 1 cấu hình giá")]
         [MinLength(1, ErrorMessage = "Phải có ít nhất 1 cấu hình giá")]
