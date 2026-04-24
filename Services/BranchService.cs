@@ -81,16 +81,20 @@ namespace SmashCourt_BE.Services
         // Tạo chi nhánh mới, đồng thời gán manager cho chi nhánh đó
         public async Task<BranchDto> CreateAsync(CreateBranchDto dto)
         {
-            // 1. Validate open_time < close_time
-            if (dto.OpenTime >= dto.CloseTime) 
+            // 1. Convert TimeSpan → TimeOnly
+            var openTime = TimeOnly.FromTimeSpan(dto.OpenTime);
+            var closeTime = TimeOnly.FromTimeSpan(dto.CloseTime);
+
+            // 2. Validate open_time < close_time
+            if (openTime >= closeTime) 
                 throw new AppException(400, "Giờ mở cửa phải nhỏ hơn giờ đóng cửa", ErrorCodes.BadRequest);
 
-            // 2. Check tên unique
+            // 3. Check tên unique
             var exists = await _repo.ExistsByNameAsync(dto.Name);
             if (exists)
                 throw new AppException(409, "Tên chi nhánh đã tồn tại", ErrorCodes.Conflict);
 
-            // 3. Validate manager
+            // 4. Validate manager
             var manager = await _userRepo.GetUserByIdAsync(dto.ManagerId);
             if (manager == null)
                 throw new AppException(404, "Không tìm thấy người dùng", ErrorCodes.NotFound);
@@ -108,7 +112,7 @@ namespace SmashCourt_BE.Services
                 throw new AppException(400,
                     "Quản lý này đang phụ trách chi nhánh khác", ErrorCodes.BadRequest);
 
-            // 4. Tạo branch + gán manager — atomic transaction trong repo
+            // 5. Tạo branch + gán manager — atomic transaction trong repo
             var branch = new Branch
             {
                 Name = dto.Name.Trim(),
@@ -117,8 +121,8 @@ namespace SmashCourt_BE.Services
                 AvatarUrl = dto.AvatarUrl?.Trim(),
                 Latitude = dto.Latitude,
                 Longitude = dto.Longitude,
-                OpenTime = dto.OpenTime,
-                CloseTime = dto.CloseTime,
+                OpenTime = openTime,
+                CloseTime = closeTime,
                 Status = BranchStatus.ACTIVE,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
@@ -159,25 +163,29 @@ namespace SmashCourt_BE.Services
             if (branch == null)
                 throw new AppException(404, "Không tìm thấy chi nhánh", ErrorCodes.NotFound);
 
-            // 2. Validate open_time < close_time
-            if (dto.OpenTime >= dto.CloseTime)
+            // 2. Convert TimeSpan → TimeOnly
+            var openTime = TimeOnly.FromTimeSpan(dto.OpenTime);
+            var closeTime = TimeOnly.FromTimeSpan(dto.CloseTime);
+
+            // 3. Validate open_time < close_time
+            if (openTime >= closeTime)
                 throw new AppException(400,
                     "Giờ mở cửa phải nhỏ hơn giờ đóng cửa", ErrorCodes.BadRequest);
 
-            // 3. Check tên unique — bỏ qua chính nó
+            // 4. Check tên unique — bỏ qua chính nó
             var exists = await _repo.ExistsByNameAsync(dto.Name, id);
             if (exists)
                 throw new AppException(409, "Tên chi nhánh đã tồn tại", ErrorCodes.Conflict);
 
-            // 4. Update
+            // 5. Update
             branch.Name = dto.Name.Trim();
             branch.Address = dto.Address.Trim();
             branch.Phone = dto.Phone?.Trim();
             branch.AvatarUrl = dto.AvatarUrl?.Trim();
             branch.Latitude = dto.Latitude;
             branch.Longitude = dto.Longitude;
-            branch.OpenTime = dto.OpenTime;
-            branch.CloseTime = dto.CloseTime;
+            branch.OpenTime = openTime;
+            branch.CloseTime = closeTime;
             branch.UpdatedAt = DateTime.UtcNow;
 
             try
@@ -538,8 +546,8 @@ namespace SmashCourt_BE.Services
             Longitude = b.Longitude,
             Phone = b.Phone,
             AvatarUrl = b.AvatarUrl,
-            OpenTime = b.OpenTime,
-            CloseTime = b.CloseTime,
+            OpenTime = b.OpenTime.ToTimeSpan(),
+            CloseTime = b.CloseTime.ToTimeSpan(),
             Status = b.Status,
             CreatedAt = b.CreatedAt,
             UpdatedAt = b.UpdatedAt,
