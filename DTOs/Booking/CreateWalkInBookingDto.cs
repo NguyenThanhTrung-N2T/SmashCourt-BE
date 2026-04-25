@@ -6,7 +6,7 @@ namespace SmashCourt_BE.DTOs.Booking
     public class CreateWalkInBookingDto : IValidatableObject
     {
         [Required(ErrorMessage = "Ngày đặt không được để trống")]
-        public DateOnly BookingDate { get; set; }
+        public DateTime BookingDate { get; set; }
 
         [Required]
         [MinLength(1, ErrorMessage = "Phải chọn ít nhất 1 sân")]
@@ -28,7 +28,9 @@ namespace SmashCourt_BE.DTOs.Booking
         public IEnumerable<ValidationResult> Validate(ValidationContext context)
         {
             var today = DateTimeHelper.GetTodayInVietnam();
-            if (BookingDate < today)
+            var bookingDateOnly = DateOnly.FromDateTime(BookingDate);
+            
+            if (bookingDateOnly < today)
                 yield return new ValidationResult(
                     "Không thể đặt sân cho ngày trong quá khứ",
                     new[] { nameof(BookingDate) });

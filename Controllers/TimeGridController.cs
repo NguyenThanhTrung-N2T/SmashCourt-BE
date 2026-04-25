@@ -24,9 +24,10 @@ namespace SmashCourt_BE.Controllers
         [HttpGet]
         public async Task<IActionResult> GetTimeGrid(
             Guid branchId, Guid courtId,
-            [FromQuery][Required] DateOnly date)
+            [FromQuery][Required] DateTime date)
         {
-            var result = await _service.GetTimeGridAsync(branchId, courtId, date);
+            var dateOnly = DateOnly.FromDateTime(date);
+            var result = await _service.GetTimeGridAsync(branchId, courtId, dateOnly);
             return Ok(ApiResponse<List<TimeGridSlotDto>>.Ok(result));
         }
     }

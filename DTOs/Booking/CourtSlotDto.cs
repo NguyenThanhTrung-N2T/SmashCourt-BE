@@ -8,9 +8,9 @@ namespace SmashCourt_BE.DTOs.Booking
         public Guid CourtId { get; set; }
 
         [Required(ErrorMessage = "Giờ bắt đầu không được để trống")]
-        public TimeOnly StartTime { get; set; }
+        public TimeSpan StartTime { get; set; }
 
         [Required(ErrorMessage = "Giờ kết thúc không được để trống")]
-        public TimeOnly EndTime { get; set; }
+        public TimeSpan EndTime { get; set; }
     }
 }

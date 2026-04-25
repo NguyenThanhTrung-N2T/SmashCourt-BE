@@ -51,7 +51,7 @@ namespace SmashCourt_BE.Repositories
                 q = q.Where(b => b.Status == query.Status);
 
             if (query.Date.HasValue)
-                q = q.Where(b => b.BookingDate == query.Date);
+                q = q.Where(b => b.BookingDate == DateOnly.FromDateTime(query.Date.Value));
 
             if (!string.IsNullOrEmpty(query.Search))
             {

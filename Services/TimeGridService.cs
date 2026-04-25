@@ -64,8 +64,8 @@ namespace SmashCourt_BE.Services
                     var remainingSeconds = (int)(slotLock.ExpiresAt - vnNow).TotalSeconds;
                     result.Add(new TimeGridSlotDto
                     {
-                        StartTime = slot.StartTime,
-                        EndTime = slot.EndTime,
+                        StartTime = slot.StartTime.ToTimeSpan(),
+                        EndTime = slot.EndTime.ToTimeSpan(),
                         Status = "LOCKED",
                         LockRemainingSeconds = Math.Max(0, remainingSeconds)
                     });
@@ -82,8 +82,8 @@ namespace SmashCourt_BE.Services
 
                 result.Add(new TimeGridSlotDto
                 {
-                    StartTime = slot.StartTime,
-                    EndTime = slot.EndTime,
+                    StartTime = slot.StartTime.ToTimeSpan(),
+                    EndTime = slot.EndTime.ToTimeSpan(),
                     Status = status
                 });
             }

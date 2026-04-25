@@ -11,7 +11,7 @@
         public string? GuestName { get; set; }
         public string? GuestPhone { get; set; }
         public string? GuestEmail { get; set; }
-        public DateOnly BookingDate { get; set; }
+        public DateTime BookingDate { get; set; }
         public string Status { get; set; } = null!;
         public string Source { get; set; } = null!;
         public string? Note { get; set; }
@@ -38,15 +38,15 @@
     {
         public Guid CourtId { get; set; }
         public string CourtName { get; set; } = null!;
-        public TimeOnly StartTime { get; set; }
-        public TimeOnly EndTime { get; set; }
+        public TimeSpan StartTime { get; set; }
+        public TimeSpan EndTime { get; set; }
         public List<BookingPriceItemDto> PriceItems { get; set; } = [];
     }
 
     public class BookingPriceItemDto
     {
-        public TimeOnly StartTime { get; set; }
-        public TimeOnly EndTime { get; set; }
+        public TimeSpan StartTime { get; set; }
+        public TimeSpan EndTime { get; set; }
         public decimal UnitPrice { get; set; }
         public decimal Hours { get; set; }
         public decimal SubTotal { get; set; }
