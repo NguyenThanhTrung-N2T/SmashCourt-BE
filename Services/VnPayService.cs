@@ -1,4 +1,4 @@
-﻿using SmashCourt_BE.Helpers;
+using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Services.IService;
 using System.Security.Cryptography;
 using System.Text;
@@ -14,6 +14,7 @@ namespace SmashCourt_BE.Services
         private string BaseUrl => _config["VnPay:BaseUrl"]
             ?? "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html";
         private string ReturnUrl => _config["VnPay:ReturnUrl"]!;
+        private string IpnUrl => _config["VnPay:IpnUrl"]!;
 
         public VnPayService(IConfiguration config)
         {
@@ -37,6 +38,7 @@ namespace SmashCourt_BE.Services
                 ["vnp_OrderInfo"] = orderInfo,
                 ["vnp_OrderType"] = "other",
                 ["vnp_ReturnUrl"] = ReturnUrl,
+                ["vnp_IpnUrl"] = IpnUrl,
                 ["vnp_TxnRef"] = transactionRef,
                 ["vnp_ExpireDate"] = DateTimeHelper.GetNowInVietnam().AddMinutes(15)
                     .ToString("yyyyMMddHHmmss")
@@ -77,9 +79,9 @@ namespace SmashCourt_BE.Services
                     verifyParams[key] = value.ToString();
             }
 
+            // KHÔNG EscapeDataString khi verify — VNPay gửi giá trị raw
             var queryString = string.Join("&",
-                verifyParams.Select(p =>
-                    $"{p.Key}={Uri.EscapeDataString(p.Value)}"));
+                verifyParams.Select(p => $"{p.Key}={p.Value}"));
 
             var computedHash = ComputeHmacSha512(HashSecret, queryString);
 
