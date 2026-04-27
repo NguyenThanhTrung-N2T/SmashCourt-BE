@@ -107,8 +107,9 @@ namespace SmashCourt_BE.Services
                 throw new AppException(400,
                     "Tài khoản quản lý không hoạt động", ErrorCodes.BadRequest);
 
-            var existingAssignment = await _userBranchRepo.GetActiveByUserIdAsync(dto.ManagerId);
-            if (existingAssignment != null)
+            // Kiểm tra manager đã đang phụ trách chi nhánh khác chưa (chỉ check MANAGER role, không block STAFF)
+            var existingManagerAssignment = await _userBranchRepo.GetActiveManagerAssignmentByUserIdAsync(dto.ManagerId);
+            if (existingManagerAssignment != null)
                 throw new AppException(400,
                     "Quản lý này đang phụ trách chi nhánh khác", ErrorCodes.BadRequest);
 

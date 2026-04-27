@@ -1,4 +1,4 @@
-﻿using SmashCourt_BE.Models.Entities;
+using SmashCourt_BE.Models.Entities;
 
 namespace SmashCourt_BE.Repositories.IRepository
 {
@@ -18,5 +18,8 @@ namespace SmashCourt_BE.Repositories.IRepository
 
         // kiểm tra xem user có đang gán chi nhánh nào không
         Task<bool> IsUserInBranchAsync(Guid userId, Guid branchId);
+
+        // lấy assignment MANAGER active của user (dùng để check conflict khi assign manager mới)
+        Task<UserBranch?> GetActiveManagerAssignmentByUserIdAsync(Guid userId);
     }
 }

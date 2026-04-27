@@ -161,35 +161,6 @@ namespace SmashCourt_BE.Services
         }
 
         /// <summary>
-        /// Check if user is eligible to be assigned as a manager (async version for database queries)
-        /// Business rules:
-        /// - User must be ACTIVE status
-        /// - User must have BRANCH_MANAGER role (only BRANCH_MANAGER can manage branches)
-        /// - User must not already be managing another branch
-        /// </summary>
-        private async Task<bool> IsEligibleForManagerAsync(Models.Entities.User user)
-        {
-            // Must be active
-            if (user.Status != UserStatus.ACTIVE)
-                return false;
-
-            // Must have BRANCH_MANAGER role - only BRANCH_MANAGER can be assigned to manage a branch
-            if (user.Role != UserRole.BRANCH_MANAGER)
-                return false;
-
-            // Check if user is already managing another branch
-            var isCurrentlyManager = await _context.UserBranches
-                .AnyAsync(ub => ub.UserId == user.Id && 
-                               ub.Role == UserBranchRole.MANAGER && 
-                               ub.IsActive);
-
-            if (isCurrentlyManager)
-                return false;
-
-            return true;
-        }
-
-        /// <summary>
         /// Check if user is eligible to be assigned as staff
         /// Business rules:
         /// - User must be ACTIVE status

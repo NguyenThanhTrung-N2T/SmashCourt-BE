@@ -1,4 +1,4 @@
-﻿using SmashCourt_BE.Data;
+using SmashCourt_BE.Data;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Repositories.IRepository;
 using Microsoft.EntityFrameworkCore;
@@ -55,6 +55,16 @@ namespace SmashCourt_BE.Repositories
                 .AnyAsync(ub =>
                     ub.UserId == userId &&
                     ub.BranchId == branchId &&
+                    ub.IsActive);
+        }
+
+        // lấy assignment MANAGER active của user — chỉ check role MANAGER, không block STAFF assignment
+        public async Task<UserBranch?> GetActiveManagerAssignmentByUserIdAsync(Guid userId)
+        {
+            return await _context.UserBranches
+                .FirstOrDefaultAsync(ub =>
+                    ub.UserId == userId &&
+                    ub.Role == UserBranchRole.MANAGER &&
                     ub.IsActive);
         }
     }

@@ -15,22 +15,19 @@ namespace SmashCourt_BE.Services
         private readonly ITimeSlotRepository _timeSlotRepo;
         private readonly IBranchRepository _branchRepo;
         private readonly ICourtRepository _courtRepo;
-        private readonly ICustomerLoyaltyRepository _loyaltyRepo;
 
         public BranchPriceService(
             IBranchPriceRepository repo,
             ISystemPriceRepository systemPriceRepo,
             ITimeSlotRepository timeSlotRepo,
             IBranchRepository branchRepo,
-            ICourtRepository courtRepo,
-            ICustomerLoyaltyRepository loyaltyRepo)
+            ICourtRepository courtRepo)
         {
             _repo = repo;
             _systemPriceRepo = systemPriceRepo;
             _timeSlotRepo = timeSlotRepo;
             _branchRepo = branchRepo;
             _courtRepo = courtRepo;
-            _loyaltyRepo = loyaltyRepo;
         }
 
         // Lấy tất cả cấu hình giá override của chi nhánh, có thể filter theo courtTypeId

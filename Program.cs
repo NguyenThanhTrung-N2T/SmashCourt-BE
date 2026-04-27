@@ -23,7 +23,6 @@ using SmashCourt_BE.Services.Interfaces;
 using SmashCourt_BE.Services.IService;
 using SmashCourt_BE.Utils;
 using System.IdentityModel.Tokens.Jwt;
-using System.Reflection;
 using System.Text;
 
 
@@ -125,7 +124,6 @@ builder.Services.AddScoped<IServiceRepository, ServiceRepository>();
 builder.Services.AddScoped<IBranchService, BranchService>();
 builder.Services.AddScoped<IBranchRepository, BranchRepository>();
 builder.Services.AddScoped<IUserBranchRepository, UserBranchRepository>();
-builder.Services.AddScoped<ICourtTypeRepository, CourtTypeRepository>();
 builder.Services.AddScoped<ICourtService, CourtService>();
 builder.Services.AddScoped<ICourtRepository, CourtRepository>();
 builder.Services.AddScoped<IPromotionService, PromotionService>();
