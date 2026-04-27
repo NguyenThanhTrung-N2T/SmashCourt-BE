@@ -15,22 +15,19 @@ namespace SmashCourt_BE.Services
         private readonly ITimeSlotRepository _timeSlotRepo;
         private readonly IBranchRepository _branchRepo;
         private readonly ICourtRepository _courtRepo;
-        private readonly ICustomerLoyaltyRepository _loyaltyRepo;
 
         public BranchPriceService(
             IBranchPriceRepository repo,
             ISystemPriceRepository systemPriceRepo,
             ITimeSlotRepository timeSlotRepo,
             IBranchRepository branchRepo,
-            ICourtRepository courtRepo,
-            ICustomerLoyaltyRepository loyaltyRepo)
+            ICourtRepository courtRepo)
         {
             _repo = repo;
             _systemPriceRepo = systemPriceRepo;
             _timeSlotRepo = timeSlotRepo;
             _branchRepo = branchRepo;
             _courtRepo = courtRepo;
-            _loyaltyRepo = loyaltyRepo;
         }
 
         // Lấy tất cả cấu hình giá override của chi nhánh, có thể filter theo courtTypeId
@@ -46,10 +43,18 @@ namespace SmashCourt_BE.Services
         public async Task<List<EffectivePriceDto>> GetEffectiveCurrentAsync(
             Guid branchId, Guid? courtTypeId = null)
         {
+            var today = DateTimeHelper.GetTodayInVietnam();
+            return await GetEffectiveResolvedAsync(branchId, today, courtTypeId);
+        }
+
+        // Lấy snapshot giá thực tế cho 1 ngày cụ thể (branch override nếu có, fallback về system price)
+        public async Task<List<EffectivePriceDto>> GetEffectiveResolvedAsync(
+            Guid branchId, DateOnly date, Guid? courtTypeId = null)
+        {
             await ValidateBranchAsync(branchId);
 
-            var branchPrices = await _repo.GetCurrentAsync(branchId, courtTypeId);
-            var systemPrices = await _systemPriceRepo.GetCurrentAsync(courtTypeId);
+            var branchPrices = await _repo.GetCurrentForDateAsync(branchId, date, courtTypeId);
+            var systemPrices = await _systemPriceRepo.GetCurrentForDateAsync(date, courtTypeId);
 
             // Index branch overrides theo (CourtTypeId, StartTime, EndTime)
             var branchDict = branchPrices
@@ -83,18 +88,18 @@ namespace SmashCourt_BE.Services
 
                     return new EffectivePriceDto
                     {
-                        CourtTypeId      = key.CourtTypeId,
-                        CourtTypeName    = g.First().CourtType?.Name ?? "N/A",
-                        StartTime        = key.StartTime.ToTimeSpan(),
-                        EndTime          = key.EndTime.ToTimeSpan(),
-                        WeekdayPrice     = hasBranch
+                        CourtTypeId = key.CourtTypeId,
+                        CourtTypeName = g.First().CourtType?.Name ?? "N/A",
+                        StartTime = key.StartTime.ToTimeSpan(),
+                        EndTime = key.EndTime.ToTimeSpan(),
+                        WeekdayPrice = hasBranch
                             ? branch!.WeekdayPrice
                             : (g.FirstOrDefault(x => x.TimeSlot.DayType == DayType.WEEKDAY)?.Price ?? 0),
-                        WeekendPrice     = hasBranch
+                        WeekendPrice = hasBranch
                             ? branch!.WeekendPrice
                             : (g.FirstOrDefault(x => x.TimeSlot.DayType == DayType.WEEKEND)?.Price ?? 0),
-                        EffectiveFrom    = (hasBranch ? branch!.EffectiveFrom : g.First().EffectiveFrom).ToDateTime(TimeOnly.MinValue),
-                        PriceSource      = hasBranch ? "BRANCH_OVERRIDE" : "SYSTEM_PRICE"
+                        EffectiveFrom = (hasBranch ? branch!.EffectiveFrom : g.First().EffectiveFrom).ToDateTime(TimeOnly.MinValue),
+                        PriceSource = hasBranch ? "BRANCH_OVERRIDE" : "SYSTEM_PRICE"
                     };
                 })
                 .OrderBy(p => p.CourtTypeName)
@@ -102,6 +107,37 @@ namespace SmashCourt_BE.Services
                 .ToList();
 
             return result;
+        }
+
+        // Lấy chi tiết một phiên bản giá chi nhánh (override) cho ngày hiệu lực cụ thể
+        public async Task<BranchPriceVersionDetailDto?> GetVersionDetailAsync(
+            Guid branchId, Guid courtTypeId, DateOnly effectiveFrom)
+        {
+            await ValidateBranchAsync(branchId);
+
+            var prices = await _repo.GetCurrentForDateAsync(branchId, effectiveFrom, courtTypeId);
+
+            if (!prices.Any()) return null;
+
+            var dto = new BranchPriceVersionDetailDto
+            {
+                BranchId = branchId,
+                CourtTypeId = courtTypeId,
+                EffectiveFrom = effectiveFrom.ToString("yyyy-MM-dd"),
+                Rows = prices
+                    .GroupBy(bp => new { bp.TimeSlot.StartTime, bp.TimeSlot.EndTime })
+                    .Select(g => new PriceVersionRowDto
+                    {
+                        StartTime = g.Key.StartTime.ToString("HH:mm:ss"),
+                        EndTime = g.Key.EndTime.ToString("HH:mm:ss"),
+                        WeekdayPrice = g.FirstOrDefault(bp => bp.TimeSlot.DayType == DayType.WEEKDAY)?.Price ?? 0,
+                        WeekendPrice = g.FirstOrDefault(bp => bp.TimeSlot.DayType == DayType.WEEKEND)?.Price ?? 0
+                    })
+                    .OrderBy(r => r.StartTime)
+                    .ToList()
+            };
+
+            return dto;
         }
 
         // Tạo mới 1 batch giá override cho 1 court type tại chi nhánh, có thể tạo nhiều khung giờ trong cùng 1 request
@@ -136,7 +172,10 @@ namespace SmashCourt_BE.Services
                     "Danh sách giá chứa các khung giờ bị trùng lặp", ErrorCodes.BadRequest);
 
             // 6. Build danh sách prices
-            var overrides = new List<BranchPriceOverride>();
+            var existingPrices = await _repo.GetExactDatePricesAsync(branchId, dto.CourtTypeId, effectiveFromDate);
+
+            var insertPrices = new List<BranchPriceOverride>();
+            var updatePrices = new List<BranchPriceOverride>();
 
             foreach (var slotPrice in dto.Prices)
             {
@@ -154,35 +193,48 @@ namespace SmashCourt_BE.Services
                 var weekdaySlot = slots.First(ts => ts.DayType == DayType.WEEKDAY);
                 var weekendSlot = slots.First(ts => ts.DayType == DayType.WEEKEND);
 
-                // Check trùng
-                if (await _repo.ExistsAsync(branchId, dto.CourtTypeId, weekdaySlot.Id, effectiveFromDate) ||
-                    await _repo.ExistsAsync(branchId, dto.CourtTypeId, weekendSlot.Id, effectiveFromDate))
-                    throw new AppException(409,
-                        $"Đã tồn tại giá override cho khung giờ {startTime:HH\\:mm} - {endTime:HH\\:mm}",
-                        ErrorCodes.Conflict);
-
-                overrides.Add(new BranchPriceOverride
+                // Process WEEKDAY price
+                var existingWeekday = existingPrices.FirstOrDefault(bp => bp.TimeSlotId == weekdaySlot.Id);
+                if (existingWeekday != null)
                 {
-                    BranchId = branchId,
-                    CourtTypeId = dto.CourtTypeId,
-                    TimeSlotId = weekdaySlot.Id,
-                    Price = slotPrice.WeekdayPrice,
-                    EffectiveFrom = effectiveFromDate,
-                    CreatedAt = DateTime.UtcNow
-                });
-
-                overrides.Add(new BranchPriceOverride
+                    existingWeekday.Price = slotPrice.WeekdayPrice;
+                    updatePrices.Add(existingWeekday);
+                }
+                else
                 {
-                    BranchId = branchId,
-                    CourtTypeId = dto.CourtTypeId,
-                    TimeSlotId = weekendSlot.Id,
-                    Price = slotPrice.WeekendPrice,
-                    EffectiveFrom = effectiveFromDate,
-                    CreatedAt = DateTime.UtcNow
-                });
+                    insertPrices.Add(new BranchPriceOverride
+                    {
+                        BranchId = branchId,
+                        CourtTypeId = dto.CourtTypeId,
+                        TimeSlotId = weekdaySlot.Id,
+                        Price = slotPrice.WeekdayPrice,
+                        EffectiveFrom = effectiveFromDate,
+                        CreatedAt = DateTime.UtcNow
+                    });
+                }
+
+                // Process WEEKEND price
+                var existingWeekend = existingPrices.FirstOrDefault(bp => bp.TimeSlotId == weekendSlot.Id);
+                if (existingWeekend != null)
+                {
+                    existingWeekend.Price = slotPrice.WeekendPrice;
+                    updatePrices.Add(existingWeekend);
+                }
+                else
+                {
+                    insertPrices.Add(new BranchPriceOverride
+                    {
+                        BranchId = branchId,
+                        CourtTypeId = dto.CourtTypeId,
+                        TimeSlotId = weekendSlot.Id,
+                        Price = slotPrice.WeekendPrice,
+                        EffectiveFrom = effectiveFromDate,
+                        CreatedAt = DateTime.UtcNow
+                    });
+                }
             }
 
-            await _repo.CreateBatchAsync(overrides);
+            await _repo.UpsertBatchAsync(insertPrices, updatePrices);
         }
 
         // Xóa 1 cấu hình giá override dựa trên courtTypeId + time slot + effectiveFrom. Chỉ xóa được với cấu hình giá chưa có hiệu lực (ngày hiệu lực > ngày hôm nay)

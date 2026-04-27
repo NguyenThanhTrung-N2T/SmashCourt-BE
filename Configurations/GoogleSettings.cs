@@ -1,4 +1,4 @@
-﻿namespace SmashCourt_BE.DTOs.Auth
+namespace SmashCourt_BE.Configurations
 {
     public class GoogleSettings
     {

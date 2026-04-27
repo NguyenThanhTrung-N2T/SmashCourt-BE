@@ -1,4 +1,6 @@
-﻿using SmashCourt_BE.Models.Entities;
+﻿using SmashCourt_BE.Common;
+using SmashCourt_BE.DTOs.BranchManagement;
+using SmashCourt_BE.Models.Entities;
 
 namespace SmashCourt_BE.Repositories.IRepository
 {
@@ -19,5 +21,7 @@ namespace SmashCourt_BE.Repositories.IRepository
         // xóa user chưa xác thực sau 5 phút
         Task DeleteUnverifiedAsync(Guid userId);
 
+        // tìm kiếm users với filters (dùng cho assign vào branch)
+        Task<PagedResult<User>> SearchUsersAsync(UserSearchQuery query);
     }
 }

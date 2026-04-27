@@ -27,6 +27,17 @@ public static class ErrorCodes
     public const string NameDuplicate    = "NAME_DUPLICATE";
     public const string AccountLocked    = "ACCOUNT_LOCKED";
 
+    // ─── Branch Management ───────────────────────────────────────────────
+    public const string BranchNotFound         = "BRANCH_NOT_FOUND";
+    public const string UserNotFound           = "USER_NOT_FOUND";
+    public const string ManagerNotFound        = "MANAGER_NOT_FOUND";
+    public const string ManagerAlreadyExists   = "MANAGER_ALREADY_EXISTS";
+    public const string InvalidManagerUser     = "INVALID_MANAGER_USER";
+    public const string StaffNotFound          = "STAFF_NOT_FOUND";
+    public const string StaffAlreadyExists     = "STAFF_ALREADY_EXISTS";
+    public const string InvalidStaffUser       = "INVALID_STAFF_USER";
+    public const string InvalidBulkOperation   = "INVALID_BULK_OPERATION";
+
     // ─── Server errors (5xx) ─────────────────────────────────────────────
     public const string InternalError    = "INTERNAL_ERROR";
 }

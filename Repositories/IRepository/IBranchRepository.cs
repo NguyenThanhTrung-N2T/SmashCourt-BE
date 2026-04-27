@@ -1,6 +1,7 @@
-﻿using SmashCourt_BE.Common;
+using SmashCourt_BE.Common;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
+using SmashCourt_BE.DTOs.Branch;
 
 namespace SmashCourt_BE.Repositories.IRepository
 {
@@ -32,6 +33,9 @@ namespace SmashCourt_BE.Repositories.IRepository
 
         // lấy danh sách loại sân của chi nhánh
         Task<List<BranchCourtType>> GetCourtTypesAsync(Guid branchId);
+
+        // lấy danh sách TẤT CẢ loại sân trong hệ thống, kèm theo trạng thái và số lượng sân tại chi nhánh
+        Task<List<BranchCourtTypeDto>> GetAllCourtTypeDetailsAsync(Guid branchId);
 
         // lấy thông tin loại sân của chi nhánh theo id, trả về null nếu không tìm thấy
         Task<BranchCourtType?> GetBranchCourtTypeAsync(Guid branchId, Guid courtTypeId);

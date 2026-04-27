@@ -22,5 +22,11 @@ namespace SmashCourt_BE.Repositories.IRepository
         // Xóa cả cặp WEEKDAY + WEEKEND; trả số bản ghi bị xóa (0 = không tìm thấy).
         Task<int> DeletePairAsync(Guid branchId, Guid courtTypeId, DateOnly effectiveFrom,
                                   TimeOnly startTime, TimeOnly endTime);
+
+        // Lấy các giá override của 1 chi nhánh + 1 loại sân tại 1 ngày hiệu lực chính xác
+        Task<List<BranchPriceOverride>> GetExactDatePricesAsync(Guid branchId, Guid courtTypeId, DateOnly effectiveFrom);
+
+        // Upsert batch (Cập nhật nếu đã có, tạo mới nếu chưa)
+        Task UpsertBatchAsync(List<BranchPriceOverride> insertPrices, List<BranchPriceOverride> updatePrices);
     }
 }

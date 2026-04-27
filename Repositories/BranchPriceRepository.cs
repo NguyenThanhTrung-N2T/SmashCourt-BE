@@ -32,44 +32,74 @@ namespace SmashCourt_BE.Repositories
                 .ToListAsync();
         }
 
-        // Lấy giá override hiện tại của chi nhánh, có thể lọc theo loại sân
+        // Lấy giá override hiện tại của chi nhánh — xử lý hoàn toàn trên DB
         public async Task<List<BranchPriceOverride>> GetCurrentAsync(
             Guid branchId, Guid? courtTypeId = null)
         {
             var today = DateTimeHelper.GetTodayInVietnam();
 
-            var raw = await _context.BranchPriceOverrides
-                .Include(bp => bp.CourtType)
-                .Include(bp => bp.TimeSlot)
+            // Subquery: max effective_from cho mỗi (CourtTypeId, TimeSlotId)
+            var latestDates = _context.BranchPriceOverrides
                 .Where(bp =>
                     bp.BranchId == branchId &&
                     bp.EffectiveFrom <= today &&
                     (courtTypeId == null || bp.CourtTypeId == courtTypeId))
-                .ToListAsync();
-
-            return raw
                 .GroupBy(bp => new { bp.CourtTypeId, bp.TimeSlotId })
-                .Select(g => g.OrderByDescending(bp => bp.EffectiveFrom).First())
-                .ToList();
+                .Select(g => new
+                {
+                    g.Key.CourtTypeId,
+                    g.Key.TimeSlotId,
+                    MaxDate = g.Max(bp => bp.EffectiveFrom)
+                });
+
+            // JOIN với subquery — toàn bộ xử lý trên DB
+            return await _context.BranchPriceOverrides
+                .Include(bp => bp.CourtType)
+                .Include(bp => bp.TimeSlot)
+                .Where(bp => bp.BranchId == branchId)
+                .Join(
+                    latestDates,
+                    bp => new { bp.CourtTypeId, bp.TimeSlotId, bp.EffectiveFrom },
+                    ld => new { ld.CourtTypeId, ld.TimeSlotId, EffectiveFrom = ld.MaxDate },
+                    (bp, _) => bp)
+                .OrderBy(bp => bp.CourtType.Name)
+                .ThenBy(bp => bp.TimeSlot.StartTime)
+                .ThenBy(bp => bp.TimeSlot.DayType)
+                .ToListAsync();
         }
 
-        // Lấy giá override của chi nhánh có hiệu lực tại một ngày cụ thể, có thể lọc theo loại sân
+        // Lấy giá override của chi nhánh có hiệu lực tại một ngày cụ thể — xử lý hoàn toàn trên DB
         public async Task<List<BranchPriceOverride>> GetCurrentForDateAsync(
             Guid branchId, DateOnly targetDate, Guid? courtTypeId = null)
         {
-            var raw = await _context.BranchPriceOverrides
-                .Include(bp => bp.CourtType)
-                .Include(bp => bp.TimeSlot)
+            // Subquery: max effective_from cho mỗi (CourtTypeId, TimeSlotId)
+            var latestDates = _context.BranchPriceOverrides
                 .Where(bp =>
                     bp.BranchId == branchId &&
                     bp.EffectiveFrom <= targetDate &&
                     (courtTypeId == null || bp.CourtTypeId == courtTypeId))
-                .ToListAsync();
-
-            return raw
                 .GroupBy(bp => new { bp.CourtTypeId, bp.TimeSlotId })
-                .Select(g => g.OrderByDescending(bp => bp.EffectiveFrom).First())
-                .ToList();
+                .Select(g => new
+                {
+                    g.Key.CourtTypeId,
+                    g.Key.TimeSlotId,
+                    MaxDate = g.Max(bp => bp.EffectiveFrom)
+                });
+
+            // JOIN với subquery — toàn bộ xử lý trên DB
+            return await _context.BranchPriceOverrides
+                .Include(bp => bp.CourtType)
+                .Include(bp => bp.TimeSlot)
+                .Where(bp => bp.BranchId == branchId)
+                .Join(
+                    latestDates,
+                    bp => new { bp.CourtTypeId, bp.TimeSlotId, bp.EffectiveFrom },
+                    ld => new { ld.CourtTypeId, ld.TimeSlotId, EffectiveFrom = ld.MaxDate },
+                    (bp, _) => bp)
+                .OrderBy(bp => bp.CourtType.Name)
+                .ThenBy(bp => bp.TimeSlot.StartTime)
+                .ThenBy(bp => bp.TimeSlot.DayType)
+                .ToListAsync();
         }
 
 
@@ -121,6 +151,40 @@ namespace SmashCourt_BE.Repositories
             return await _context.BranchPriceOverrides
                 .Where(bp => ids.Contains(bp.Id))
                 .ExecuteDeleteAsync();
+        }
+
+        // Lấy các giá override của 1 chi nhánh + 1 loại sân tại 1 ngày hiệu lực chính xác
+        public async Task<List<BranchPriceOverride>> GetExactDatePricesAsync(Guid branchId, Guid courtTypeId, DateOnly effectiveFrom)
+        {
+            return await _context.BranchPriceOverrides
+                .Where(bp => bp.BranchId == branchId && bp.CourtTypeId == courtTypeId && bp.EffectiveFrom == effectiveFrom)
+                .ToListAsync();
+        }
+
+        // Upsert batch (Cập nhật nếu đã có, tạo mới nếu chưa)
+        public async Task UpsertBatchAsync(List<BranchPriceOverride> insertPrices, List<BranchPriceOverride> updatePrices)
+        {
+            using var transaction = await _context.Database.BeginTransactionAsync();
+            try
+            {
+                if (insertPrices.Any())
+                {
+                    _context.BranchPriceOverrides.AddRange(insertPrices);
+                }
+                
+                if (updatePrices.Any())
+                {
+                    _context.BranchPriceOverrides.UpdateRange(updatePrices);
+                }
+
+                await _context.SaveChangesAsync();
+                await transaction.CommitAsync();
+            }
+            catch
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
         }
     }
 }

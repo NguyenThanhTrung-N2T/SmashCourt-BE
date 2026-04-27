@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using SmashCourt_BE.Common;
+using SmashCourt_BE.Configurations;
 using SmashCourt_BE.DTOs.Auth;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;

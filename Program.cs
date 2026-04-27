@@ -17,14 +17,11 @@ using SmashCourt_BE.Jobs.Interfaces;
 using SmashCourt_BE.Middlewares;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories;
-using SmashCourt_BE.Repositories.Interfaces;
 using SmashCourt_BE.Repositories.IRepository;
 using SmashCourt_BE.Services;
-using SmashCourt_BE.Services.Interfaces;
 using SmashCourt_BE.Services.IService;
 using SmashCourt_BE.Utils;
 using System.IdentityModel.Tokens.Jwt;
-using System.Reflection;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -132,7 +129,6 @@ builder.Services.AddScoped<IServiceRepository, ServiceRepository>();
 builder.Services.AddScoped<IBranchService, BranchService>();
 builder.Services.AddScoped<IBranchRepository, BranchRepository>();
 builder.Services.AddScoped<IUserBranchRepository, UserBranchRepository>();
-builder.Services.AddScoped<ICourtTypeRepository, CourtTypeRepository>();
 builder.Services.AddScoped<ICourtService, CourtService>();
 builder.Services.AddScoped<ICourtRepository, CourtRepository>();
 builder.Services.AddScoped<IPromotionService, PromotionService>();
@@ -144,6 +140,7 @@ builder.Services.AddScoped<ISystemPriceService, SystemPriceService>();
 builder.Services.AddScoped<ISystemPriceRepository, SystemPriceRepository>();
 builder.Services.AddScoped<IBranchPriceService, BranchPriceService>();
 builder.Services.AddScoped<IBranchPriceRepository, BranchPriceRepository>();
+
 builder.Services.AddScoped<IBookingService, BookingService>();
 builder.Services.AddScoped<IBookingRepository, BookingRepository>();
 builder.Services.AddScoped<ISlotLockRepository, SlotLockRepository>();
@@ -155,7 +152,9 @@ builder.Services.AddScoped<IPaymentService, PaymentService>();
 builder.Services.AddScoped<ITimeGridService, TimeGridService>();
 builder.Services.AddScoped<IBookingJob, BookingJob>();
 builder.Services.AddScoped<IVnPayService, VnPayService>();
-
+builder.Services.AddScoped<IBranchManagerService, BranchManagerService>();
+builder.Services.AddScoped<IBranchStaffService, BranchStaffService>();
+builder.Services.AddScoped<IBranchUserService, BranchUserService>();
 
 builder.Services.AddScoped<EmailService>();
 builder.Services.AddScoped<OtpService>();

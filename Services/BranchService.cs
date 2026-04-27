@@ -3,7 +3,6 @@ using SmashCourt_BE.Common;
 using SmashCourt_BE.DTOs.Branch;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
-using SmashCourt_BE.Repositories.Interfaces;
 using SmashCourt_BE.Repositories.IRepository;
 using SmashCourt_BE.Services.IService;
 
@@ -17,9 +16,10 @@ namespace SmashCourt_BE.Services
         private readonly ILogger<BranchService> _logger;
         private readonly ICourtTypeRepository _courtTypeRepo;
         private readonly IServiceRepository _serviceRepo;
+        private readonly ICourtRepository _courtRepo;
 
         public BranchService(IBranchRepository repo, IUserRepository userRepo,
-        IUserBranchRepository userBranchRepo, ILogger<BranchService> logger, ICourtTypeRepository courtTypeRepo, IServiceRepository serviceRepo)
+        IUserBranchRepository userBranchRepo, ILogger<BranchService> logger, ICourtTypeRepository courtTypeRepo, IServiceRepository serviceRepo, ICourtRepository courtRepo)
         {
             _repo = repo;
             _userRepo = userRepo;
@@ -27,6 +27,7 @@ namespace SmashCourt_BE.Services
             _logger = logger;
             _serviceRepo = serviceRepo;
             _courtTypeRepo = courtTypeRepo;
+            _courtRepo = courtRepo;
         }
 
         // Kiểm tra quyền truy cập chi nhánh cho MANAGER
@@ -107,8 +108,9 @@ namespace SmashCourt_BE.Services
                 throw new AppException(400,
                     "Tài khoản quản lý không hoạt động", ErrorCodes.BadRequest);
 
-            var existingAssignment = await _userBranchRepo.GetActiveByUserIdAsync(dto.ManagerId);
-            if (existingAssignment != null)
+            // Kiểm tra manager đã đang phụ trách chi nhánh khác chưa (chỉ check MANAGER role, không block STAFF)
+            var existingManagerAssignment = await _userBranchRepo.GetActiveManagerAssignmentByUserIdAsync(dto.ManagerId);
+            if (existingManagerAssignment != null)
                 throw new AppException(400,
                     "Quản lý này đang phụ trách chi nhánh khác", ErrorCodes.BadRequest);
 
@@ -263,7 +265,7 @@ namespace SmashCourt_BE.Services
             await _repo.UpdateAsync(branch);
         }
 
-        // Lấy danh sách loại sân được bật tại chi nhánh
+        // Lấy danh sách TẤT CẢ loại sân (kèm trạng thái bật/tắt và số lượng sân) tại chi nhánh
         public async Task<List<BranchCourtTypeDto>> GetCourtTypesAsync(Guid branchId)
         {
             // Kiểm tra branch tồn tại
@@ -271,8 +273,7 @@ namespace SmashCourt_BE.Services
             if (branch == null)
                 throw new AppException(404, "Không tìm thấy chi nhánh", ErrorCodes.NotFound);
 
-            var courtTypes = await _repo.GetCourtTypesAsync(branchId);
-            return courtTypes.Select(MapToCourtTypeDto).ToList();
+            return await _repo.GetAllCourtTypeDetailsAsync(branchId);
         }
 
         // Thêm loại sân vào chi nhánh (bật loại sân)
@@ -317,7 +318,12 @@ namespace SmashCourt_BE.Services
                 {
                     existing.IsActive = true;
                     await _repo.UpdateBranchCourtTypeAsync(existing);
-                    return MapToCourtTypeDto(existing);
+                    
+                    // Đếm số sân active của court type này trong chi nhánh
+                    var courtCount = await _courtRepo.GetAllByBranchAsync(branchId, true)
+                        .ContinueWith(t => t.Result.Count(c => c.CourtTypeId == dto.CourtTypeId && c.Status != CourtStatus.INACTIVE));
+                    
+                    return MapToCourtTypeDto(existing, courtCount);
                 }
                 // Đang bật rồi → conflict
                 throw new AppException(409,
@@ -338,7 +344,11 @@ namespace SmashCourt_BE.Services
             var reloaded = await _repo.GetBranchCourtTypeAsync(branchId, dto.CourtTypeId)
     ?? throw new AppException(500, "Lỗi khi tạo loại sân", ErrorCodes.InternalError);
 
-            return MapToCourtTypeDto(reloaded);
+            // Đếm số sân active của court type này trong chi nhánh
+            var reloadedCourtCount = await _courtRepo.GetAllByBranchAsync(branchId, true)
+                .ContinueWith(t => t.Result.Count(c => c.CourtTypeId == dto.CourtTypeId && c.Status != CourtStatus.INACTIVE));
+
+            return MapToCourtTypeDto(reloaded, reloadedCourtCount);
         }
 
         // Xóa loại sân khỏi chi nhánh (tắt loại sân)
@@ -556,14 +566,15 @@ namespace SmashCourt_BE.Services
         };
 
         // map data sang court type dto
-        private static BranchCourtTypeDto MapToCourtTypeDto(BranchCourtType bct) => new()
+        private static BranchCourtTypeDto MapToCourtTypeDto(BranchCourtType bct, int courtCount) => new()
         {
             Id = bct.Id,
             CourtTypeId = bct.CourtTypeId,
             CourtTypeName = bct.CourtType?.Name ?? "N/A",
             CourtTypeDescription = bct.CourtType?.Description ?? "N/A",
             IsActive = bct.IsActive,
-            CreatedAt = bct.CreatedAt
+            CreatedAt = bct.CreatedAt,
+            CourtCount = courtCount
         };
     }
 }

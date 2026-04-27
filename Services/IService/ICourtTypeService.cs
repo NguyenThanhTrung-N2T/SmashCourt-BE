@@ -1,7 +1,7 @@
 using SmashCourt_BE.Common;
 using SmashCourt_BE.DTOs.CourtType;
 
-namespace SmashCourt_BE.Services.Interfaces;
+namespace SmashCourt_BE.Services.IService;
 
 public interface ICourtTypeService
 {
