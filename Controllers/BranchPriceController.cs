@@ -48,28 +48,29 @@ namespace SmashCourt_BE.Controllers
         }
 
         /// <summary>
-        /// Fetch pricing snapshot at a specific date for branch.
+        /// Lấy snapshot giá thực tế tại chi nhánh theo một ngày cụ thể.
         /// </summary>
         [HttpGet("resolved")]
         [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         public async Task<IActionResult> GetResolved(
-            Guid branchId, [FromQuery] string date, [FromQuery] Guid? courtTypeId = null)
+            Guid branchId,
+            [FromQuery] DateTime? date,
+            [FromQuery] Guid? courtTypeId = null)
         {
-            if (!DateOnly.TryParse(date, out var parsedDate))
-            {
+            if (date == null)
                 return BadRequest(ApiResponse<object>.Fail(
-                    "Định dạng ngày không hợp lệ. Vui lòng sử dụng định dạng YYYY-MM-DD.",
+                    "Vui lòng đưa ngày cần xem.",
                     ErrorCodes.BadRequest));
-            }
 
+            var parsedDate = DateOnly.FromDateTime(date.Value);
             var result = await _service.GetEffectiveResolvedAsync(branchId, parsedDate, courtTypeId);
             return Ok(ApiResponse<List<EffectivePriceDto>>.Ok(result));
         }
 
         /// <summary>
-        /// Lấy chi tiết một phiên bản giá chi nhánh theo ngày hiệu lực
+        /// Lấy chi tiết một phiên bản giá chi nhánh theo ngày hiệu lực.
         /// </summary>
         [HttpGet("version")]
         [Authorize(Policy = AuthorizationPolicies.OwnerOnly)]
@@ -78,15 +79,14 @@ namespace SmashCourt_BE.Controllers
         public async Task<IActionResult> GetVersionDetail(
             Guid branchId,
             [FromQuery] Guid courtTypeId,
-            [FromQuery] string effectiveFrom)
+            [FromQuery] DateTime? effectiveFrom)
         {
-            if (!DateOnly.TryParse(effectiveFrom, out var effectiveFromDate))
-            {
+            if (effectiveFrom == null)
                 return BadRequest(ApiResponse<object>.Fail(
-                    "Định dạng ngày không hợp lệ. Vui lòng sử dụng định dạng YYYY-MM-DD.",
+                    "Vui lòng đưa ngày hiệu lực.",
                     ErrorCodes.BadRequest));
-            }
 
+            var effectiveFromDate = DateOnly.FromDateTime(effectiveFrom.Value);
             var result = await _service.GetVersionDetailAsync(branchId, courtTypeId, effectiveFromDate);
             if (result == null)
             {

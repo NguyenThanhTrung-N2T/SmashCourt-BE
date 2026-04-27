@@ -29,53 +29,68 @@ namespace SmashCourt_BE.Repositories
                 .ToListAsync();
         }
 
-        // Giá đang áp dụng — lấy effective_from mới nhất <= today
+        // Giá đang áp dụng — lấy effective_from mới nhất <= today, xử lý hoàn toàn trên DB
         public async Task<List<SystemPrice>> GetCurrentAsync(Guid? courtTypeId = null)
         {
             var today = DateTimeHelper.GetTodayInVietnam();
 
-            // Dùng raw SQL để DISTINCT ON hiệu quả hơn
-            // EF Core: GroupBy + lấy first theo effectiveFrom DESC
-            var query = _context.SystemPrices
-                .Include(sp => sp.CourtType)
-                .Include(sp => sp.TimeSlot)
+            // Subquery: max effective_from cho mỗi (CourtTypeId, TimeSlotId)
+            var latestDates = _context.SystemPrices
                 .Where(sp =>
                     sp.EffectiveFrom <= today &&
-                    (courtTypeId == null || sp.CourtTypeId == courtTypeId));
-
-            // Group theo courtTypeId + timeSlotId → lấy effective_from mới nhất
-            var grouped = await query
+                    (courtTypeId == null || sp.CourtTypeId == courtTypeId))
                 .GroupBy(sp => new { sp.CourtTypeId, sp.TimeSlotId })
-                .Select(g => g.OrderByDescending(sp => sp.EffectiveFrom).First())
-                .ToListAsync();
+                .Select(g => new
+                {
+                    g.Key.CourtTypeId,
+                    g.Key.TimeSlotId,
+                    MaxDate = g.Max(sp => sp.EffectiveFrom)
+                });
 
-            return grouped
-                .OrderBy(sp => sp.CourtType.Name)
-                .ThenBy(sp => sp.TimeSlot.StartTime)
-                .ThenBy(sp => sp.TimeSlot.DayType)
-                .ToList();
-        }
-
-        // Giá tại một thời điểm cụ thể — lấy effective_from mới nhất <= targetDate
-        public async Task<List<SystemPrice>> GetCurrentForDateAsync(DateOnly targetDate, Guid? courtTypeId = null)
-        {
-            var query = _context.SystemPrices
+            // JOIN với subquery — toàn bộ xử lý trên DB
+            return await _context.SystemPrices
                 .Include(sp => sp.CourtType)
                 .Include(sp => sp.TimeSlot)
-                .Where(sp =>
-                    sp.EffectiveFrom <= targetDate &&
-                    (courtTypeId == null || sp.CourtTypeId == courtTypeId));
-
-            var grouped = await query
-                .GroupBy(sp => new { sp.CourtTypeId, sp.TimeSlotId })
-                .Select(g => g.OrderByDescending(sp => sp.EffectiveFrom).First())
-                .ToListAsync();
-
-            return grouped
+                .Join(
+                    latestDates,
+                    sp => new { sp.CourtTypeId, sp.TimeSlotId, sp.EffectiveFrom },
+                    ld => new { ld.CourtTypeId, ld.TimeSlotId, EffectiveFrom = ld.MaxDate },
+                    (sp, _) => sp)
                 .OrderBy(sp => sp.CourtType.Name)
                 .ThenBy(sp => sp.TimeSlot.StartTime)
                 .ThenBy(sp => sp.TimeSlot.DayType)
-                .ToList();
+                .ToListAsync();
+        }
+
+        // Giá tại một thời điểm cụ thể — lấy effective_from mới nhất <= targetDate, xử lý hoàn toàn trên DB
+        public async Task<List<SystemPrice>> GetCurrentForDateAsync(DateOnly targetDate, Guid? courtTypeId = null)
+        {
+            // Subquery: max effective_from cho mỗi (CourtTypeId, TimeSlotId)
+            var latestDates = _context.SystemPrices
+                .Where(sp =>
+                    sp.EffectiveFrom <= targetDate &&
+                    (courtTypeId == null || sp.CourtTypeId == courtTypeId))
+                .GroupBy(sp => new { sp.CourtTypeId, sp.TimeSlotId })
+                .Select(g => new
+                {
+                    g.Key.CourtTypeId,
+                    g.Key.TimeSlotId,
+                    MaxDate = g.Max(sp => sp.EffectiveFrom)
+                });
+
+            // JOIN với subquery — toàn bộ xử lý trên DB
+            return await _context.SystemPrices
+                .Include(sp => sp.CourtType)
+                .Include(sp => sp.TimeSlot)
+                .Join(
+                    latestDates,
+                    sp => new { sp.CourtTypeId, sp.TimeSlotId, sp.EffectiveFrom },
+                    ld => new { ld.CourtTypeId, ld.TimeSlotId, EffectiveFrom = ld.MaxDate },
+                    (sp, _) => sp)
+                .OrderBy(sp => sp.CourtType.Name)
+                .ThenBy(sp => sp.TimeSlot.StartTime)
+                .ThenBy(sp => sp.TimeSlot.DayType)
+                .ToListAsync();
         }
 
         // Kiểm tra tồn tại của một record với courtTypeId + timeSlotId + effectiveFrom
@@ -106,22 +121,33 @@ namespace SmashCourt_BE.Repositories
             }
         }
 
-        // Lấy giá chung hiện tại cho một court type cụ thể (dùng trong booking để tính giá)
+        // Lấy giá chung hiện tại cho một court type cụ thể (dùng trong booking để tính giá), xử lý hoàn toàn trên DB
         public async Task<List<SystemPrice>> GetCurrentRawAsync(Guid courtTypeId)
         {
             var today = DateTimeHelper.GetTodayInVietnam();
 
-            var raw = await _context.SystemPrices
-                .Include(sp => sp.TimeSlot)
+            // Subquery: max effective_from cho mỗi TimeSlotId
+            var latestDates = _context.SystemPrices
                 .Where(sp =>
                     sp.CourtTypeId == courtTypeId &&
                     sp.EffectiveFrom <= today)
-                .ToListAsync();
-
-            return raw
                 .GroupBy(sp => sp.TimeSlotId)
-                .Select(g => g.OrderByDescending(sp => sp.EffectiveFrom).First())
-                .ToList();
+                .Select(g => new
+                {
+                    TimeSlotId = g.Key,
+                    MaxDate = g.Max(sp => sp.EffectiveFrom)
+                });
+
+            // JOIN với subquery — toàn bộ xử lý trên DB
+            return await _context.SystemPrices
+                .Include(sp => sp.TimeSlot)
+                .Where(sp => sp.CourtTypeId == courtTypeId)
+                .Join(
+                    latestDates,
+                    sp => new { sp.TimeSlotId, sp.EffectiveFrom },
+                    ld => new { ld.TimeSlotId, EffectiveFrom = ld.MaxDate },
+                    (sp, _) => sp)
+                .ToListAsync();
         }
 
         // Lấy danh sách các ngày hiệu lực của giá chung cho một loại sân cụ thể

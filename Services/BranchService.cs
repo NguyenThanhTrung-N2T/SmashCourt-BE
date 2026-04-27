@@ -121,13 +121,8 @@ namespace SmashCourt_BE.Services
                 AvatarUrl = dto.AvatarUrl?.Trim(),
                 Latitude = dto.Latitude,
                 Longitude = dto.Longitude,
-<<<<<<< Updated upstream
                 OpenTime = openTime,
                 CloseTime = closeTime,
-=======
-                OpenTime = TimeOnly.FromTimeSpan(dto.OpenTime),
-                CloseTime = TimeOnly.FromTimeSpan(dto.CloseTime),
->>>>>>> Stashed changes
                 Status = BranchStatus.ACTIVE,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
@@ -189,13 +184,8 @@ namespace SmashCourt_BE.Services
             branch.AvatarUrl = dto.AvatarUrl?.Trim();
             branch.Latitude = dto.Latitude;
             branch.Longitude = dto.Longitude;
-<<<<<<< Updated upstream
             branch.OpenTime = openTime;
             branch.CloseTime = closeTime;
-=======
-            branch.OpenTime = TimeOnly.FromTimeSpan(dto.OpenTime);
-            branch.CloseTime = TimeOnly.FromTimeSpan(dto.CloseTime);
->>>>>>> Stashed changes
             branch.UpdatedAt = DateTime.UtcNow;
 
             try
