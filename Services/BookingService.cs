@@ -386,11 +386,18 @@ namespace SmashCourt_BE.Services
             // 12. Payment + VNPay URL
             var courtNames = string.Join(", ",
                 courtEntities.Select(x => x.Court.Name).Distinct());
+            var guidDigits = new string(
+                booking.Id.ToString("N")
+                    .Where(char.IsDigit)
+                    .ToArray());
+            if (string.IsNullOrWhiteSpace(guidDigits))
+                guidDigits = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString();
+
             var transactionRef =
-                $"SC{booking.Id:N}{DateTimeHelper.GetNowInVietnam():yyMMddHHmmss}";
+                $"{DateTimeHelper.GetNowInVietnam():yyMMddHHmmss}{guidDigits}";
             // VNPay yêu cầu vnp_OrderInfo KHÔNG có tiếng Việt có dấu hoặc ký tự đặc biệt
             var courtNamesAscii = RemoveDiacritics(courtNames);
-            var paymentUrl = _vnPayService.CreatePaymentUrl(
+            var paymentInfo = _vnPayService.CreatePaymentUrl(
                 transactionRef, finalTotal,
                 $"Dat san {courtNamesAscii}");
 
@@ -400,10 +407,10 @@ namespace SmashCourt_BE.Services
                 Method = PaymentTxMethod.VNPAY,
                 Amount = finalTotal,
                 Status = PaymentTxStatus.PENDING,
-                TransactionRef = transactionRef,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
-            });
+                  TransactionRef = paymentInfo.TransactionRef,
+                  CreatedAt = DateTime.UtcNow,
+                  UpdatedAt = DateTime.UtcNow
+              });
 
             // 13. COMMIT TRANSACTION
             transaction.Complete();
@@ -411,10 +418,10 @@ namespace SmashCourt_BE.Services
             return new OnlineBookingResponse
             {
                 BookingId = booking.Id,
-                PaymentUrl = paymentUrl,
-                ExpiresAt = expiresAt,
-                FinalTotal = finalTotal
-            };
+                  PaymentUrl = paymentInfo.Url,
+                  ExpiresAt = expiresAt,
+                  FinalTotal = finalTotal
+              };
         }
 
         // Đặt sân trực tiếp tại quầy, luôn tạo booking ở trạng thái CONFIRMED

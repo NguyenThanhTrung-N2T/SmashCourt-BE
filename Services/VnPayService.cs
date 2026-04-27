@@ -5,6 +5,8 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using System.Text;
+using VNPAY;
+using VNPAY.Models.Enums;
 
 namespace SmashCourt_BE.Services
 {
@@ -29,6 +31,7 @@ namespace SmashCourt_BE.Services
     {
         private readonly IConfiguration _config;
         private readonly IHttpContextAccessor _httpContextAccessor;
+        private readonly IVnpayClient _vnpayClient;
         private readonly ILogger<VnPayService> _logger;
 
         private string TmnCode => GetRequiredSetting("VnPay:TmnCode");
@@ -43,75 +46,34 @@ namespace SmashCourt_BE.Services
         public VnPayService(
             IConfiguration config,
             IHttpContextAccessor httpContextAccessor,
+            IVnpayClient vnpayClient,
             ILogger<VnPayService> logger)
         {
             _config = config;
             _httpContextAccessor = httpContextAccessor;
+            _vnpayClient = vnpayClient;
             _logger = logger;
         }
 
-        public string CreatePaymentUrl(string transactionRef, decimal amount, string orderInfo)
+        public VnPayPaymentUrlResult CreatePaymentUrl(string transactionRef, decimal amount, string orderInfo)
         {
-            transactionRef = NormalizeTransactionRef(transactionRef);
             orderInfo = NormalizeOrderInfo(orderInfo);
-            var clientIp = ResolveClientIp();
+            var paymentUrlInfo = _vnpayClient.CreatePaymentUrl(
+                Convert.ToDouble(amount),
+                orderInfo,
+                BankCode.ANY);
 
             _logger.LogInformation(
-                "VNPay config loaded | TmnCode: {T} | HashSecret length: {L} | CallbackUrl: {U} | ClientIp: {Ip}",
-                TmnCode,
-                HashSecret.Length,
-                CallbackUrl,
-                clientIp);
+                "VNPay package generated URL | RequestedRef: {RequestedRef} | PaymentId: {PaymentId} | Url: {Url}",
+                transactionRef,
+                paymentUrlInfo.PaymentId,
+                paymentUrlInfo.Url);
 
-            var now = DateTimeHelper.GetNowInVietnam();
-
-            // === Dùng SortedList + VnPayCompare GIỐNG HỆT VnPayLibrary.cs chính thức ===
-            var requestData = new SortedList<string, string>(new VnPayCompare());
-
-            void Add(string key, string value)
+            return new VnPayPaymentUrlResult
             {
-                if (!string.IsNullOrEmpty(value)) requestData[key] = value;
-            }
-
-            Add("vnp_Version",    Version);
-            Add("vnp_Command",    "pay");
-            Add("vnp_TmnCode",    TmnCode);
-            Add("vnp_Amount",     ((long)(amount * 100)).ToString());
-            Add("vnp_CreateDate", now.ToString("yyyyMMddHHmmss"));
-            Add("vnp_CurrCode",   "VND");
-            Add("vnp_ExpireDate", now.AddMinutes(15).ToString("yyyyMMddHHmmss"));
-            Add("vnp_IpAddr",     clientIp);
-            Add("vnp_Locale",     "vn");
-            Add("vnp_OrderInfo",  orderInfo);
-            Add("vnp_OrderType",  OrderType);
-            Add("vnp_ReturnUrl",  CallbackUrl);
-            Add("vnp_TxnRef",     transactionRef);
-
-            // === CreateRequestUrl — copy y chang VnPayLibrary.cs ===
-            var data = new StringBuilder();
-            foreach (var kv in requestData)
-            {
-                if (!string.IsNullOrEmpty(kv.Value))
-                {
-                    data.Append(WebUtility.UrlEncode(kv.Key)
-                        + "=" + WebUtility.UrlEncode(kv.Value) + "&");
-                }
-            }
-
-            string queryString = data.ToString();
-            string signData    = queryString;
-            if (signData.Length > 0)
-                signData = signData.Remove(data.Length - 1, 1); // bỏ trailing &
-
-            string secureHash = HmacSha512(HashSecret, signData);
-
-            string fullUrl = BaseUrl + "?" + queryString + "vnp_SecureHash=" + secureHash;
-
-            _logger.LogInformation("SignData  : {S}", signData);
-            _logger.LogInformation("SecureHash: {H}", secureHash);
-            _logger.LogInformation("FullURL   : {U}", fullUrl);
-
-            return fullUrl;
+                Url = paymentUrlInfo.Url,
+                TransactionRef = paymentUrlInfo.PaymentId.ToString(CultureInfo.InvariantCulture)
+            };
         }
 
         public bool VerifyIpn(
@@ -143,8 +105,12 @@ namespace SmashCourt_BE.Services
             foreach (var kv in responseData)
             {
                 if (!string.IsNullOrEmpty(kv.Value))
-                    sb.Append(WebUtility.UrlEncode(kv.Key)
-                        + "=" + WebUtility.UrlEncode(kv.Value) + "&");
+                {
+                    sb.Append(kv.Key)
+                        .Append('=')
+                        .Append(WebUtility.UrlEncode(kv.Value))
+                        .Append('&');
+                }
             }
             if (sb.Length > 0) sb.Remove(sb.Length - 1, 1);
 
@@ -196,7 +162,7 @@ namespace SmashCourt_BE.Services
                     .FirstOrDefault();
 
                 if (!string.IsNullOrWhiteSpace(forwardedIp))
-                    return forwardedIp;
+                    return NormalizeIpAddress(forwardedIp);
             }
 
             var remoteIp = _httpContextAccessor.HttpContext?.Connection.RemoteIpAddress;
@@ -212,7 +178,7 @@ namespace SmashCourt_BE.Services
             if (IPAddress.IPv6Loopback.Equals(remoteIp))
                 return "127.0.0.1";
 
-            return remoteIp.ToString();
+            return NormalizeIpAddress(remoteIp.ToString());
         }
 
         private static string NormalizeTransactionRef(string transactionRef)
@@ -258,6 +224,39 @@ namespace SmashCourt_BE.Services
             return ascii.Length <= 255
                 ? ascii
                 : ascii[..255].Trim();
+        }
+
+        private string NormalizeIpAddress(string ipAddress)
+        {
+            if (!IPAddress.TryParse(ipAddress, out var parsedIp))
+            {
+                _logger.LogWarning("VNPay received invalid IP address format: {Ip}. Falling back to localhost.", ipAddress);
+                return "127.0.0.1";
+            }
+
+            if (parsedIp.IsIPv4MappedToIPv6)
+                parsedIp = parsedIp.MapToIPv4();
+
+            if (IPAddress.IsLoopback(parsedIp))
+                return "127.0.0.1";
+
+            // Sandbox test qua Docker thường chỉ lấy được private bridge IP, VNPAY đôi lúc reject format này.
+            var bytes = parsedIp.GetAddressBytes();
+            var isPrivateIpv4 =
+                parsedIp.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork &&
+                (
+                    bytes[0] == 10 ||
+                    (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) ||
+                    (bytes[0] == 192 && bytes[1] == 168)
+                );
+
+            if (isPrivateIpv4)
+            {
+                _logger.LogInformation("VNPay IP {Ip} is private/local. Using 127.0.0.1 for sandbox compatibility.", ipAddress);
+                return "127.0.0.1";
+            }
+
+            return parsedIp.ToString();
         }
     }
 }
