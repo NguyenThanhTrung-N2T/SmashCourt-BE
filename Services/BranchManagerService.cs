@@ -150,6 +150,9 @@ namespace SmashCourt_BE.Services
 
                 await transaction.CommitAsync();
 
+                // Lấy thông tin người assign (nếu có)
+                var assignedByUser = await _userRepository.GetUserByIdAsync(currentUserId);
+
                 // Return the new manager info
                 return new BranchManagerDto
                 {
@@ -159,7 +162,7 @@ namespace SmashCourt_BE.Services
                     Phone = user.Phone,
                     AvatarUrl = user.AvatarUrl,
                     AssignedAt = newManagerAssignment.AssignedAt,
-                    AssignedByName = null, // Will be enhanced when audit fields are added
+                    AssignedByName = assignedByUser?.FullName,
                     AssignedByUserId = currentUserId
                 };
             }

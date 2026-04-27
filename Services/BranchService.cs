@@ -17,9 +17,10 @@ namespace SmashCourt_BE.Services
         private readonly ILogger<BranchService> _logger;
         private readonly ICourtTypeRepository _courtTypeRepo;
         private readonly IServiceRepository _serviceRepo;
+        private readonly ICourtRepository _courtRepo;
 
         public BranchService(IBranchRepository repo, IUserRepository userRepo,
-        IUserBranchRepository userBranchRepo, ILogger<BranchService> logger, ICourtTypeRepository courtTypeRepo, IServiceRepository serviceRepo)
+        IUserBranchRepository userBranchRepo, ILogger<BranchService> logger, ICourtTypeRepository courtTypeRepo, IServiceRepository serviceRepo, ICourtRepository courtRepo)
         {
             _repo = repo;
             _userRepo = userRepo;
@@ -27,6 +28,7 @@ namespace SmashCourt_BE.Services
             _logger = logger;
             _serviceRepo = serviceRepo;
             _courtTypeRepo = courtTypeRepo;
+            _courtRepo = courtRepo;
         }
 
         // Kiểm tra quyền truy cập chi nhánh cho MANAGER
@@ -317,7 +319,12 @@ namespace SmashCourt_BE.Services
                 {
                     existing.IsActive = true;
                     await _repo.UpdateBranchCourtTypeAsync(existing);
-                    return MapToCourtTypeDto(existing);
+                    
+                    // Đếm số sân active của court type này trong chi nhánh
+                    var courtCount = await _courtRepo.GetAllByBranchAsync(branchId, true)
+                        .ContinueWith(t => t.Result.Count(c => c.CourtTypeId == dto.CourtTypeId && c.Status != CourtStatus.INACTIVE));
+                    
+                    return MapToCourtTypeDto(existing, courtCount);
                 }
                 // Đang bật rồi → conflict
                 throw new AppException(409,
@@ -338,7 +345,11 @@ namespace SmashCourt_BE.Services
             var reloaded = await _repo.GetBranchCourtTypeAsync(branchId, dto.CourtTypeId)
     ?? throw new AppException(500, "Lỗi khi tạo loại sân", ErrorCodes.InternalError);
 
-            return MapToCourtTypeDto(reloaded);
+            // Đếm số sân active của court type này trong chi nhánh
+            var reloadedCourtCount = await _courtRepo.GetAllByBranchAsync(branchId, true)
+                .ContinueWith(t => t.Result.Count(c => c.CourtTypeId == dto.CourtTypeId && c.Status != CourtStatus.INACTIVE));
+
+            return MapToCourtTypeDto(reloaded, reloadedCourtCount);
         }
 
         // Xóa loại sân khỏi chi nhánh (tắt loại sân)
@@ -556,7 +567,7 @@ namespace SmashCourt_BE.Services
         };
 
         // map data sang court type dto
-        private static BranchCourtTypeDto MapToCourtTypeDto(BranchCourtType bct) => new()
+        private static BranchCourtTypeDto MapToCourtTypeDto(BranchCourtType bct, int courtCount) => new()
         {
             Id = bct.Id,
             CourtTypeId = bct.CourtTypeId,
@@ -564,7 +575,7 @@ namespace SmashCourt_BE.Services
             CourtTypeDescription = bct.CourtType?.Description ?? "N/A",
             IsActive = bct.IsActive,
             CreatedAt = bct.CreatedAt,
-            CourtCount = 0
+            CourtCount = courtCount
         };
     }
 }

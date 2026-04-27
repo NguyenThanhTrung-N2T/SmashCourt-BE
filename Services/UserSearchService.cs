@@ -25,7 +25,7 @@ namespace SmashCourt_BE.Services
                     .ThenInclude(ub => ub.Branch)
                 .AsQueryable();
 
-            // Apply search term filter (name, email, phone)
+            // Áp dụng filter tìm kiếm theo tên, email, phone
             if (!string.IsNullOrWhiteSpace(query.SearchTerm))
             {
                 var searchTerm = query.SearchTerm.Trim().ToLower();
@@ -35,29 +35,29 @@ namespace SmashCourt_BE.Services
                     (u.Phone != null && u.Phone.ToLower().Contains(searchTerm)));
             }
 
-            // Apply role filter
+            // Áp dụng filter theo role
             if (query.Role.HasValue)
             {
                 usersQuery = usersQuery.Where(u => u.Role == query.Role.Value);
             }
 
-            // Apply status filter
+            // Áp dụng filter theo status
             if (query.Status.HasValue)
             {
                 usersQuery = usersQuery.Where(u => u.Status == query.Status.Value);
             }
 
-            // Exclude users already assigned to specific branch
+            // Loại trừ users đã được gán vào chi nhánh cụ thể
             if (query.ExcludeAssignedToBranch == true && query.ExcludeBranchId.HasValue)
             {
                 usersQuery = usersQuery.Where(u =>
                     !u.UserBranches.Any(ub => ub.BranchId == query.ExcludeBranchId.Value && ub.IsActive));
             }
 
-            // Apply eligibility filters at database level for better performance
+            // Áp dụng filter điều kiện đủ tiêu chuẩn ở database level để tăng hiệu suất
             if (query.EligibleForManager == true)
             {
-                // Only BRANCH_MANAGER role can be assigned to manage a branch
+                // Chỉ user có role BRANCH_MANAGER mới có thể được gán làm quản lý chi nhánh
                 usersQuery = usersQuery.Where(u =>
                     u.Status == UserStatus.ACTIVE &&
                     u.Role == UserRole.BRANCH_MANAGER &&
@@ -71,17 +71,17 @@ namespace SmashCourt_BE.Services
                     u.Role != UserRole.OWNER);
             }
 
-            // Get total count before pagination
+            // Lấy tổng số record trước khi phân trang
             var totalItems = await usersQuery.CountAsync();
 
-            // Apply pagination
+            // Áp dụng phân trang
             var users = await usersQuery
                 .OrderBy(u => u.FullName)
                 .Skip((query.Page - 1) * query.PageSize)
                 .Take(query.PageSize)
                 .ToListAsync();
 
-            // Map to DTOs with eligibility checks
+            // Map sang DTOs với kiểm tra điều kiện đủ tiêu chuẩn
             var userDtos = users.Select(user => new UserSearchResultDto
             {
                 Id = user.Id,
@@ -134,23 +134,23 @@ namespace SmashCourt_BE.Services
         }
 
         /// <summary>
-        /// Check if user is eligible to be assigned as a manager (synchronous version for loaded entities)
-        /// Business rules:
-        /// - User must be ACTIVE status
-        /// - User must have BRANCH_MANAGER role (only BRANCH_MANAGER can manage branches)
-        /// - User must not already be managing another branch
+        /// Kiểm tra xem user có đủ điều kiện được gán làm manager không (phiên bản synchronous cho entities đã load)
+        /// Quy tắc nghiệp vụ:
+        /// - User phải có status ACTIVE
+        /// - User phải có role BRANCH_MANAGER (chỉ BRANCH_MANAGER mới có thể quản lý chi nhánh)
+        /// - User không được đang quản lý chi nhánh khác
         /// </summary>
         private static bool IsEligibleForManagerSync(Models.Entities.User user)
         {
-            // Must be active
+            // Phải ở trạng thái active
             if (user.Status != UserStatus.ACTIVE)
                 return false;
 
-            // Must have BRANCH_MANAGER role - only BRANCH_MANAGER can be assigned to manage a branch
+            // Phải có role BRANCH_MANAGER - chỉ BRANCH_MANAGER mới có thể được gán quản lý chi nhánh
             if (user.Role != UserRole.BRANCH_MANAGER)
                 return false;
 
-            // Check if user is already managing another branch (using loaded UserBranches)
+            // Kiểm tra xem user đã đang quản lý chi nhánh khác chưa (dùng UserBranches đã load)
             var isCurrentlyManager = user.UserBranches
                 .Any(ub => ub.Role == UserBranchRole.MANAGER && ub.IsActive);
 
@@ -161,18 +161,18 @@ namespace SmashCourt_BE.Services
         }
 
         /// <summary>
-        /// Check if user is eligible to be assigned as staff
-        /// Business rules:
-        /// - User must be ACTIVE status
-        /// - User can be CUSTOMER, STAFF, or BRANCH_MANAGER (managers can also be staff at other branches)
+        /// Kiểm tra xem user có đủ điều kiện được gán làm staff không
+        /// Quy tắc nghiệp vụ:
+        /// - User phải có status ACTIVE
+        /// - User có thể là CUSTOMER, STAFF, hoặc BRANCH_MANAGER (manager cũng có thể làm staff ở chi nhánh khác)
         /// </summary>
         private static bool IsEligibleForStaff(Models.Entities.User user)
         {
-            // Must be active
+            // Phải ở trạng thái active
             if (user.Status != UserStatus.ACTIVE)
                 return false;
 
-            // OWNER users typically shouldn't be assigned as staff
+            // OWNER thường không nên được gán làm staff
             return user.Role != UserRole.OWNER;
         }
     }

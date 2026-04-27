@@ -30,19 +30,19 @@ namespace SmashCourt_BE.Services
 
         public async Task<PagedResult<BranchStaffDto>> GetStaffAsync(Guid branchId, StaffFilterQuery query)
         {
-            // Validate branch exists
+            // Validate chi nhánh tồn tại
             var branch = await _branchRepository.GetByIdAsync(branchId);
             if (branch == null)
             {
                 throw new AppException(404, "Chi nhánh không tồn tại", ErrorCodes.BranchNotFound);
             }
 
-            // Build query for staff members
+            // Build query cho danh sách nhân viên
             var staffQuery = _context.UserBranches
                 .Include(ub => ub.User)
                 .Where(ub => ub.BranchId == branchId && ub.Role == UserBranchRole.STAFF);
 
-            // Apply filters
+            // Áp dụng filters
             if (query.IsActive.HasValue)
             {
                 staffQuery = staffQuery.Where(ub => ub.IsActive == query.IsActive.Value);
@@ -57,10 +57,10 @@ namespace SmashCourt_BE.Services
                     (ub.User.Phone != null && ub.User.Phone.Contains(searchTerm)));
             }
 
-            // Get total count
+            // Lấy tổng số record
             var totalItems = await staffQuery.CountAsync();
 
-            // Apply pagination and ordering
+            // Áp dụng phân trang và sắp xếp
             var items = await staffQuery
                 .OrderByDescending(ub => ub.AssignedAt)
                 .Skip((query.Page - 1) * query.PageSize)
@@ -76,7 +76,7 @@ namespace SmashCourt_BE.Services
                     IsActive = ub.IsActive,
                     AssignedAt = ub.AssignedAt,
                     EndedAt = ub.EndedAt,
-                    AssignedByName = null // Will be enhanced when audit fields are added
+                    AssignedByName = null // Sẽ được bổ sung khi thêm audit fields
                 })
                 .ToListAsync();
 
@@ -94,14 +94,14 @@ namespace SmashCourt_BE.Services
             using var transaction = await _context.Database.BeginTransactionAsync();
             try
             {
-                // Validate branch exists
+                // Validate chi nhánh tồn tại
                 var branch = await _branchRepository.GetByIdAsync(branchId);
                 if (branch == null)
                 {
                     throw new AppException(404, "Chi nhánh không tồn tại", ErrorCodes.BranchNotFound);
                 }
 
-                // Validate user exists and is eligible
+                // Validate user tồn tại và đủ điều kiện
                 var user = await _userRepository.GetUserByIdAsync(dto.UserId);
                 if (user == null)
                 {
@@ -113,7 +113,13 @@ namespace SmashCourt_BE.Services
                     throw new AppException(400, "Người dùng không ở trạng thái hoạt động", ErrorCodes.InvalidStaffUser);
                 }
 
-                // Check if user is already assigned to this branch
+                // OWNER không được gán làm nhân viên
+                if (user.Role == UserRole.OWNER)
+                {
+                    throw new AppException(400, "Không thể gán OWNER làm nhân viên", ErrorCodes.InvalidStaffUser);
+                }
+
+                // Kiểm tra user đã được gán vào chi nhánh này chưa
                 var existingAssignment = await _context.UserBranches
                     .FirstOrDefaultAsync(ub => 
                         ub.UserId == dto.UserId && 
@@ -125,7 +131,7 @@ namespace SmashCourt_BE.Services
                     throw new AppException(409, "Người dùng đã được gán vào chi nhánh này", ErrorCodes.StaffAlreadyExists);
                 }
 
-                // Create new staff assignment
+                // Tạo staff assignment mới
                 var newStaffAssignment = new UserBranch
                 {
                     Id = Guid.NewGuid(),
@@ -139,7 +145,7 @@ namespace SmashCourt_BE.Services
 
                 await _userBranchRepository.CreateAsync(newStaffAssignment);
 
-                // Update user's global role to STAFF if currently CUSTOMER
+                // Cập nhật role toàn cục của user lên STAFF nếu hiện tại là CUSTOMER
                 if (user.Role == UserRole.CUSTOMER)
                 {
                     user.Role = UserRole.STAFF;
@@ -148,7 +154,10 @@ namespace SmashCourt_BE.Services
 
                 await transaction.CommitAsync();
 
-                // Return the new staff info
+                // Lấy thông tin người assign (nếu có)
+                var assignedByUser = await _userRepository.GetUserByIdAsync(currentUserId);
+
+                // Trả về thông tin staff mới
                 return new BranchStaffDto
                 {
                     UserId = user.Id,
@@ -160,7 +169,7 @@ namespace SmashCourt_BE.Services
                     IsActive = newStaffAssignment.IsActive,
                     AssignedAt = newStaffAssignment.AssignedAt,
                     EndedAt = newStaffAssignment.EndedAt,
-                    AssignedByName = null // Will be enhanced when audit fields are added
+                    AssignedByName = assignedByUser?.FullName
                 };
             }
             catch
@@ -175,14 +184,14 @@ namespace SmashCourt_BE.Services
             using var transaction = await _context.Database.BeginTransactionAsync();
             try
             {
-                // Validate branch exists
+                // Validate chi nhánh tồn tại
                 var branch = await _branchRepository.GetByIdAsync(branchId);
                 if (branch == null)
                 {
                     throw new AppException(404, "Chi nhánh không tồn tại", ErrorCodes.BranchNotFound);
                 }
 
-                // Get current staff assignment
+                // Lấy staff assignment hiện tại
                 var staffAssignment = await _context.UserBranches
                     .FirstOrDefaultAsync(ub => 
                         ub.UserId == userId && 
@@ -195,12 +204,12 @@ namespace SmashCourt_BE.Services
                     throw new AppException(404, "Nhân viên không được tìm thấy trong chi nhánh này", ErrorCodes.StaffNotFound);
                 }
 
-                // Deactivate staff assignment
+                // Vô hiệu hóa staff assignment
                 staffAssignment.IsActive = false;
                 staffAssignment.EndedAt = DateTime.UtcNow;
                 await _userBranchRepository.UpdateAsync(staffAssignment);
 
-                // Update user's role if they have no other active assignments
+                // Cập nhật role của user nếu không còn assignment active nào khác
                 var staffUser = await _userRepository.GetUserByIdAsync(userId);
                 if (staffUser != null)
                 {
@@ -228,7 +237,7 @@ namespace SmashCourt_BE.Services
 
         public async Task<BulkStaffOperationResultDto> BulkStaffOperationAsync(Guid branchId, BulkStaffOperationDto dto, Guid currentUserId)
         {
-            // Validate branch exists
+            // Validate chi nhánh tồn tại
             var branch = await _branchRepository.GetByIdAsync(branchId);
             if (branch == null)
             {
@@ -280,7 +289,7 @@ namespace SmashCourt_BE.Services
                 {
                     result.FailureCount++;
                     
-                    // Get user name for error reporting
+                    // Lấy tên user để báo lỗi
                     var user = await _userRepository.GetUserByIdAsync(userId);
                     var userName = user?.FullName ?? userId.ToString();
                     
@@ -301,7 +310,7 @@ namespace SmashCourt_BE.Services
             using var transaction = await _context.Database.BeginTransactionAsync();
             try
             {
-                // Get current staff assignment
+                // Lấy staff assignment hiện tại
                 var staffAssignment = await _context.UserBranches
                     .FirstOrDefaultAsync(ub => 
                         ub.UserId == userId && 
@@ -313,7 +322,7 @@ namespace SmashCourt_BE.Services
                     throw new AppException(404, "Nhân viên không được tìm thấy trong chi nhánh này", ErrorCodes.StaffNotFound);
                 }
 
-                // Update role
+                // Cập nhật role
                 staffAssignment.Role = newRole;
                 await _userBranchRepository.UpdateAsync(staffAssignment);
 
