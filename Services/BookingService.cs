@@ -387,10 +387,12 @@ namespace SmashCourt_BE.Services
             var courtNames = string.Join(", ",
                 courtEntities.Select(x => x.Court.Name).Distinct());
             var transactionRef =
-                $"SC_{booking.Id:N}_{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+                $"SC{booking.Id:N}{DateTimeHelper.GetNowInVietnam():yyMMddHHmmss}";
+            // VNPay yêu cầu vnp_OrderInfo KHÔNG có tiếng Việt có dấu hoặc ký tự đặc biệt
+            var courtNamesAscii = RemoveDiacritics(courtNames);
             var paymentUrl = _vnPayService.CreatePaymentUrl(
                 transactionRef, finalTotal,
-                $"Dat san {courtNames}");
+                $"Dat san {courtNamesAscii}");
 
             await _paymentRepo.CreateAsync(new Payment
             {
@@ -776,7 +778,7 @@ namespace SmashCourt_BE.Services
                 throw new AppException(400,
                     "Link hủy đã được sử dụng", ErrorCodes.BadRequest);
 
-            if (booking.CancelTokenExpiresAt < DateTimeHelper.GetNowInVietnam())
+            if (booking.CancelTokenExpiresAt < DateTime.UtcNow)
                 throw new AppException(400,
                     "Link hủy đã hết hạn", ErrorCodes.BadRequest);
 
@@ -828,7 +830,7 @@ namespace SmashCourt_BE.Services
                 throw new AppException(400,
                     "Link hủy đã được sử dụng", ErrorCodes.BadRequest);
 
-            if (booking.CancelTokenExpiresAt < DateTimeHelper.GetNowInVietnam())
+            if (booking.CancelTokenExpiresAt < DateTime.UtcNow)
                 throw new AppException(400,
                     "Link hủy đã hết hạn", ErrorCodes.BadRequest);
 
@@ -1416,5 +1418,22 @@ namespace SmashCourt_BE.Services
                 Total = bs.UnitPrice * bs.Quantity
             }).ToList() ?? []
         };
+
+        // Bỏ dấu tiếng Việt để dùng trong vnp_OrderInfo (VNPay không chấp nhận Unicode)
+        private static string RemoveDiacritics(string text)
+        {
+            // Xử lý các ký tự đặc biệt không decompose được trong NFD
+            text = text.Replace("Đ", "D").Replace("đ", "d");
+
+            var normalized = text.Normalize(System.Text.NormalizationForm.FormD);
+            var sb = new System.Text.StringBuilder();
+            foreach (var c in normalized)
+            {
+                if (System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c)
+                    != System.Globalization.UnicodeCategory.NonSpacingMark)
+                    sb.Append(c);
+            }
+            return sb.ToString().Normalize(System.Text.NormalizationForm.FormC);
+        }
     }
 }
