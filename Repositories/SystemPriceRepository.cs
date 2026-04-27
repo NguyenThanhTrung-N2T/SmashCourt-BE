@@ -124,5 +124,50 @@ namespace SmashCourt_BE.Repositories
                 .ToList();
         }
 
+        // Lấy danh sách các ngày hiệu lực của giá chung cho một loại sân cụ thể
+        public async Task<List<DateOnly>> GetVersionsAsync(Guid courtTypeId)
+        {
+            return await _context.SystemPrices
+                .Where(sp => sp.CourtTypeId == courtTypeId)
+                .Select(sp => sp.EffectiveFrom)
+                .Distinct()
+                .OrderByDescending(d => d)
+                .ToListAsync();
+        }
+
+        // Lấy các giá chung của 1 loại sân tại 1 ngày hiệu lực chính xác
+        public async Task<List<SystemPrice>> GetExactDatePricesAsync(Guid courtTypeId, DateOnly effectiveFrom)
+        {
+            return await _context.SystemPrices
+                .Where(sp => sp.CourtTypeId == courtTypeId && sp.EffectiveFrom == effectiveFrom)
+                .ToListAsync();
+        }
+
+        // Upsert batch trong 1 transaction
+        public async Task UpsertBatchAsync(List<SystemPrice> insertPrices, List<SystemPrice> updatePrices)
+        {
+            using var transaction = await _context.Database.BeginTransactionAsync();
+            try
+            {
+                if (insertPrices.Any())
+                {
+                    _context.SystemPrices.AddRange(insertPrices);
+                }
+                
+                if (updatePrices.Any())
+                {
+                    _context.SystemPrices.UpdateRange(updatePrices);
+                }
+
+                await _context.SaveChangesAsync();
+                await transaction.CommitAsync();
+            }
+            catch
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
+        }
+
     }
 }

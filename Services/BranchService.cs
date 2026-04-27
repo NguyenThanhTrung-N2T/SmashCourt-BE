@@ -121,8 +121,13 @@ namespace SmashCourt_BE.Services
                 AvatarUrl = dto.AvatarUrl?.Trim(),
                 Latitude = dto.Latitude,
                 Longitude = dto.Longitude,
+<<<<<<< Updated upstream
                 OpenTime = openTime,
                 CloseTime = closeTime,
+=======
+                OpenTime = TimeOnly.FromTimeSpan(dto.OpenTime),
+                CloseTime = TimeOnly.FromTimeSpan(dto.CloseTime),
+>>>>>>> Stashed changes
                 Status = BranchStatus.ACTIVE,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
@@ -184,8 +189,13 @@ namespace SmashCourt_BE.Services
             branch.AvatarUrl = dto.AvatarUrl?.Trim();
             branch.Latitude = dto.Latitude;
             branch.Longitude = dto.Longitude;
+<<<<<<< Updated upstream
             branch.OpenTime = openTime;
             branch.CloseTime = closeTime;
+=======
+            branch.OpenTime = TimeOnly.FromTimeSpan(dto.OpenTime);
+            branch.CloseTime = TimeOnly.FromTimeSpan(dto.CloseTime);
+>>>>>>> Stashed changes
             branch.UpdatedAt = DateTime.UtcNow;
 
             try
@@ -263,7 +273,7 @@ namespace SmashCourt_BE.Services
             await _repo.UpdateAsync(branch);
         }
 
-        // Lấy danh sách loại sân được bật tại chi nhánh
+        // Lấy danh sách TẤT CẢ loại sân (kèm trạng thái bật/tắt và số lượng sân) tại chi nhánh
         public async Task<List<BranchCourtTypeDto>> GetCourtTypesAsync(Guid branchId)
         {
             // Kiểm tra branch tồn tại
@@ -271,8 +281,7 @@ namespace SmashCourt_BE.Services
             if (branch == null)
                 throw new AppException(404, "Không tìm thấy chi nhánh", ErrorCodes.NotFound);
 
-            var courtTypes = await _repo.GetCourtTypesAsync(branchId);
-            return courtTypes.Select(MapToCourtTypeDto).ToList();
+            return await _repo.GetAllCourtTypeDetailsAsync(branchId);
         }
 
         // Thêm loại sân vào chi nhánh (bật loại sân)
@@ -563,7 +572,8 @@ namespace SmashCourt_BE.Services
             CourtTypeName = bct.CourtType?.Name ?? "N/A",
             CourtTypeDescription = bct.CourtType?.Description ?? "N/A",
             IsActive = bct.IsActive,
-            CreatedAt = bct.CreatedAt
+            CreatedAt = bct.CreatedAt,
+            CourtCount = 0
         };
     }
 }

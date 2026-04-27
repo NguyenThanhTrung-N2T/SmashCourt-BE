@@ -39,6 +39,13 @@ namespace SmashCourt_BE.Services
             return GroupPrices(prices);
         }
 
+        // Lấy giá chung resolved cho 1 ngày cụ thể
+        public async Task<List<CurrentPriceDto>> GetResolvedAsync(DateOnly date, Guid? courtTypeId = null)
+        {
+            var prices = await _repo.GetCurrentForDateAsync(date, courtTypeId);
+            return GroupPrices(prices);
+        }
+
         // Tạo batch giá chung mới cho 1 court type với ngày hiệu lực cụ thể
         public async Task CreateBatchAsync(CreateSystemPriceDto dto)
         {
@@ -67,7 +74,10 @@ namespace SmashCourt_BE.Services
                     "Danh sách giá chứa các khung giờ bị trùng lặp", ErrorCodes.BadRequest);
 
             // 5. Validate + build danh sách prices
-            var systemPrices = new List<SystemPrice>();
+            var existingPrices = await _repo.GetExactDatePricesAsync(dto.CourtTypeId, effectiveFromDate);
+
+            var insertPrices = new List<SystemPrice>();
+            var updatePrices = new List<SystemPrice>();
 
             foreach (var slotPrice in dto.Prices)
             {
@@ -86,38 +96,47 @@ namespace SmashCourt_BE.Services
                 var weekdaySlot = slots.First(ts => ts.DayType == DayType.WEEKDAY);
                 var weekendSlot = slots.First(ts => ts.DayType == DayType.WEEKEND);
 
-                // Check trùng effective_from
-                var weekdayExists = await _repo.ExistsAsync(
-                    dto.CourtTypeId, weekdaySlot.Id, effectiveFromDate);
-                var weekendExists = await _repo.ExistsAsync(
-                    dto.CourtTypeId, weekendSlot.Id, effectiveFromDate);
-
-                if (weekdayExists || weekendExists)
-                    throw new AppException(409,
-                        $"Đã tồn tại cấu hình giá cho khung giờ {startTime:HH\\:mm} - {endTime:HH\\:mm} với ngày hiệu lực này",
-                        ErrorCodes.Conflict);
-
-                systemPrices.Add(new SystemPrice
+                // Process WEEKDAY price
+                var existingWeekday = existingPrices.FirstOrDefault(sp => sp.TimeSlotId == weekdaySlot.Id);
+                if (existingWeekday != null)
                 {
-                    CourtTypeId = dto.CourtTypeId,
-                    TimeSlotId = weekdaySlot.Id,
-                    Price = slotPrice.WeekdayPrice,
-                    EffectiveFrom = effectiveFromDate,
-                    CreatedAt = DateTime.UtcNow
-                });
-
-                systemPrices.Add(new SystemPrice
+                    existingWeekday.Price = slotPrice.WeekdayPrice;
+                    updatePrices.Add(existingWeekday);
+                }
+                else
                 {
-                    CourtTypeId = dto.CourtTypeId,
-                    TimeSlotId = weekendSlot.Id,
-                    Price = slotPrice.WeekendPrice,
-                    EffectiveFrom = effectiveFromDate,
-                    CreatedAt = DateTime.UtcNow
-                });
+                    insertPrices.Add(new SystemPrice
+                    {
+                        CourtTypeId = dto.CourtTypeId,
+                        TimeSlotId = weekdaySlot.Id,
+                        Price = slotPrice.WeekdayPrice,
+                        EffectiveFrom = effectiveFromDate,
+                        CreatedAt = DateTime.UtcNow
+                    });
+                }
+
+                // Process WEEKEND price
+                var existingWeekend = existingPrices.FirstOrDefault(sp => sp.TimeSlotId == weekendSlot.Id);
+                if (existingWeekend != null)
+                {
+                    existingWeekend.Price = slotPrice.WeekendPrice;
+                    updatePrices.Add(existingWeekend);
+                }
+                else
+                {
+                    insertPrices.Add(new SystemPrice
+                    {
+                        CourtTypeId = dto.CourtTypeId,
+                        TimeSlotId = weekendSlot.Id,
+                        Price = slotPrice.WeekendPrice,
+                        EffectiveFrom = effectiveFromDate,
+                        CreatedAt = DateTime.UtcNow
+                    });
+                }
             }
 
-            // 6. Insert batch
-            await _repo.CreateBatchAsync(systemPrices);
+            // 6. Upsert batch
+            await _repo.UpsertBatchAsync(insertPrices, updatePrices);
         }
 
         // Group WEEKDAY + WEEKEND vào 1 dòng
@@ -146,6 +165,46 @@ namespace SmashCourt_BE.Services
                 .OrderBy(p => p.CourtTypeName)
                 .ThenBy(p => p.StartTime)
                 .ToList();
+        }
+
+        // Lấy danh sách các ngày hiệu lực (phiên bản giá) của một loại sân cụ thể
+        public async Task<List<PriceVersionListDto>> GetVersionsAsync(Guid courtTypeId)
+        {
+            var dates = await _repo.GetVersionsAsync(courtTypeId);
+            var today = DateTimeHelper.GetTodayInVietnam();
+
+            return dates.Select(d => new PriceVersionListDto
+            {
+                EffectiveFrom = d.ToString("yyyy-MM-dd"),
+                IsCurrent = d <= today
+            }).ToList();
+        }
+
+        // Lấy chi tiết một phiên bản giá chung cho ngày hiệu lực cụ thể
+        public async Task<PriceVersionDetailDto?> GetVersionDetailAsync(Guid courtTypeId, DateOnly effectiveFrom)
+        {
+            var prices = await _repo.GetCurrentForDateAsync(effectiveFrom, courtTypeId);
+
+            if (!prices.Any()) return null;
+
+            var dto = new PriceVersionDetailDto
+            {
+                CourtTypeId = courtTypeId,
+                EffectiveFrom = effectiveFrom.ToString("yyyy-MM-dd"),
+                Rows = prices
+                    .GroupBy(sp => new { sp.TimeSlot.StartTime, sp.TimeSlot.EndTime })
+                    .Select(g => new PriceVersionRowDto
+                    {
+                        StartTime = g.Key.StartTime.ToString("HH:mm:ss"),
+                        EndTime = g.Key.EndTime.ToString("HH:mm:ss"),
+                        WeekdayPrice = g.FirstOrDefault(sp => sp.TimeSlot.DayType == DayType.WEEKDAY)?.Price ?? 0,
+                        WeekendPrice = g.FirstOrDefault(sp => sp.TimeSlot.DayType == DayType.WEEKEND)?.Price ?? 0
+                    })
+                    .OrderBy(r => r.StartTime)
+                    .ToList()
+            };
+
+            return dto;
         }
     }
 }

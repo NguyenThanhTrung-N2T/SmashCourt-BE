@@ -137,6 +137,9 @@ builder.Services.AddScoped<ISystemPriceService, SystemPriceService>();
 builder.Services.AddScoped<ISystemPriceRepository, SystemPriceRepository>();
 builder.Services.AddScoped<IBranchPriceService, BranchPriceService>();
 builder.Services.AddScoped<IBranchPriceRepository, BranchPriceRepository>();
+builder.Services.AddScoped<IBranchManagerService, BranchManagerService>();
+builder.Services.AddScoped<IBranchStaffService, BranchStaffService>();
+builder.Services.AddScoped<IUserSearchService, UserSearchService>();
 
 builder.Services.AddScoped<EmailService>();
 builder.Services.AddScoped<OtpService>();

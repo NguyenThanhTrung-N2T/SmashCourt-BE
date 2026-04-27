@@ -48,6 +48,57 @@ namespace SmashCourt_BE.Controllers
         }
 
         /// <summary>
+        /// Fetch pricing snapshot at a specific date for branch.
+        /// </summary>
+        [HttpGet("resolved")]
+        [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        public async Task<IActionResult> GetResolved(
+            Guid branchId, [FromQuery] string date, [FromQuery] Guid? courtTypeId = null)
+        {
+            if (!DateOnly.TryParse(date, out var parsedDate))
+            {
+                return BadRequest(ApiResponse<object>.Fail(
+                    "Định dạng ngày không hợp lệ. Vui lòng sử dụng định dạng YYYY-MM-DD.",
+                    ErrorCodes.BadRequest));
+            }
+
+            var result = await _service.GetEffectiveResolvedAsync(branchId, parsedDate, courtTypeId);
+            return Ok(ApiResponse<List<EffectivePriceDto>>.Ok(result));
+        }
+
+        /// <summary>
+        /// Lấy chi tiết một phiên bản giá chi nhánh theo ngày hiệu lực
+        /// </summary>
+        [HttpGet("version")]
+        [Authorize(Policy = AuthorizationPolicies.OwnerOnly)]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> GetVersionDetail(
+            Guid branchId,
+            [FromQuery] Guid courtTypeId,
+            [FromQuery] string effectiveFrom)
+        {
+            if (!DateOnly.TryParse(effectiveFrom, out var effectiveFromDate))
+            {
+                return BadRequest(ApiResponse<object>.Fail(
+                    "Định dạng ngày không hợp lệ. Vui lòng sử dụng định dạng YYYY-MM-DD.",
+                    ErrorCodes.BadRequest));
+            }
+
+            var result = await _service.GetVersionDetailAsync(branchId, courtTypeId, effectiveFromDate);
+            if (result == null)
+            {
+                return Ok(ApiResponse<object>.Fail(
+                    "Không tìm thấy cấu hình giá",
+                    "PRICE_CONFIG_NOT_FOUND"));
+            }
+
+            return Ok(ApiResponse<BranchPriceVersionDetailDto>.Ok(result));
+        }
+
+        /// <summary>
         /// Tạo giá override mới — batch WEEKDAY + WEEKEND
         /// </summary>
         [HttpPost]

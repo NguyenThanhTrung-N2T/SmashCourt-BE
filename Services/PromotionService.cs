@@ -1,4 +1,4 @@
-﻿using SmashCourt_BE.Common;
+using SmashCourt_BE.Common;
 using SmashCourt_BE.DTOs.Promotion;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
@@ -79,9 +79,15 @@ namespace SmashCourt_BE.Services
             {
                 Name = dto.Name.Trim(),
                 DiscountRate = dto.DiscountRate,
+<<<<<<< Updated upstream
                 StartDate = startDate,
                 EndDate = endDate,
                 Status = CalculateStatus(startDate, endDate),
+=======
+                StartDate = DateOnly.FromDateTime(dto.StartDate),
+                EndDate = DateOnly.FromDateTime(dto.EndDate),
+                Status = CalculateStatus(DateOnly.FromDateTime(dto.StartDate), DateOnly.FromDateTime(dto.EndDate)),
+>>>>>>> Stashed changes
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
@@ -116,9 +122,15 @@ namespace SmashCourt_BE.Services
             // 5. Update + tính lại status
             promotion.Name = dto.Name.Trim();
             promotion.DiscountRate = dto.DiscountRate;
+<<<<<<< Updated upstream
             promotion.StartDate = startDate;
             promotion.EndDate = endDate;
             promotion.Status = CalculateStatus(startDate, endDate);
+=======
+            promotion.StartDate = DateOnly.FromDateTime(dto.StartDate);
+            promotion.EndDate = DateOnly.FromDateTime(dto.EndDate);
+            promotion.Status = CalculateStatus(DateOnly.FromDateTime(dto.StartDate), DateOnly.FromDateTime(dto.EndDate));
+>>>>>>> Stashed changes
             promotion.UpdatedAt = DateTime.UtcNow;
 
             await _repo.UpdateAsync(promotion);

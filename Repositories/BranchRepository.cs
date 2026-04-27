@@ -4,6 +4,7 @@ using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
 using Microsoft.EntityFrameworkCore;
+using SmashCourt_BE.DTOs.Branch;
 namespace SmashCourt_BE.Repositories
 {
     public class BranchRepository : IBranchRepository
@@ -160,6 +161,41 @@ namespace SmashCourt_BE.Repositories
                     bct.CourtType.Status == CourtTypeStatus.ACTIVE)
                 .OrderBy(bct => bct.CourtType.Name)
                 .ToListAsync();
+        }
+
+        public async Task<List<BranchCourtTypeDto>> GetAllCourtTypeDetailsAsync(Guid branchId)
+        {
+            var systemCourtTypes = await _context.CourtTypes
+                .Where(ct => ct.Status == CourtTypeStatus.ACTIVE)
+                .OrderBy(ct => ct.Name)
+                .ToListAsync();
+
+            var branchCourtTypes = await _context.BranchCourtTypes
+                .Where(bct => bct.BranchId == branchId)
+                .ToDictionaryAsync(bct => bct.CourtTypeId);
+
+            var courtCounts = await _context.Courts
+                .Where(c => c.BranchId == branchId && c.Status != CourtStatus.INACTIVE)
+                .GroupBy(c => c.CourtTypeId)
+                .Select(g => new { CourtTypeId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.CourtTypeId, x => x.Count);
+
+            return systemCourtTypes.Select(ct =>
+            {
+                var bct = branchCourtTypes.GetValueOrDefault(ct.Id);
+                var count = courtCounts.GetValueOrDefault(ct.Id, 0);
+
+                return new BranchCourtTypeDto
+                {
+                    Id = bct?.Id,
+                    CourtTypeId = ct.Id,
+                    CourtTypeName = ct.Name,
+                    CourtTypeDescription = ct.Description,
+                    IsActive = bct?.IsActive ?? false,
+                    CreatedAt = bct?.CreatedAt,
+                    CourtCount = count
+                };
+            }).ToList();
         }
 
         // lấy thông tin loại sân của chi nhánh theo courtTypeId

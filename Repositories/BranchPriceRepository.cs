@@ -122,5 +122,39 @@ namespace SmashCourt_BE.Repositories
                 .Where(bp => ids.Contains(bp.Id))
                 .ExecuteDeleteAsync();
         }
+
+        // Lấy các giá override của 1 chi nhánh + 1 loại sân tại 1 ngày hiệu lực chính xác
+        public async Task<List<BranchPriceOverride>> GetExactDatePricesAsync(Guid branchId, Guid courtTypeId, DateOnly effectiveFrom)
+        {
+            return await _context.BranchPriceOverrides
+                .Where(bp => bp.BranchId == branchId && bp.CourtTypeId == courtTypeId && bp.EffectiveFrom == effectiveFrom)
+                .ToListAsync();
+        }
+
+        // Upsert batch (Cập nhật nếu đã có, tạo mới nếu chưa)
+        public async Task UpsertBatchAsync(List<BranchPriceOverride> insertPrices, List<BranchPriceOverride> updatePrices)
+        {
+            using var transaction = await _context.Database.BeginTransactionAsync();
+            try
+            {
+                if (insertPrices.Any())
+                {
+                    _context.BranchPriceOverrides.AddRange(insertPrices);
+                }
+                
+                if (updatePrices.Any())
+                {
+                    _context.BranchPriceOverrides.UpdateRange(updatePrices);
+                }
+
+                await _context.SaveChangesAsync();
+                await transaction.CommitAsync();
+            }
+            catch
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
+        }
     }
 }

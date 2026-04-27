@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using SmashCourt_BE.Common;
@@ -44,6 +44,26 @@ namespace SmashCourt_BE.Controllers
         }
 
         /// <summary>
+        /// Fetch pricing snapshot at a specific date.
+        /// </summary>
+        [HttpGet("resolved")]
+        [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        public async Task<IActionResult> GetResolved([FromQuery] string date, [FromQuery] Guid? courtTypeId = null)
+        {
+            if (!DateOnly.TryParse(date, out var parsedDate))
+            {
+                return BadRequest(ApiResponse<object>.Fail(
+                    "Định dạng ngày không hợp lệ. Vui lòng sử dụng định dạng YYYY-MM-DD.",
+                    ErrorCodes.BadRequest));
+            }
+
+            var result = await _service.GetResolvedAsync(parsedDate, courtTypeId);
+            return Ok(ApiResponse<List<CurrentPriceDto>>.Ok(result));
+        }
+
+        /// <summary>
         /// Tạo cấu hình giá mới — insert batch WEEKDAY + WEEKEND
         /// </summary>
         [HttpPost]
@@ -57,6 +77,46 @@ namespace SmashCourt_BE.Controllers
             await _service.CreateBatchAsync(dto);
             return StatusCode(201,
                 ApiResponse<object>.Ok(null!, "Cấu hình giá thành công"));
+        }
+        /// <summary>
+        /// Lấy danh sách các phiên bản giá chung (ngày hiệu lực)
+        /// </summary>
+        [HttpGet("versions")]
+        [Authorize(Policy = AuthorizationPolicies.OwnerOnly)]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        public async Task<IActionResult> GetVersions([FromQuery] Guid courtTypeId)
+        {
+            var result = await _service.GetVersionsAsync(courtTypeId);
+            return Ok(ApiResponse<List<PriceVersionListDto>>.Ok(result));
+        }
+
+        /// <summary>
+        /// Lấy chi tiết một phiên bản giá chung theo ngày hiệu lực
+        /// </summary>
+        [HttpGet("version")]
+        [Authorize(Policy = AuthorizationPolicies.OwnerOnly)]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> GetVersionDetail(
+            [FromQuery] Guid courtTypeId,
+            [FromQuery] string effectiveFrom)
+        {
+            if (!DateOnly.TryParse(effectiveFrom, out var effectiveFromDate))
+            {
+                return BadRequest(ApiResponse<object>.Fail(
+                    "Định dạng ngày không hợp lệ. Vui lòng sử dụng định dạng YYYY-MM-DD.",
+                    ErrorCodes.BadRequest));
+            }
+
+            var result = await _service.GetVersionDetailAsync(courtTypeId, effectiveFromDate);
+            if (result == null)
+            {
+                return Ok(ApiResponse<object>.Fail(
+                    "Không tìm thấy cấu hình giá",
+                    "PRICE_CONFIG_NOT_FOUND"));
+            }
+
+            return Ok(ApiResponse<PriceVersionDetailDto>.Ok(result));
         }
     }
 }
