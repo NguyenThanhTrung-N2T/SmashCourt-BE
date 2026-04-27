@@ -15,12 +15,4 @@ namespace SmashCourt_BE.DTOs.BranchManagement
         public bool IsEligibleForManager { get; set; }
         public bool IsEligibleForStaff { get; set; }
     }
-
-    public class UserBranchSummaryDto
-    {
-        public Guid BranchId { get; set; }
-        public string BranchName { get; set; } = null!;
-        public UserBranchRole Role { get; set; }
-        public bool IsActive { get; set; }
-    }
 }

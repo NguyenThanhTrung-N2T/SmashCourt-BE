@@ -1,10 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using SmashCourt_BE.Common;
 using SmashCourt_BE.Data;
-using SmashCourt_BE.DTOs.CourtType;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
-using SmashCourt_BE.Repositories.Interfaces;
+using SmashCourt_BE.Models.ViewModels;
+using SmashCourt_BE.Repositories.IRepository;
 
 namespace SmashCourt_BE.Repositories;
 

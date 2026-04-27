@@ -16,14 +16,14 @@ namespace SmashCourt_BE.Controllers
     public class BranchController : ControllerBase
     {
         private readonly IBranchService _service;
-        private readonly IUserSearchService _userSearchService;
+        private readonly IBranchUserService _branchUserService;
         private readonly IBranchManagerService _branchManagerService;
         private readonly IBranchStaffService _branchStaffService;
 
-        public BranchController(IBranchService service, IUserSearchService userSearchService, IBranchManagerService branchManagerService, IBranchStaffService branchStaffService)
+        public BranchController(IBranchService service, IBranchUserService branchUserService, IBranchManagerService branchManagerService, IBranchStaffService branchStaffService)
         {
             _service = service;
-            _userSearchService = userSearchService;
+            _branchUserService = branchUserService;
             _branchManagerService = branchManagerService;
             _branchStaffService = branchStaffService;
         }
@@ -337,7 +337,7 @@ namespace SmashCourt_BE.Controllers
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         public async Task<IActionResult> SearchUsers([FromQuery] UserSearchQuery query)
         {
-            var result = await _userSearchService.SearchUsersAsync(query);
+            var result = await _branchUserService.SearchUsersAsync(query);
             return Ok(ApiResponse<PagedResult<UserSearchResultDto>>.Ok(result, "Tìm kiếm người dùng thành công"));
         }
 
@@ -350,7 +350,7 @@ namespace SmashCourt_BE.Controllers
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         public async Task<IActionResult> GetUserAssignments(Guid userId)
         {
-            var result = await _userSearchService.GetUserAssignmentsAsync(userId);
+            var result = await _branchUserService.GetUserAssignmentsAsync(userId);
             return Ok(ApiResponse<List<UserBranchAssignmentDto>>.Ok(result, "Lấy danh sách gán chi nhánh thành công"));
         }
 

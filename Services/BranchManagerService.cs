@@ -1,6 +1,4 @@
-using Microsoft.EntityFrameworkCore;
 using SmashCourt_BE.Common;
-using SmashCourt_BE.Data;
 using SmashCourt_BE.DTOs.BranchManagement;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
@@ -11,18 +9,15 @@ namespace SmashCourt_BE.Services
 {
     public class BranchManagerService : IBranchManagerService
     {
-        private readonly SmashCourtContext _context;
         private readonly IUserBranchRepository _userBranchRepository;
         private readonly IUserRepository _userRepository;
         private readonly IBranchRepository _branchRepository;
 
         public BranchManagerService(
-            SmashCourtContext context,
             IUserBranchRepository userBranchRepository,
             IUserRepository userRepository,
             IBranchRepository branchRepository)
         {
-            _context = context;
             _userBranchRepository = userBranchRepository;
             _userRepository = userRepository;
             _branchRepository = branchRepository;
@@ -30,20 +25,15 @@ namespace SmashCourt_BE.Services
 
         public async Task<BranchManagerDto?> GetCurrentManagerAsync(Guid branchId)
         {
-            // Validate branch exists
+            // Validate chi nhánh tồn tại
             var branch = await _branchRepository.GetByIdAsync(branchId);
             if (branch == null)
             {
                 throw new AppException(404, "Chi nhánh không tồn tại", ErrorCodes.BranchNotFound);
             }
 
-            // Get current active manager
-            var managerAssignment = await _context.UserBranches
-                .Include(ub => ub.User)
-                .FirstOrDefaultAsync(ub => 
-                    ub.BranchId == branchId && 
-                    ub.Role == UserBranchRole.MANAGER && 
-                    ub.IsActive);
+            // Lấy manager active hiện tại (bao gồm User navigation)
+            var managerAssignment = await _userBranchRepository.GetActiveManagerWithUserAsync(branchId);
 
             if (managerAssignment == null)
             {
@@ -58,169 +48,114 @@ namespace SmashCourt_BE.Services
                 Phone = managerAssignment.User.Phone,
                 AvatarUrl = managerAssignment.User.AvatarUrl,
                 AssignedAt = managerAssignment.AssignedAt,
-                AssignedByName = null, // Will be enhanced when audit fields are added
+                AssignedByName = null,
                 AssignedByUserId = null
             };
         }
 
         public async Task<BranchManagerDto> AssignManagerAsync(Guid branchId, AssignManagerDto dto, Guid currentUserId)
         {
-            using var transaction = await _context.Database.BeginTransactionAsync();
-            try
+            // Validate chi nhánh tồn tại
+            var branch = await _branchRepository.GetByIdAsync(branchId);
+            if (branch == null)
             {
-                // Validate branch exists
-                var branch = await _branchRepository.GetByIdAsync(branchId);
-                if (branch == null)
-                {
-                    throw new AppException(404, "Chi nhánh không tồn tại", ErrorCodes.BranchNotFound);
-                }
-
-                // Validate user exists and is eligible
-                var user = await _userRepository.GetUserByIdAsync(dto.UserId);
-                if (user == null)
-                {
-                    throw new AppException(404, "Người dùng không tồn tại", ErrorCodes.UserNotFound);
-                }
-
-                if (user.Status != UserStatus.ACTIVE)
-                {
-                    throw new AppException(400, "Người dùng không ở trạng thái hoạt động", ErrorCodes.InvalidManagerUser);
-                }
-
-                // Only users with BRANCH_MANAGER role can be assigned to manage a branch
-                if (user.Role != UserRole.BRANCH_MANAGER)
-                {
-                    throw new AppException(400, "Chỉ người dùng có vai trò BRANCH_MANAGER mới có thể được gán làm quản lý chi nhánh", ErrorCodes.InvalidManagerUser);
-                }
-
-                // Check if user is already a manager of another branch
-                var existingManagerAssignment = await _context.UserBranches
-                    .FirstOrDefaultAsync(ub => 
-                        ub.UserId == dto.UserId && 
-                        ub.Role == UserBranchRole.MANAGER && 
-                        ub.IsActive);
-
-                if (existingManagerAssignment != null)
-                {
-                    throw new AppException(409, "Người dùng đã là quản lý của chi nhánh khác", ErrorCodes.ManagerAlreadyExists);
-                }
-
-                // Remove current manager if exists
-                var currentManager = await _userBranchRepository.GetActiveManagerByBranchIdAsync(branchId);
-                if (currentManager != null)
-                {
-                    currentManager.IsActive = false;
-                    currentManager.EndedAt = DateTime.UtcNow;
-                    await _userBranchRepository.UpdateAsync(currentManager);
-
-                    // Update previous manager's role if they have no other active assignments
-                    var previousManagerUser = await _userRepository.GetUserByIdAsync(currentManager.UserId);
-                    if (previousManagerUser != null)
-                    {
-                        var hasOtherAssignments = await _context.UserBranches
-                            .AnyAsync(ub => 
-                                ub.UserId == currentManager.UserId && 
-                                ub.IsActive && 
-                                ub.Id != currentManager.Id);
-
-                        if (!hasOtherAssignments)
-                        {
-                            previousManagerUser.Role = UserRole.CUSTOMER;
-                            await _userRepository.UpdateUserAsync(previousManagerUser);
-                        }
-                    }
-                }
-
-                // Create new manager assignment
-                var newManagerAssignment = new UserBranch
-                {
-                    Id = Guid.NewGuid(),
-                    UserId = dto.UserId,
-                    BranchId = branchId,
-                    Role = UserBranchRole.MANAGER,
-                    IsActive = true,
-                    AssignedAt = DateTime.UtcNow,
-                    EndedAt = null
-                };
-
-                await _userBranchRepository.CreateAsync(newManagerAssignment);
-
-                // Note: User must already have BRANCH_MANAGER role to be assigned
-                // We don't change the user's role here - they must already be BRANCH_MANAGER
-
-                await transaction.CommitAsync();
-
-                // Lấy thông tin người assign (nếu có)
-                var assignedByUser = await _userRepository.GetUserByIdAsync(currentUserId);
-
-                // Return the new manager info
-                return new BranchManagerDto
-                {
-                    UserId = user.Id,
-                    FullName = user.FullName,
-                    Email = user.Email,
-                    Phone = user.Phone,
-                    AvatarUrl = user.AvatarUrl,
-                    AssignedAt = newManagerAssignment.AssignedAt,
-                    AssignedByName = assignedByUser?.FullName,
-                    AssignedByUserId = currentUserId
-                };
+                throw new AppException(404, "Chi nhánh không tồn tại", ErrorCodes.BranchNotFound);
             }
-            catch
+
+            // Validate user tồn tại và đủ điều kiện
+            var user = await _userRepository.GetUserByIdAsync(dto.UserId);
+            if (user == null)
             {
-                await transaction.RollbackAsync();
-                throw;
+                throw new AppException(404, "Người dùng không tồn tại", ErrorCodes.UserNotFound);
             }
-        }
 
-        public async Task RemoveManagerAsync(Guid branchId, RemoveManagerDto dto, Guid currentUserId)
-        {
-            using var transaction = await _context.Database.BeginTransactionAsync();
-            try
+            if (user.Status != UserStatus.ACTIVE)
             {
-                // Validate branch exists
-                var branch = await _branchRepository.GetByIdAsync(branchId);
-                if (branch == null)
-                {
-                    throw new AppException(404, "Chi nhánh không tồn tại", ErrorCodes.BranchNotFound);
-                }
+                throw new AppException(400, "Người dùng không ở trạng thái hoạt động", ErrorCodes.InvalidManagerUser);
+            }
 
-                // Get current manager
-                var currentManager = await _userBranchRepository.GetActiveManagerByBranchIdAsync(branchId);
-                if (currentManager == null)
-                {
-                    throw new AppException(404, "Chi nhánh hiện tại không có quản lý", ErrorCodes.ManagerNotFound);
-                }
+            // Chỉ user có role BRANCH_MANAGER mới có thể được gán làm quản lý chi nhánh
+            if (user.Role != UserRole.BRANCH_MANAGER)
+            {
+                throw new AppException(400, "Chỉ người dùng có vai trò BRANCH_MANAGER mới có thể được gán làm quản lý chi nhánh", ErrorCodes.InvalidManagerUser);
+            }
 
-                // Deactivate manager assignment
+            // Kiểm tra user đã là manager của chi nhánh khác chưa
+            var existingManagerAssignment = await _userBranchRepository.GetActiveManagerAssignmentByUserIdAsync(dto.UserId);
+
+            if (existingManagerAssignment != null)
+            {
+                throw new AppException(409, "Người dùng đã là quản lý của chi nhánh khác", ErrorCodes.ManagerAlreadyExists);
+            }
+
+            // Xóa manager hiện tại nếu có
+            var currentManager = await _userBranchRepository.GetActiveManagerByBranchIdAsync(branchId);
+            if (currentManager != null)
+            {
                 currentManager.IsActive = false;
                 currentManager.EndedAt = DateTime.UtcNow;
                 await _userBranchRepository.UpdateAsync(currentManager);
 
-                // Update user's role if they have no other active assignments
-                var managerUser = await _userRepository.GetUserByIdAsync(currentManager.UserId);
-                if (managerUser != null)
-                {
-                    var hasOtherAssignments = await _context.UserBranches
-                        .AnyAsync(ub => 
-                            ub.UserId == currentManager.UserId && 
-                            ub.IsActive && 
-                            ub.Id != currentManager.Id);
-
-                    if (!hasOtherAssignments)
-                    {
-                        managerUser.Role = UserRole.CUSTOMER;
-                        await _userRepository.UpdateUserAsync(managerUser);
-                    }
-                }
-
-                await transaction.CommitAsync();
+                // KHÔNG tự động downgrade role của manager cũ
+                // Role BRANCH_MANAGER là do OWNER cấp, không tự động thay đổi
+                // Manager cũ vẫn giữ role BRANCH_MANAGER để có thể được assign vào chi nhánh khác
             }
-            catch
+
+            // Tạo manager assignment mới
+            var newManagerAssignment = new UserBranch
             {
-                await transaction.RollbackAsync();
-                throw;
+                Id = Guid.NewGuid(),
+                UserId = dto.UserId,
+                BranchId = branchId,
+                Role = UserBranchRole.MANAGER,
+                IsActive = true,
+                AssignedAt = DateTime.UtcNow,
+                EndedAt = null
+            };
+
+            await _userBranchRepository.CreateAsync(newManagerAssignment);
+
+            // Lưu ý: User phải có sẵn role BRANCH_MANAGER để được assign
+            // Chúng ta không thay đổi role của user ở đây
+
+            // Trả về thông tin manager mới
+            return new BranchManagerDto
+            {
+                UserId = user.Id,
+                FullName = user.FullName,
+                Email = user.Email,
+                Phone = user.Phone,
+                AvatarUrl = user.AvatarUrl,
+                AssignedAt = newManagerAssignment.AssignedAt,
+                AssignedByName = null,
+                AssignedByUserId = currentUserId
+            };
+        }
+
+        public async Task RemoveManagerAsync(Guid branchId, RemoveManagerDto dto, Guid currentUserId)
+        {
+            // Validate chi nhánh tồn tại
+            var branch = await _branchRepository.GetByIdAsync(branchId);
+            if (branch == null)
+            {
+                throw new AppException(404, "Chi nhánh không tồn tại", ErrorCodes.BranchNotFound);
             }
+
+            // Lấy manager hiện tại
+            var currentManager = await _userBranchRepository.GetActiveManagerByBranchIdAsync(branchId);
+            if (currentManager == null)
+            {
+                throw new AppException(404, "Chi nhánh hiện tại không có quản lý", ErrorCodes.ManagerNotFound);
+            }
+
+            // Vô hiệu hóa manager assignment
+            currentManager.IsActive = false;
+            currentManager.EndedAt = DateTime.UtcNow;
+            await _userBranchRepository.UpdateAsync(currentManager);
+
+            // KHÔNG tự động downgrade role của manager
+            // Role BRANCH_MANAGER là do OWNER cấp, không tự động thay đổi
+            // Manager vẫn giữ role BRANCH_MANAGER để có thể được assign vào chi nhánh khác
         }
     }
 }

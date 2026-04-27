@@ -3,8 +3,9 @@ using SmashCourt_BE.Common;
 using SmashCourt_BE.DTOs.CourtType;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
-using SmashCourt_BE.Repositories.Interfaces;
-using SmashCourt_BE.Services.Interfaces;
+using SmashCourt_BE.Models.ViewModels;
+using SmashCourt_BE.Repositories.IRepository;
+using SmashCourt_BE.Services.IService;
 
 namespace SmashCourt_BE.Services;
 

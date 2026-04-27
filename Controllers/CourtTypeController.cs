@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using SmashCourt_BE.Common;
 using SmashCourt_BE.Configurations;
 using SmashCourt_BE.DTOs.CourtType;
-using SmashCourt_BE.Services.Interfaces;
+using SmashCourt_BE.Services.IService;
 
 namespace SmashCourt_BE.Controllers;
 
