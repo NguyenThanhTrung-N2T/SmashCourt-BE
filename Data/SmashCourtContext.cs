@@ -102,6 +102,7 @@ namespace SmashCourt_BE.Data
                 e.Property(x => x.MustChangePassword).HasColumnName("must_change_password").HasDefaultValue(false);
                 e.Property(x => x.FailedLoginCount).HasColumnName("failed_login_count").HasDefaultValue(0);
                 e.Property(x => x.LockedUntil).HasColumnName("locked_until");
+                e.Property(x => x.LastFailedLoginAt).HasColumnName("last_failed_login_at");
                 e.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()");
                 e.Property(x => x.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("now()");
 

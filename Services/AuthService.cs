@@ -339,22 +339,35 @@ public class AuthService : IAuthService
         if (user.Status == UserStatus.LOCKED)
             throw new AppException(403, "Tài khoản của bạn đã bị khóa, vui lòng liên hệ hỗ trợ", ErrorCodes.AccountLocked);
 
-        // 4. Tài khoản bị khóa tạm do sai password
+        // 4. Email chưa verify — kiểm tra TRƯỚC password
+        if (!user.IsEmailVerified)
+            throw new AppException(403, "Vui lòng xác thực email trước khi đăng nhập", ErrorCodes.EmailNotVerified);
+
+        // 5. Tài khoản bị khóa tạm do sai password
         if (user.LockedUntil.HasValue && user.LockedUntil > DateTime.UtcNow)
         {
             var minutesLeft = (int)Math.Ceiling((user.LockedUntil.Value - DateTime.UtcNow).TotalMinutes);
             throw new AppException(403, $"Tài khoản tạm khóa do nhập sai mật khẩu, vui lòng thử lại sau {minutesLeft} phút", ErrorCodes.AccountLocked);
         }
 
-        // 5. Verify password
+        // 6. Verify password
         if (!BCrypt.Net.BCrypt.Verify(dto.Password, user.PasswordHash))
         {
+            // Reset counter if last failure was outside the 15-minute window
+            if (user.LastFailedLoginAt.HasValue &&
+                (DateTime.UtcNow - user.LastFailedLoginAt.Value).TotalMinutes > 15)
+            {
+                user.FailedLoginCount = 0;
+            }
+
             user.FailedLoginCount++;
+            user.LastFailedLoginAt = DateTime.UtcNow;
 
             if (user.FailedLoginCount >= 5)
             {
                 user.LockedUntil = DateTime.UtcNow.AddMinutes(15);
                 user.FailedLoginCount = 0;
+                user.LastFailedLoginAt = null;
                 user.UpdatedAt = DateTime.UtcNow;
                 await _userRepo.UpdateUserAsync(user);
                 throw new AppException(403, "Tài khoản tạm khóa 15 phút do nhập sai mật khẩu quá 5 lần", ErrorCodes.AccountLocked);
@@ -365,15 +378,12 @@ public class AuthService : IAuthService
             throw new AppException(401, "Email hoặc mật khẩu không đúng", ErrorCodes.Unauthorized);
         }
 
-        // 6. Đăng nhập thành công → reset failed login
+        // 7. Đăng nhập thành công → reset failed login
         user.FailedLoginCount = 0;
         user.LockedUntil = null;
+        user.LastFailedLoginAt = null;
         user.UpdatedAt = DateTime.UtcNow;
         await _userRepo.UpdateUserAsync(user);
-
-        // 7. Email chưa verify
-        if (!user.IsEmailVerified)
-            throw new AppException(403, "Vui lòng xác thực email trước khi đăng nhập", ErrorCodes.Forbidden);
 
         // 8. Kiểm tra 2FA
         if (user.Is2faEnabled)
@@ -490,6 +500,7 @@ public class AuthService : IAuthService
 
         user.FailedLoginCount = 0;
         user.LockedUntil = null;
+        user.LastFailedLoginAt = null;
         user.UpdatedAt = DateTime.UtcNow;
         await _userRepo.UpdateUserAsync(user);
 
@@ -602,11 +613,11 @@ public class AuthService : IAuthService
     {
         var email = dto.Email.Trim().ToLower();
 
-        // 1. Tìm user — không báo lỗi nếu không tìm thấy
+        // 1. Tìm user — không báo lỗi nếu không tìm thấy hoặc chưa verify
         var user = await _userRepo.GetUserByEmailAsync(email);
-        if (user == null)
+        if (user == null || !user.IsEmailVerified)
         {
-            // không tìm thấy user
+            // Silent return - không tiết lộ email có tồn tại hay chưa verify
             return;
         }
         if(user.PasswordHash == null)
@@ -716,6 +727,7 @@ public class AuthService : IAuthService
         user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.NewPassword);
         user.FailedLoginCount = 0;
         user.LockedUntil = null;
+        user.LastFailedLoginAt = null;
         user.UpdatedAt = DateTime.UtcNow;
         await _userRepo.UpdateUserAsync(user);
 
