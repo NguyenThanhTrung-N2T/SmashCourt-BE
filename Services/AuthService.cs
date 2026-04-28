@@ -48,7 +48,44 @@ public class AuthService : IAuthService
         _customerLoyaltyRepo = customerLoyaltyRepo;
         _loyaltyTierRepo = loyaltyTierRepo;
     }
+    // Gửi (hoặc gửi lại) OTP xác thực email cho user — dùng chung cho đăng ký mới và đăng ký lại
+    private async Task ResendOtpForUserAsync(Guid userId, string email, string fullName)
+    {
+        // Cooldown check
+        var latestOtp = await _otpRepo.GetLatestActiveOtpAsync(userId, OtpType.EMAIL_VERIFY);
+        if (latestOtp != null)
+        {
+            var secondsElapsed = (DateTime.UtcNow - latestOtp.CreatedAt).TotalSeconds;
+            if (secondsElapsed < 60)
+                throw new AppException(429,
+                    $"Vui lòng chờ {60 - (int)secondsElapsed} giây trước khi gửi lại OTP",
+                    ErrorCodes.OtpLimitExceeded);
+        }
 
+        await _otpRepo.InvalidateAllOtpAsync(userId, OtpType.EMAIL_VERIFY);
+
+        var rawCode = _otpService.GenerateCode();
+        var otp = new OtpCode
+        {
+            UserId = userId,
+            Type = OtpType.EMAIL_VERIFY,
+            CodeHash = _otpService.HashCode(rawCode),
+            AttemptCount = 0,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(5),
+            CreatedAt = DateTime.UtcNow
+        };
+        await _otpRepo.CreateOtpAsync(otp);
+
+        try
+        {
+            await _emailService.SendOtpRegisterAsync(email, fullName, rawCode);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send OTP email");
+            throw new AppException(500, "Không thể gửi email OTP, vui lòng thử lại", ErrorCodes.InternalError);
+        }
+    }
     // Đăng ký tài khoản mới — gửi OTP về email để xác thực
     public async Task RegisterAsync(RegisterDto dto)
     {
@@ -67,6 +104,16 @@ public class AuthService : IAuthService
             // Email đã verify → tài khoản hoàn chỉnh
             if (existingUser.IsEmailVerified)
                 throw new AppException(409, "Email đã được sử dụng", ErrorCodes.EmailExists);
+            // VERIFY_MAIL = FALSE 
+            existingUser.PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password, 12);
+            existingUser.FullName = dto.FullName.Trim();
+            existingUser.Phone = dto.Phone?.Trim();
+            existingUser.UpdatedAt = DateTime.UtcNow;
+            await _userRepo.UpdateUserAsync(existingUser);
+
+            // Jump straight to OTP logic using existingUser.Id
+            await ResendOtpForUserAsync(existingUser.Id, existingUser.Email, existingUser.FullName);
+            return;
         }
 
         // 3. Tạo user mới (IsEmailVerified = false — chờ xác thực OTP)
@@ -91,47 +138,8 @@ public class AuthService : IAuthService
         {
             throw new AppException(400, "Email đã được sử dụng", ErrorCodes.EmailExists);
         }
-
-
-        // 4. Kiểm tra cooldown 60s — tránh spam gửi OTP
-        var latestOtp = await _otpRepo.GetLatestActiveOtpAsync(user.Id, OtpType.EMAIL_VERIFY);
-        if (latestOtp != null)
-        {
-            var secondsElapsed = (DateTime.UtcNow - latestOtp.CreatedAt).TotalSeconds;
-            if (secondsElapsed < 60)
-                throw new AppException(429,
-                    $"Vui lòng chờ {60 - (int)secondsElapsed} giây trước khi gửi lại OTP",
-                    ErrorCodes.OtpLimitExceeded);
-        }
-
-        // 5. Xóa OTP cũ nếu có
-        await _otpRepo.InvalidateAllOtpAsync(user.Id, OtpType.EMAIL_VERIFY);
-
-        // 6. Tạo OTP mới
-        var rawCode = _otpService.GenerateCode();
-        var codeHash = _otpService.HashCode(rawCode);
-
-        var otp = new OtpCode
-        {
-            UserId = user.Id,
-            Type = OtpType.EMAIL_VERIFY,
-            CodeHash = codeHash,
-            AttemptCount = 0,
-            ExpiresAt = DateTime.UtcNow.AddMinutes(5),
-            CreatedAt = DateTime.UtcNow
-        };
-        await _otpRepo.CreateOtpAsync(otp);
-
-        // 7. Gửi email OTP
-        try
-        {
-            await _emailService.SendOtpRegisterAsync(email, user.FullName, rawCode);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to send OTP email");
-            throw new AppException(500, "Không thể gửi email OTP, vui lòng thử lại", ErrorCodes.InternalError);
-        }
+        // 4. Gửi OTP
+        await ResendOtpForUserAsync(user.Id, email, user.FullName);
     }
 
     // Xác thực OTP để hoàn tất đăng ký 
