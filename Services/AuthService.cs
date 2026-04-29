@@ -228,7 +228,18 @@ public class AuthService : IAuthService
         if (user == null)
             throw new AppException(404, "Tài khoản không tồn tại", ErrorCodes.NotFound);
 
-        // 2. Kiểm tra type phù hợp với trạng thái user
+        // 2. Kiểm tra cooldown 60s TRƯỚC — để tránh cản trở khi user đang chờ
+        var latestOtp = await _otpRepo.GetLatestActiveOtpAsync(user.Id, dto.Type);
+        if (latestOtp != null)
+        {
+            var secondsElapsed = (DateTime.UtcNow - latestOtp.CreatedAt).TotalSeconds;
+            if (secondsElapsed < 60)
+                throw new AppException(429,
+                    $"Vui lòng chờ {60 - (int)secondsElapsed} giây trước khi gửi lại OTP",
+                    ErrorCodes.OtpLimitExceeded);
+        }
+
+        // 3. Kiểm tra type phù hợp với trạng thái user
         switch (dto.Type)
         {
             case OtpType.EMAIL_VERIFY:
@@ -244,7 +255,7 @@ public class AuthService : IAuthService
                     {
                         // Vô hiệu hóa OTP trước
                         await _otpRepo.InvalidateAllOtpAsync(user.Id, OtpType.EMAIL_VERIFY);
-                        
+
                         // Rồi xóa user (có try-catch để xử lý nếu fail)
                         await _userRepo.DeleteUnverifiedAsync(user.Id);
                     }
@@ -252,7 +263,7 @@ public class AuthService : IAuthService
                     {
                         _logger.LogWarning(ex, "Lỗi khi xóa user chưa verify");
                     }
-                    
+
                     throw new AppException(400, "Đã gửi OTP quá số lần cho phép, vui lòng đăng ký lại", ErrorCodes.OtpLimitExceeded);
                 }
                 break;
@@ -267,17 +278,6 @@ public class AuthService : IAuthService
                 if (!user.Is2faEnabled)
                     throw new AppException(400, "Tài khoản chưa bật xác thực 2 yếu tố", ErrorCodes.BadRequest);
                 break;
-        }
-
-        // 3. Kiểm tra cooldown 60s
-        var latestOtp = await _otpRepo.GetLatestActiveOtpAsync(user.Id, dto.Type);
-        if (latestOtp != null)
-        {
-            var secondsElapsed = (DateTime.UtcNow - latestOtp.CreatedAt).TotalSeconds;
-            if (secondsElapsed < 60)
-                throw new AppException(429,
-                    $"Vui lòng chờ {60 - (int)secondsElapsed} giây trước khi gửi lại OTP",
-                    ErrorCodes.OtpLimitExceeded);
         }
 
         // 4. Invalidate OTP cũ
@@ -335,13 +335,13 @@ public class AuthService : IAuthService
         if (user.PasswordHash == null)
             throw new AppException(400, "Tài khoản này đăng nhập bằng Google, vui lòng đăng nhập bằng Google", ErrorCodes.BadRequest);
 
-        // 3. Tài khoản bị khóa vĩnh viễn — kiểm tra TRƯỚC 2FA
-        if (user.Status == UserStatus.LOCKED)
-            throw new AppException(403, "Tài khoản của bạn đã bị khóa, vui lòng liên hệ hỗ trợ", ErrorCodes.AccountLocked);
-
-        // 4. Email chưa verify — kiểm tra TRƯỚC password
+        // 3. Email chưa verify — kiểm tra TRƯỚC mọi thứ (user chưa active)
         if (!user.IsEmailVerified)
             throw new AppException(403, "Vui lòng xác thực email trước khi đăng nhập", ErrorCodes.EmailNotVerified);
+
+        // 4. Tài khoản bị khóa vĩnh viễn
+        if (user.Status == UserStatus.LOCKED)
+            throw new AppException(403, "Tài khoản của bạn đã bị khóa, vui lòng liên hệ hỗ trợ", ErrorCodes.AccountLocked);
 
         // 5. Tài khoản bị khóa tạm do sai password
         if (user.LockedUntil.HasValue && user.LockedUntil > DateTime.UtcNow)
@@ -613,17 +613,13 @@ public class AuthService : IAuthService
     {
         var email = dto.Email.Trim().ToLower();
 
-        // 1. Tìm user — không báo lỗi nếu không tìm thấy hoặc chưa verify
+        // 1. Tìm user — silent return cho mọi trường hợp không hợp lệ
+        //    Tránh lộ thông tin: email không tồn tại, chưa verify, hay là OAuth account
         var user = await _userRepo.GetUserByEmailAsync(email);
-        if (user == null || !user.IsEmailVerified)
+        if (user == null || !user.IsEmailVerified || user.PasswordHash == null)
         {
-            // Silent return - không tiết lộ email có tồn tại hay chưa verify
+            // Silent return — không tiết lộ email có tồn tại, đã verify, hay loại tài khoản
             return;
-        }
-        if(user.PasswordHash == null)
-        {
-            // User đăng nhập bằng OAuth
-            throw new AppException(400, "Tài khoản này đăng nhập bằng Google, không có mật khẩu để đặt lại", ErrorCodes.BadRequest);
         }
 
         // 2. Kiểm tra cooldown 60s

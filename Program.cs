@@ -199,7 +199,7 @@ builder.Services.AddRateLimiter(options =>
         var response = System.Text.Json.JsonSerializer.Serialize(
             ApiResponse.Fail(
                 "Bạn gửi quá nhiều request, vui lòng thử lại sau",
-                ErrorCodes.BadRequest
+                ErrorCodes.OtpLimitExceeded  // 429 — dùng code rate-limit, không phải BadRequest
             ),
             new System.Text.Json.JsonSerializerOptions 
             { 
