@@ -18,6 +18,7 @@ namespace SmashCourt_BE.Models.Entities
         public bool MustChangePassword { get; set; } = false;
         public int FailedLoginCount { get; set; } = 0;
         public DateTime? LockedUntil { get; set; }
+        public DateTime? LastFailedLoginAt { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
 

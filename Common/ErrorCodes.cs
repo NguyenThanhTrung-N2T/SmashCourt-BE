@@ -24,6 +24,7 @@ public static class ErrorCodes
     public const string OtpLimitExceeded = "OTP_LIMIT_EXCEEDED";
     public const string TokenInvalid     = "TOKEN_INVALID";
     public const string EmailExists      = "EMAIL_EXISTS";
+    public const string EmailNotVerified = "EMAIL_NOT_VERIFIED";
     public const string NameDuplicate    = "NAME_DUPLICATE";
     public const string AccountLocked    = "ACCOUNT_LOCKED";
 

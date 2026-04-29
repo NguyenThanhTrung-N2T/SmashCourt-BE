@@ -159,7 +159,15 @@ namespace SmashCourt_BE.Services
                         CreatedAt = DateTime.UtcNow,
                         UpdatedAt = DateTime.UtcNow
                     };
-                    await _customerLoyaltyRepo.CreateAsync(customerLoyalty);
+                    try
+                    {
+                        await _customerLoyaltyRepo.CreateAsync(customerLoyalty);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Failed to create customer loyalty for new Google user {UserId}", user.Id);
+                        // Không throw — lỗi loyalty không nên block quá trình đăng nhập
+                    }
                 }
             }
             else if (user.PasswordHash != null)

@@ -26,6 +26,7 @@ public class AuthController : ControllerBase
     /// Đăng ký tài khoản — gửi OTP về email để xác thực
     /// </summary>
     [HttpPost("register")]
+    [EnableRateLimiting("sensitive")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Register([FromBody] RegisterDto dto)
@@ -39,6 +40,7 @@ public class AuthController : ControllerBase
     /// Xác thực OTP đăng ký tài khoản
     /// </summary>
     [HttpPost("verify-email")]
+    [EnableRateLimiting("sensitive")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -68,6 +70,7 @@ public class AuthController : ControllerBase
     /// Đăng nhập bằng email + password
     /// </summary>
     [HttpPost("login")]
+    [EnableRateLimiting("login")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -89,6 +92,7 @@ public class AuthController : ControllerBase
     /// Xác thực OTP bước 2FA — hoàn tất đăng nhập
     /// </summary>
     [HttpPost("login/2fa")]
+    [EnableRateLimiting("login")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
