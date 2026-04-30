@@ -10,6 +10,9 @@ namespace SmashCourt_BE.Repositories.IRepository
         // lấy sân theo id, branchId là tùy chọn — khi truyền vào sẽ scope theo chi nhánh (dùng cho staff), khi null sẽ lấy theo id đơn thuần (dùng khi booking)
         Task<Court?> GetByIdAsync(Guid id, Guid? branchId = null);
 
+        // lấy danh sách sân theo danh sách id (dùng để load hàng loạt, tránh N+1 query)
+        Task<List<Court>> GetByIdsAsync(IEnumerable<Guid> ids);
+
         // kiểm tra tên sân đã tồn tại trong chi nhánh chưa, nếu excludeId được cung cấp thì sẽ bỏ qua sân có id đó (dùng cho update)
         Task<bool> ExistsByNameAsync(string name, Guid branchId, Guid? excludeId = null);
 

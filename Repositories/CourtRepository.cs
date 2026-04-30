@@ -51,6 +51,15 @@ namespace SmashCourt_BE.Repositories
                     c.Status != CourtStatus.INACTIVE);
         }
 
+        // lấy danh sách sân theo id, bỏ qua các sân đã bị xóa (INACTIVE)
+        public async Task<List<Court>> GetByIdsAsync(IEnumerable<Guid> ids)
+        {
+            return await _context.Courts
+                .Include(c => c.CourtType)
+                .Where(c => ids.Contains(c.Id) && c.Status != CourtStatus.INACTIVE)
+                .ToListAsync();
+        }
+
         // kiểm tra tên sân đã tồn tại trong chi nhánh hay chưa, chỉ kiểm tra sân đang hoạt động + sân bị khóa + sân bị đặt + sân đang sử dụng
         public async Task<bool> ExistsByNameAsync(
             string name, Guid branchId, Guid? excludeId = null)

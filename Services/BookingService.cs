@@ -159,11 +159,14 @@ namespace SmashCourt_BE.Services
 
             // 2. Load + validate tất cả courts — fail fast trước khi tạo bất kỳ record nào
             var courtEntities = new List<(CourtSlotDto Slot, Court Court)>();
+            
+            var courtIds = dto.Courts.Select(c => c.CourtId).Distinct().ToList();
+            var courtsFromDb = await _courtRepo.GetByIdsAsync(courtIds);
+            var courtDict = courtsFromDb.ToDictionary(c => c.Id);
 
             foreach (var courtSlot in dto.Courts)
             {
-                var court = await _courtRepo.GetByIdAsync(courtSlot.CourtId);
-                if (court == null || court.Status == CourtStatus.INACTIVE)
+                if (!courtDict.TryGetValue(courtSlot.CourtId, out var court))
                     throw new AppException(404,
                         $"Không tìm thấy sân {courtSlot.CourtId}", ErrorCodes.NotFound);
 
@@ -293,76 +296,16 @@ namespace SmashCourt_BE.Services
             };
             booking = await _bookingRepo.CreateAsync(booking);
 
-            // 8. Tạo BookingCourt + PriceItems cho từng court
-            var dayType = dto.BookingDate.DayOfWeek == DayOfWeek.Saturday ||
-                          dto.BookingDate.DayOfWeek == DayOfWeek.Sunday
-                ? DayType.WEEKEND : DayType.WEEKDAY;
-
-            var allSlots = await _timeSlotRepo.GetAllAsync();
-
-            foreach (var (slot, priceResult) in priceResults)
-            {
-                var bookingCourt = await _bookingRepo.AddCourtAsync(new BookingCourt
-                {
-                    BookingId = booking.Id,
-                    CourtId = slot.CourtId,
-                    Date = DateOnly.FromDateTime(dto.BookingDate),
-                    StartTime = TimeOnly.FromTimeSpan(slot.StartTime),
-                    EndTime = TimeOnly.FromTimeSpan(slot.EndTime),
-                    IsActive = true,
-                    CreatedAt = DateTime.UtcNow
-                });
-
-                var priceItems = priceResult.Breakdown
-                    .Select(item =>
-                    {
-                        var timeSlot = allSlots.FirstOrDefault(ts =>
-                            ts.StartTime.ToTimeSpan() == item.StartTime &&
-                            ts.EndTime.ToTimeSpan() == item.EndTime &&
-                            ts.DayType == dayType);
-
-                        return timeSlot == null ? null : new BookingPriceItem
-                        {
-                            BookingCourtId = bookingCourt.Id,
-                            TimeSlotId = timeSlot.Id,
-                            UnitPrice = item.UnitPrice,
-                            CreatedAt = DateTime.UtcNow
-                        };
-                    })
-                    .Where(x => x != null)
-                    .Cast<BookingPriceItem>()
-                    .ToList();
-
-                await _bookingRepo.AddPriceItemsAsync(priceItems);
-            }
-
-            // 9. Promotion
-            if (promotion != null)
-            {
-                await _bookingRepo.AddPromotionAsync(new BookingPromotion
-                {
-                    BookingId = booking.Id,
-                    PromotionId = promotion.Id,
-                    PromotionNameSnapshot = promotion.Name,
-                    DiscountRateSnapshot = promotion.DiscountRate,
-                    DiscountAmount = promotionDiscountAmount,
-                    CreatedAt = DateTime.UtcNow
-                });
-            }
-
-            // 10. Invoice — 1 invoice cho toàn bộ booking
-            var invoice = await _invoiceRepo.CreateAsync(new Invoice
-            {
-                BookingId = booking.Id,
-                CourtFee = totalCourtFee,
-                ServiceFee = 0,
-                LoyaltyDiscountAmount = loyaltyDiscountAmount,
-                PromotionDiscountAmount = promotionDiscountAmount,
-                FinalTotal = finalTotal,
-                PaymentStatus = InvoicePaymentStatus.UNPAID,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
-            });
+            // 8-10. Tạo BookingCourt, PriceItems, Promotion, và Invoice (logic chung)
+            var invoice = await CreateBookingDetailsAsync(
+                booking,
+                booking.BookingDate,
+                priceResults,
+                promotion,
+                promotionDiscountAmount,
+                totalCourtFee,
+                loyaltyDiscountAmount,
+                finalTotal);
 
             // 11. Tạo SlotLock cho từng court — ngăn double-booking trong thời gian thanh toán
             // Court.Status KHÔNG thay đổi ở bước này:
@@ -384,33 +327,26 @@ namespace SmashCourt_BE.Services
             }
 
             // 12. Payment + VNPay URL
+            // transactionRef được VnPayService log nhưng không dùng làm vnp_TxnRef thực sự
+            // — library tự generate PaymentId riêng, paymentInfo.TransactionRef mới là giá trị lưu vào DB
             var courtNames = string.Join(", ",
                 courtEntities.Select(x => x.Court.Name).Distinct());
-            var guidDigits = new string(
-                booking.Id.ToString("N")
-                    .Where(char.IsDigit)
-                    .ToArray());
-            if (string.IsNullOrWhiteSpace(guidDigits))
-                guidDigits = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString();
-
-            var transactionRef =
-                $"{DateTimeHelper.GetNowInVietnam():yyMMddHHmmss}{guidDigits}";
-            // VNPay yêu cầu vnp_OrderInfo KHÔNG có tiếng Việt có dấu hoặc ký tự đặc biệt
             var courtNamesAscii = RemoveDiacritics(courtNames);
             var paymentInfo = _vnPayService.CreatePaymentUrl(
-                transactionRef, finalTotal,
+                booking.Id.ToString(),   // chỉ dùng để log bên trong VnPayService
+                finalTotal,
                 $"Dat san {courtNamesAscii}");
 
             await _paymentRepo.CreateAsync(new Payment
             {
-                InvoiceId = invoice.Id, // Đã fix logic trả Id invoice sau khi create (EF tự gán lại ID cho param model hoặc xài Id của biến)
+                InvoiceId = invoice.Id,
                 Method = PaymentTxMethod.VNPAY,
                 Amount = finalTotal,
                 Status = PaymentTxStatus.PENDING,
-                  TransactionRef = paymentInfo.TransactionRef,
-                  CreatedAt = DateTime.UtcNow,
-                  UpdatedAt = DateTime.UtcNow
-              });
+                TransactionRef = paymentInfo.TransactionRef,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            });
 
             // 13. COMMIT TRANSACTION
             transaction.Complete();
@@ -434,11 +370,14 @@ namespace SmashCourt_BE.Services
 
             // 1. Load + validate tất cả courts
             var courtEntities = new List<(CourtSlotDto Slot, Court Court)>();
+            
+            var courtIds = dto.Courts.Select(c => c.CourtId).Distinct().ToList();
+            var courtsFromDb = await _courtRepo.GetByIdsAsync(courtIds);
+            var courtDict = courtsFromDb.ToDictionary(c => c.Id);
 
             foreach (var courtSlot in dto.Courts)
             {
-                var court = await _courtRepo.GetByIdAsync(courtSlot.CourtId);
-                if (court == null || court.Status == CourtStatus.INACTIVE)
+                if (!courtDict.TryGetValue(courtSlot.CourtId, out var court))
                     throw new AppException(404,
                         $"Không tìm thấy sân {courtSlot.CourtId}", ErrorCodes.NotFound);
 
@@ -530,7 +469,13 @@ namespace SmashCourt_BE.Services
                     if (loyalty?.Tier != null)
                         loyaltyDiscountAmount = Math.Round(
                             totalCourtFee * loyalty.Tier.DiscountRate / 100, 0);
+                }
 
+                // Calculate total after loyalty to be consistent with online calculation
+                var totalAfterLoyalty = totalCourtFee - loyaltyDiscountAmount;
+
+                if (dto.CustomerId.HasValue)
+                {
                     if (dto.PromotionId.HasValue)
                     {
                         promotion = await _promotionRepo.GetByIdAsync(dto.PromotionId.Value);
@@ -545,11 +490,11 @@ namespace SmashCourt_BE.Services
                                 "Khuyến mãi không áp dụng cho ngày đặt sân này", ErrorCodes.BadRequest);
 
                         promotionDiscountAmount = Math.Round(
-                            (totalCourtFee - loyaltyDiscountAmount) * promotion.DiscountRate / 100, 0);
+                            totalAfterLoyalty * promotion.DiscountRate / 100, 0);
                     }
                 }
 
-                var finalTotal = totalCourtFee - loyaltyDiscountAmount - promotionDiscountAmount;
+                var finalTotal = totalAfterLoyalty - promotionDiscountAmount;
 
                 // 5. Tạo booking CONFIRMED
                 var booking = new Booking
@@ -569,76 +514,16 @@ namespace SmashCourt_BE.Services
                 };
                 booking = await _bookingRepo.CreateAsync(booking);
 
-                // 6. Tạo BookingCourt + PriceItems
-                var dayType = dto.BookingDate.DayOfWeek == DayOfWeek.Saturday ||
-                              dto.BookingDate.DayOfWeek == DayOfWeek.Sunday
-                    ? DayType.WEEKEND : DayType.WEEKDAY;
-
-                var allSlots = await _timeSlotRepo.GetAllAsync();
-
-                foreach (var (slot, priceResult) in priceResults)
-                {
-                    var bookingCourt = await _bookingRepo.AddCourtAsync(new BookingCourt
-                    {
-                        BookingId = booking.Id,
-                        CourtId = slot.CourtId,
-                        Date = DateOnly.FromDateTime(dto.BookingDate),
-                        StartTime = TimeOnly.FromTimeSpan(slot.StartTime),
-                        EndTime = TimeOnly.FromTimeSpan(slot.EndTime),
-                        IsActive = true,
-                        CreatedAt = DateTime.UtcNow
-                    });
-
-                    var priceItems = priceResult.Breakdown
-                        .Select(item =>
-                        {
-                            var timeSlot = allSlots.FirstOrDefault(ts =>
-                                ts.StartTime.ToTimeSpan() == item.StartTime &&
-                                ts.EndTime.ToTimeSpan() == item.EndTime &&
-                                ts.DayType == dayType);
-
-                            return timeSlot == null ? null : new BookingPriceItem
-                            {
-                                BookingCourtId = bookingCourt.Id,
-                                TimeSlotId = timeSlot.Id,
-                                UnitPrice = item.UnitPrice,
-                                CreatedAt = DateTime.UtcNow
-                            };
-                        })
-                        .Where(x => x != null)
-                        .Cast<BookingPriceItem>()
-                        .ToList();
-
-                    await _bookingRepo.AddPriceItemsAsync(priceItems);
-                }
-
-                // 7. Tạo promotion nếu có
-                if (promotion != null)
-                {
-                    await _bookingRepo.AddPromotionAsync(new BookingPromotion
-                    {
-                        BookingId = booking.Id,
-                        PromotionId = promotion.Id,
-                        PromotionNameSnapshot = promotion.Name,
-                        DiscountRateSnapshot = promotion.DiscountRate,
-                        DiscountAmount = promotionDiscountAmount,
-                        CreatedAt = DateTime.UtcNow
-                    });
-                }
-
-                // 8. Tạo invoice UNPAID
-                await _invoiceRepo.CreateAsync(new Invoice
-                {
-                    BookingId = booking.Id,
-                    CourtFee = totalCourtFee,
-                    ServiceFee = 0,
-                    LoyaltyDiscountAmount = loyaltyDiscountAmount,
-                    PromotionDiscountAmount = promotionDiscountAmount,
-                    FinalTotal = finalTotal,
-                    PaymentStatus = InvoicePaymentStatus.UNPAID,
-                    CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow
-                });
+                // 6-8. Tạo BookingCourt, PriceItems, Promotion, và Invoice (logic chung)
+                var invoice = await CreateBookingDetailsAsync(
+                    booking,
+                    booking.BookingDate,
+                    priceResults,
+                    promotion,
+                    promotionDiscountAmount,
+                    totalCourtFee,
+                    loyaltyDiscountAmount,
+                    finalTotal);
 
                 // 9. Court status sẽ được update bởi scheduled job khi đến StartTime
                 // KHÔNG update court ở đây để cho phép overbooking
@@ -706,9 +591,10 @@ namespace SmashCourt_BE.Services
             await _slotLockRepo.DeleteByBookingIdAsync(booking.Id);
 
             // Cập nhật court → AVAILABLE (với guard check)
+            // bc.Court đã được load sẵn qua GetByIdWithDetailsAsync().ThenInclude, không cần re-query
             foreach (var bc in booking.BookingCourts)
             {
-                var court = await _courtRepo.GetByIdAsync(bc.CourtId);
+                var court = bc.Court;
                 if (court != null)
                 {
                     // Chỉ set AVAILABLE nếu court không ở trạng thái đặc biệt
@@ -878,9 +764,10 @@ namespace SmashCourt_BE.Services
 
             await _slotLockRepo.DeleteByBookingIdAsync(booking.Id);
 
+            // bc.Court đã được load sẵn qua GetByCancelTokenAsync().ThenInclude
             foreach (var bc in booking.BookingCourts)
             {
-                var court = await _courtRepo.GetByIdAsync(bc.CourtId, booking.BranchId);
+                var court = bc.Court;
                 if (court != null)
                 {
                     // Chỉ set AVAILABLE nếu court không ở trạng thái đặc biệt
@@ -963,9 +850,10 @@ namespace SmashCourt_BE.Services
             await _bookingRepo.UpdateAsync(booking);
 
             // Cập nhật court → IN_USE
+            // bc.Court đã được load sẵn qua GetByIdWithDetailsAsync().ThenInclude
             foreach (var bc in booking.BookingCourts)
             {
-                var court = await _courtRepo.GetByIdAsync(bc.CourtId, booking.BranchId);
+                var court = bc.Court;
                 if (court != null)
                 {
                     court.Status = CourtStatus.IN_USE;
@@ -977,7 +865,7 @@ namespace SmashCourt_BE.Services
             // TODO: Broadcast SignalR
         }
 
-        // check out sân, chỉ cho phép check-out khi booking đang PENDING_PAYMENT
+        // check out sân — chấp nhận IN_PROGRESS (khách về sớm) và PENDING_PAYMENT (hết giờ, job đã set)
         public async Task CheckoutAsync(Guid id, Guid currentUserId, string currentUserRole)
         {
             var booking = await _bookingRepo.GetByIdWithDetailsAsync(id);
@@ -986,33 +874,76 @@ namespace SmashCourt_BE.Services
 
             await ValidateBranchAccessAsync(booking.BranchId, currentUserId, currentUserRole);
 
-            if (booking.Status != BookingStatus.PENDING_PAYMENT)
+            // Cho phép checkout từ IN_PROGRESS (khách về sớm trước EndTime)
+            // hoặc PENDING_PAYMENT (Job-02 đã set sau khi hết giờ)
+            var checkoutableStatuses = new[]
+            {
+                BookingStatus.IN_PROGRESS,
+                BookingStatus.PENDING_PAYMENT
+            };
+            if (!checkoutableStatuses.Contains(booking.Status))
                 throw new AppException(400,
-                    "Chỉ có thể checkout đơn đang chờ thanh toán",
+                    "Chỉ có thể checkout đơn đang tiến hành hoặc chờ thanh toán",
                     ErrorCodes.BadRequest);
 
             var invoice = booking.Invoice;
             if (invoice == null)
                 throw new AppException(500, "Không tìm thấy hóa đơn", ErrorCodes.InternalError);
 
+            var now = DateTime.UtcNow;
+
+            // Tạo Payment record CASH cho phần chưa thu:
+            // - Invoice UNPAID (walk-in chưa thu tiền): thu toàn bộ FinalTotal
+            // - Invoice PARTIALLY_PAID (online có service fee phát sinh): thu phần ServiceFee
+            // - Invoice PAID (trả trước đủ): không cần tạo thêm
+            if (invoice.PaymentStatus == InvoicePaymentStatus.UNPAID)
+            {
+                await _paymentRepo.CreateAsync(new Payment
+                {
+                    InvoiceId = invoice.Id,
+                    Method = PaymentTxMethod.CASH,
+                    Amount = invoice.FinalTotal,
+                    Status = PaymentTxStatus.SUCCESS,
+                    PaidAt = now,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                });
+            }
+            else if (invoice.PaymentStatus == InvoicePaymentStatus.PARTIALLY_PAID
+                     && invoice.ServiceFee > 0)
+            {
+                // Đã thanh toán sân online (PARTIALLY_PAID), còn lại service fee thu tại quầy
+                await _paymentRepo.CreateAsync(new Payment
+                {
+                    InvoiceId = invoice.Id,
+                    Method = PaymentTxMethod.CASH,
+                    Amount = invoice.ServiceFee,
+                    Status = PaymentTxStatus.SUCCESS,
+                    PaidAt = now,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                });
+            }
+
             // Cập nhật invoice → PAID
             invoice.PaymentStatus = InvoicePaymentStatus.PAID;
-            invoice.UpdatedAt = DateTime.UtcNow;
+            invoice.UpdatedAt = now;
             await _invoiceRepo.UpdateAsync(invoice);
 
             // Cập nhật booking → COMPLETED
             booking.Status = BookingStatus.COMPLETED;
-            booking.UpdatedAt = DateTime.UtcNow;
+            booking.UpdatedAt = now;
             await _bookingRepo.UpdateAsync(booking);
 
             // Cập nhật court → AVAILABLE
+            // bc.Court đã được load sẵn qua GetByIdWithDetailsAsync().ThenInclude
             foreach (var bc in booking.BookingCourts)
             {
-                var court = await _courtRepo.GetByIdAsync(bc.CourtId, booking.BranchId);
+                var court = bc.Court;
                 if (court != null)
                 {
                     court.Status = CourtStatus.AVAILABLE;
-                    court.UpdatedAt = DateTime.UtcNow;
+                    court.UpdatedAt = now;
                     await _courtRepo.UpdateAsync(court);
                 }
             }
@@ -1441,6 +1372,88 @@ namespace SmashCourt_BE.Services
                     sb.Append(c);
             }
             return sb.ToString().Normalize(System.Text.NormalizationForm.FormC);
+        }
+
+        // Logic chung dùng để tạo chi tiết của một Booking
+        private async Task<Invoice> CreateBookingDetailsAsync(
+            Booking booking,
+            DateOnly bookingDate,
+            List<(CourtSlotDto Slot, CalculatePriceResultDto Price)> priceResults,
+            Promotion? promotion,
+            decimal promotionDiscountAmount,
+            decimal totalCourtFee,
+            decimal loyaltyDiscountAmount,
+            decimal finalTotal)
+        {
+            var dayType = bookingDate.DayOfWeek == DayOfWeek.Saturday ||
+                          bookingDate.DayOfWeek == DayOfWeek.Sunday
+                ? DayType.WEEKEND : DayType.WEEKDAY;
+
+            var allSlots = await _timeSlotRepo.GetAllAsync();
+
+            foreach (var (slot, priceResult) in priceResults)
+            {
+                var bookingCourt = await _bookingRepo.AddCourtAsync(new BookingCourt
+                {
+                    BookingId = booking.Id,
+                    CourtId = slot.CourtId,
+                    Date = bookingDate,
+                    StartTime = TimeOnly.FromTimeSpan(slot.StartTime),
+                    EndTime = TimeOnly.FromTimeSpan(slot.EndTime),
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow
+                });
+
+                var priceItems = priceResult.Breakdown
+                    .Select(item =>
+                    {
+                        var timeSlot = allSlots.FirstOrDefault(ts =>
+                            ts.StartTime.ToTimeSpan() == item.StartTime &&
+                            ts.EndTime.ToTimeSpan() == item.EndTime &&
+                            ts.DayType == dayType);
+
+                        return timeSlot == null ? null : new BookingPriceItem
+                        {
+                            BookingCourtId = bookingCourt.Id,
+                            TimeSlotId = timeSlot.Id,
+                            UnitPrice = item.UnitPrice,
+                            CreatedAt = DateTime.UtcNow
+                        };
+                    })
+                    .Where(x => x != null)
+                    .Cast<BookingPriceItem>()
+                    .ToList();
+
+                await _bookingRepo.AddPriceItemsAsync(priceItems);
+            }
+
+            if (promotion != null)
+            {
+                await _bookingRepo.AddPromotionAsync(new BookingPromotion
+                {
+                    BookingId = booking.Id,
+                    PromotionId = promotion.Id,
+                    PromotionNameSnapshot = promotion.Name,
+                    DiscountRateSnapshot = promotion.DiscountRate,
+                    DiscountAmount = promotionDiscountAmount,
+                    CreatedAt = DateTime.UtcNow
+                });
+            }
+
+            var invoice = await _invoiceRepo.CreateAsync(new Invoice
+            {
+                BookingId = booking.Id,
+                CourtFee = totalCourtFee,
+                ServiceFee = 0,
+                LoyaltyDiscountAmount = loyaltyDiscountAmount,
+                PromotionDiscountAmount = promotionDiscountAmount,
+                FinalTotal = finalTotal,
+                PaymentStatus = InvoicePaymentStatus.UNPAID,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            });
+
+            return invoice;
         }
     }
 }

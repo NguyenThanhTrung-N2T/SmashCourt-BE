@@ -45,7 +45,7 @@ namespace SmashCourt_BE.Services
             var isValid = _vnPayService.VerifyIpn(
                 query, out var transactionRef, out var isSuccess, out var rawPayload);
 
-            // 2. Log IPN — luôn luôn log dù hợp lệ hay không
+            // 2. Log IPN — luôn luôn log dù hợp lệ hay không, NGOÀI transaction
             var payment = await _paymentRepo.GetByTransactionRefAsync(transactionRef);
             await _paymentRepo.CreateIpnLogAsync(new PaymentIpnLog
             {
@@ -77,12 +77,32 @@ namespace SmashCourt_BE.Services
                 booking.Status == BookingStatus.CANCELLED)
                 return;
 
+            // 4. Verify amount từ VNPay — bảo vệ khỏi tampered callback
+            if (query.TryGetValue("vnp_Amount", out var vnpAmountStr) &&
+                long.TryParse(vnpAmountStr, out var vnpRawAmount))
+            {
+                var vnpAmount = (decimal)(vnpRawAmount / 100);
+                if (vnpAmount != payment.Amount)
+                {
+                    _logger.LogWarning(
+                        "VNPay amount mismatch for ref {Ref}: expected {Expected}, received {Actual}",
+                        transactionRef, payment.Amount, vnpAmount);
+                    return;
+                }
+            }
+
             var now = DateTime.UtcNow;
+
+            // 5. Bọc toàn bộ business updates trong TransactionScope
+            // — đảm bảo DB không ở trạng thái inconsistent nếu 1 update fail giữa chừng
+            using var transaction = new System.Transactions.TransactionScope(
+                System.Transactions.TransactionScopeAsyncFlowOption.Enabled);
 
             if (isSuccess)
             {
-                // 4A. Thanh toán thành công
+                // 5A. Thanh toán thành công
                 booking.Status = BookingStatus.PAID_ONLINE;
+                booking.ExpiresAt = null;   // Clear ExpiresAt — không còn ý nghĩa sau khi paid
                 booking.UpdatedAt = now;
                 await _bookingRepo.UpdateAsync(booking);
 
@@ -99,10 +119,13 @@ namespace SmashCourt_BE.Services
                 // Xóa slot_lock
                 await _slotLockRepo.DeleteByBookingIdAsync(booking.Id);
 
-                // Court status sẽ được update bởi scheduled job khi đến StartTime
-                // KHÔNG update court ở đây để cho phép overbooking
+                // Court status sẽ được update bởi Job-02 khi đến StartTime
+                // KHÔNG update court ở đây để tránh xung đột với các booking khác
 
-                // Gửi email xác nhận + cancel token
+                transaction.Complete();
+
+                // Gửi email xác nhận + cancel token — NGOÀI transaction
+                // lỗi email không được rollback payment
                 try
                 {
                     await SendConfirmationWithCancelTokenAsync(booking);
@@ -116,16 +139,16 @@ namespace SmashCourt_BE.Services
             }
             else
             {
-                // 4B. Thanh toán thất bại
+                // 5B. Thanh toán thất bại
                 booking.Status = BookingStatus.CANCELLED;
+                booking.ExpiresAt = null;
                 booking.CancelledAt = now;
                 booking.CancelSource = CancelSourceEnum.SYSTEM;
                 booking.UpdatedAt = now;
-
-                foreach (var bc in booking.BookingCourts ?? [])
-                    bc.IsActive = false;
-
                 await _bookingRepo.UpdateAsync(booking);
+
+                // Dùng explicit method để deactivate courts — nhất quán với CancelByStaffAsync
+                await _bookingRepo.UpdateCourtActiveStatusAsync(booking.Id, false);
 
                 payment.Status = PaymentTxStatus.FAILED;
                 payment.UpdatedAt = now;
@@ -143,6 +166,8 @@ namespace SmashCourt_BE.Services
                         await _courtRepo.UpdateAsync(court);
                     }
                 }
+
+                transaction.Complete();
 
                 // TODO: Broadcast SignalR
             }
