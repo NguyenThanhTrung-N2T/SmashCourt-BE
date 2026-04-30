@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Mail;
+using SmashCourt_BE.DTOs.Email;
 
 namespace SmashCourt_BE.Services;
 
@@ -82,6 +83,77 @@ public class EmailService
         await SendAsync(toEmail, subject, body);
     }
 
+    /// <summary>
+    /// Gửi email xác nhận đặt sân (NEW VERSION - dùng DTO và template file)
+    /// Có đầy đủ thông tin: branch, payment, không hiển thị cancel token code
+    /// </summary>
+    public async Task SendBookingConfirmationAsync(BookingEmailModel model)
+    {
+        var subject = "✅ Xác nhận đặt sân - SmashCourt";
+
+        // Đọc template từ file
+        var templatePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Templates", "BookingConfirmation.html");
+        
+        if (!File.Exists(templatePath))
+        {
+            throw new FileNotFoundException($"Email template not found: {templatePath}");
+        }
+        
+        var template = await File.ReadAllTextAsync(templatePath);
+
+        // Replace placeholders với data từ model
+        var body = template
+            .Replace("{{Name}}", model.Name)
+            .Replace("{{BranchName}}", model.BranchName)
+            .Replace("{{BranchAddress}}", model.BranchAddress)
+            .Replace("{{BranchPhone}}", model.BranchPhone)
+            .Replace("{{Courts}}", string.Join(", ", model.CourtNames))
+            .Replace("{{Date}}", model.BookingDate)
+            .Replace("{{Time}}", $"{model.StartTime} – {model.EndTime}")
+            .Replace("{{BookingCode}}", model.BookingCode)
+            .Replace("{{CourtFee}}", model.CourtFee)
+            .Replace("{{TotalAmount}}", model.TotalAmount)
+            .Replace("{{PaymentMethod}}", model.PaymentMethod)
+            .Replace("{{PaymentStatus}}", model.PaymentStatus)
+            .Replace("{{CancelUrl}}", model.CancelUrl)
+            .Replace("{{Year}}", DateTime.UtcNow.Year.ToString());
+
+        // Xử lý conditional rendering cho discounts
+        body = ProcessConditionalSection(body, "LoyaltyDiscount", model.LoyaltyDiscount);
+        body = ProcessConditionalSection(body, "PromotionDiscount", model.PromotionDiscount);
+
+        await SendAsync(model.Email, subject, body);
+    }
+
+    /// <summary>
+    /// Xử lý conditional section trong template ({{#if ...}} ... {{/if}})
+    /// </summary>
+    private static string ProcessConditionalSection(string template, string sectionName, string? value)
+    {
+        var startTag = $"{{{{#if {sectionName}}}}}";
+        var endTag = "{{/if}}";
+        var placeholder = $"{{{{{sectionName}}}}}";
+
+        var startIndex = template.IndexOf(startTag);
+        if (startIndex < 0) return template;
+
+        var endIndex = template.IndexOf(endTag, startIndex);
+        if (endIndex < 0) return template;
+
+        if (!string.IsNullOrEmpty(value))
+        {
+            // Có giá trị: remove tags và replace placeholder
+            var section = template.Substring(startIndex, endIndex - startIndex + endTag.Length);
+            var content = section.Replace(startTag, "").Replace(endTag, "").Replace(placeholder, value);
+            return template.Remove(startIndex, endIndex - startIndex + endTag.Length).Insert(startIndex, content);
+        }
+        else
+        {
+            // Không có giá trị: remove toàn bộ section
+            return template.Remove(startIndex, endIndex - startIndex + endTag.Length);
+        }
+    }
+
     // Gửi email xác nhận đặt sân kèm link hủy
     public async Task SendBookingConfirmationAsync(
         string toEmail, string fullName, Guid bookingId, string cancelToken,
@@ -111,8 +183,8 @@ public class EmailService
                             <tr><td style="padding: 25px;">
                                 <p style="margin: 0 0 12px 0; color: #64748b; font-size: 13px; text-transform: uppercase; font-weight: 700; letter-spacing: 1px;">Chi tiết đặt sân</p>
                                 <table width="100%"><tr>
-                                    <td style="color: #64748b; font-size: 14px; padding: 6px 0;">🏘️ Sân:</td>
-                                    <td style="color: #0f172a; font-size: 14px; font-weight: 600; text-align: right;">{courtName}</td>
+                                    <td style="color: #64748b; font-size: 14px; padding: 6px 0; vertical-align: top;">🏘️ Sân:</td>
+                                    <td style="color: #0f172a; font-size: 14px; font-weight: 600; text-align: right; word-wrap: break-word; word-break: break-word;">{courtName}</td>
                                 </tr><tr>
                                     <td style="color: #64748b; font-size: 14px; padding: 6px 0;">📅 Ngày:</td>
                                     <td style="color: #0f172a; font-size: 14px; font-weight: 600; text-align: right;">{dateStr}</td>
@@ -120,8 +192,8 @@ public class EmailService
                                     <td style="color: #64748b; font-size: 14px; padding: 6px 0;">⏰ Giờ:</td>
                                     <td style="color: #0f172a; font-size: 14px; font-weight: 600; text-align: right;">{timeStr}</td>
                                 </tr><tr>
-                                    <td style="color: #64748b; font-size: 14px; padding: 6px 0;">🆔 Mã booking:</td>
-                                    <td style="color: #2563eb; font-size: 13px; font-weight: 600; text-align: right; font-family: monospace;">{bookingId.ToString()[..8].ToUpper()}</td>
+                                    <td style="color: #64748b; font-size: 14px; padding: 6px 0;">🔑 Mã hủy:</td>
+                                    <td style="color: #2563eb; font-size: 13px; font-weight: 600; text-align: right; font-family: monospace;">{cancelToken[..8].ToUpper()}</td>
                                 </tr></table>
                             </td></tr>
                         </table>

@@ -6,6 +6,7 @@ using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
 using SmashCourt_BE.Services.IService;
+using SmashCourt_BE.Factories;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -1273,12 +1274,11 @@ namespace SmashCourt_BE.Services
                 booking.CancelTokenExpiresAt = tokenExpiry;
                 await _bookingRepo.UpdateAsync(booking);
 
-                // Court names để hiển thị trong email
-                var courtNames = string.Join(", ", courts.Select(c => c.Court.Name));
-
-                await _emailService.SendBookingConfirmationAsync(
-                    email, name!, booking.Id, rawToken,
-                    courtNames, booking.BookingDate, startTime, endTime);
+                // Build email model using Factory
+                var emailModel = BookingEmailFactory.Build(booking, rawToken);
+                
+                // Send email using new method
+                await _emailService.SendBookingConfirmationAsync(emailModel);
             }
             catch (Exception ex)
             {

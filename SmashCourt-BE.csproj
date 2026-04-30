@@ -28,4 +28,10 @@
     <PackageReference Include="VNPAY.NET" Version="2.1.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="Templates\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>

@@ -24,6 +24,9 @@ namespace SmashCourt_BE.Repositories
                 .Include(p => p.Invoice)
                     .ThenInclude(i => i.Booking)
                         .ThenInclude(b => b.Customer)
+                .Include(p => p.Invoice)
+                    .ThenInclude(i => i.Booking)
+                        .ThenInclude(b => b.Branch)
                 .FirstOrDefaultAsync(p => p.TransactionRef == transactionRef);
         }
 
