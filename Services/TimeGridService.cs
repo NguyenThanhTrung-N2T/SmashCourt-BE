@@ -76,9 +76,7 @@ namespace SmashCourt_BE.Services
                 var hasBooking = allBookings.Any(bc =>
                     bc.StartTime < slot.EndTime && bc.EndTime > slot.StartTime);
 
-                var status = hasBooking
-                    ? court.Status == CourtStatus.IN_USE ? "IN_USE" : "BOOKED"
-                    : "AVAILABLE";
+                var status = hasBooking ? "IN_USE" : "AVAILABLE";
 
                 result.Add(new TimeGridSlotDto
                 {

@@ -1,6 +1,7 @@
 using SmashCourt_BE.Common;
 using SmashCourt_BE.Data;
 using SmashCourt_BE.DTOs.Booking;
+using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
@@ -141,16 +142,20 @@ namespace SmashCourt_BE.Repositories
                 .FirstOrDefaultAsync(b => b.CancelTokenHash == tokenHash);
         }
 
-        // Check slot có bị đặt chưa — check booking_courts active
+        // Check slot có bị đặt chưa — check booking_courts active VÀ booking status active
         public async Task<bool> HasOverlapAsync(
             Guid courtId, DateOnly date,
             TimeOnly startTime, TimeOnly endTime)
         {
+            // Lấy danh sách status active từ BookingStatusTransition helper
+            var activeStatuses = BookingStatusTransition.GetActiveStatuses();
+
             return await _context.BookingCourts
                 .Where(bc =>
                     bc.CourtId == courtId &&
                     bc.Date == date &&
                     bc.IsActive &&
+                    activeStatuses.Contains(bc.Booking.Status) &&  // Chỉ tính booking đang active
                     bc.StartTime < endTime &&
                     bc.EndTime > startTime)
                 .AnyAsync();

@@ -351,7 +351,25 @@ namespace SmashCourt_BE.Services
             });
 
             // 13. COMMIT TRANSACTION
-            transaction.Complete();
+            try
+            {
+                transaction.Complete();
+            }
+            catch (Exception ex)
+            {
+                // Bắt lỗi vi phạm EXCLUDE constraint (phát hiện race condition khi đặt trùng slot)
+                if (ex.InnerException?.Message?.Contains("excl_booking_courts_no_overlap") == true ||
+                    ex.InnerException?.Message?.Contains("exclusion constraint") == true ||
+                    ex.InnerException?.Message?.Contains("conflicting key") == true)
+                {
+                    _logger.LogWarning(ex, "EXCLUDE constraint violated - race condition detected for online booking");
+                    
+                    throw new AppException(400,
+                        "Sân đã được đặt bởi người khác, vui lòng chọn slot khác",
+                        ErrorCodes.BadRequest);
+                }
+                throw;
+            }
 
             return new OnlineBookingResponse
             {
@@ -473,7 +491,7 @@ namespace SmashCourt_BE.Services
                             totalCourtFee * loyalty.Tier.DiscountRate / 100, 0);
                 }
 
-                // Calculate total after loyalty to be consistent with online calculation
+                // Tính tổng sau khi trừ loyalty để nhất quán với logic online
                 var totalAfterLoyalty = totalCourtFee - loyaltyDiscountAmount;
 
                 if (dto.CustomerId.HasValue)
@@ -557,7 +575,25 @@ namespace SmashCourt_BE.Services
                 bookingId = booking.Id;
 
                 // 13. COMMIT TRANSACTION
-                transaction.Complete();
+                try
+                {
+                    transaction.Complete();
+                }
+                catch (Exception ex)
+                {
+                    // Bắt lỗi vi phạm EXCLUDE constraint (phát hiện race condition khi đặt trùng slot)
+                    if (ex.InnerException?.Message?.Contains("excl_booking_courts_no_overlap") == true ||
+                        ex.InnerException?.Message?.Contains("exclusion constraint") == true ||
+                        ex.InnerException?.Message?.Contains("conflicting key") == true)
+                    {
+                        _logger.LogWarning(ex, "EXCLUDE constraint violated - race condition detected for walk-in booking");
+                        
+                        throw new AppException(400,
+                            "Sân đã được đặt bởi người khác, vui lòng chọn slot khác",
+                            ErrorCodes.BadRequest);
+                    }
+                    throw;
+                }
             } // ← Kết thúc transaction scope
 
             // 14. Query booking details NGOÀI transaction scope
@@ -565,6 +601,18 @@ namespace SmashCourt_BE.Services
 
             // 15. Gửi email xác nhận CHỈ cho PREPAID booking NGOÀI transaction — lỗi email không ảnh hưởng booking
             if (dto.PayNow)  // Chỉ gửi email cho PREPAID
+            {
+                try
+                {
+                    await SendConfirmationEmailAsync(result!, courtEntities.Select(c => (c.Slot, c.Court)).ToList());
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to send confirmation email for booking {Id}", bookingId);
+                }
+            }
+            // Gửi email cho POSTPAID nếu có email để tracking và gửi link hủy
+            else if (!string.IsNullOrEmpty(result!.Customer?.Email) || !string.IsNullOrEmpty(result.GuestEmail))
             {
                 try
                 {
@@ -594,8 +642,8 @@ namespace SmashCourt_BE.Services
             {
                 BookingStatus.PENDING,
                 BookingStatus.CONFIRMED,
-                BookingStatus.PAID_ONLINE,
-                BookingStatus.IN_PROGRESS
+                BookingStatus.PAID_ONLINE
+                // ❌ KHÔNG cho hủy IN_PROGRESS - khách đang chơi phải dùng checkout sớm
             };
 
             if (!cancellableStatuses.Contains(booking.Status))
@@ -618,8 +666,8 @@ namespace SmashCourt_BE.Services
             // Xóa slot_lock nếu có
             await _slotLockRepo.DeleteByBookingIdAsync(booking.Id);
 
-            // Cập nhật court → AVAILABLE (với guard check)
-            // bc.Court đã được load sẵn qua GetByIdWithDetailsAsync().ThenInclude, không cần re-query
+            // Cập nhật court → AVAILABLE (kiểm tra guard để tránh conflict)
+            // bc.Court đã được load sẵn qua GetByIdWithDetailsAsync().ThenInclude
             foreach (var bc in booking.BookingCourts)
             {
                 var court = bc.Court;
@@ -703,7 +751,7 @@ namespace SmashCourt_BE.Services
                 throw new AppException(400,
                     "Link hủy đã hết hạn", ErrorCodes.BadRequest);
 
-            // Check tài khoản bị khóa
+            // Kiểm tra tài khoản có bị khóa không
             if (booking.CustomerId.HasValue && booking.Customer?.Status == UserStatus.LOCKED)
                 throw new AppException(403,
                     "Tài khoản bị khóa, vui lòng liên hệ nhân viên để được hỗ trợ",
@@ -858,7 +906,7 @@ namespace SmashCourt_BE.Services
             // TODO: Broadcast SignalR
         }
 
-        // check in sân, chỉ cho phép check-in khi booking đang CONFIRMED hoặc PAID_ONLINE
+        // Check-in khách hàng đến sân, chỉ cho phép check-in khi booking đang CONFIRMED hoặc PAID_ONLINE
         public async Task CheckInAsync(Guid id, Guid currentUserId, string currentUserRole)
         {
             var booking = await _bookingRepo.GetByIdWithDetailsAsync(id);
@@ -873,8 +921,21 @@ namespace SmashCourt_BE.Services
                     "Chỉ có thể check-in đơn đang xác nhận hoặc đã thanh toán trực tuyến",
                     ErrorCodes.BadRequest);
 
+            // Validate chuyển trạng thái sử dụng BookingStatusTransition helper
+            BookingStatusTransition.ValidateTransition(booking.Status, BookingStatus.IN_PROGRESS);
+
+            var now = DateTime.UtcNow;
+            
             booking.Status = BookingStatus.IN_PROGRESS;
-            booking.UpdatedAt = DateTime.UtcNow;
+            booking.CheckedInAt = now;
+            
+            // Vô hiệu hóa cancel token khi check-in để khách không thể hủy khi đang chơi
+            if (!string.IsNullOrEmpty(booking.CancelTokenHash))
+            {
+                booking.CancelTokenUsedAt = now;
+            }
+            
+            booking.UpdatedAt = now;
             await _bookingRepo.UpdateAsync(booking);
 
             // Cập nhật court → IN_USE
@@ -885,7 +946,7 @@ namespace SmashCourt_BE.Services
                 if (court != null)
                 {
                     court.Status = CourtStatus.IN_USE;
-                    court.UpdatedAt = DateTime.UtcNow;
+                    court.UpdatedAt = now;
                     await _courtRepo.UpdateAsync(court);
                 }
             }
@@ -893,7 +954,7 @@ namespace SmashCourt_BE.Services
             // TODO: Broadcast SignalR
         }
 
-        // check out sân — chấp nhận IN_PROGRESS (khách về sớm) và PENDING_PAYMENT (hết giờ, job đã set)
+        // Checkout khách hàng rời sân, chấp nhận IN_PROGRESS (khách về sớm) và PENDING_PAYMENT (hết giờ)
         public async Task CheckoutAsync(Guid id, Guid currentUserId, string currentUserRole)
         {
             var booking = await _bookingRepo.GetByIdWithDetailsAsync(id);
@@ -920,7 +981,7 @@ namespace SmashCourt_BE.Services
 
             var now = DateTime.UtcNow;
 
-            // Tạo Payment record CASH cho phần chưa thu:
+            // Tạo Payment record CASH cho phần chưa thu tiền
             // - Invoice UNPAID (walk-in chưa thu tiền): thu toàn bộ FinalTotal
             // - Invoice PARTIALLY_PAID (online có service fee phát sinh): thu phần ServiceFee
             // - Invoice PAID (trả trước đủ): không cần tạo thêm
@@ -961,6 +1022,10 @@ namespace SmashCourt_BE.Services
             // Cập nhật booking → COMPLETED
             booking.Status = BookingStatus.COMPLETED;
             booking.UpdatedAt = now;
+            
+            // Deactivate booking courts khi COMPLETED
+            await _bookingRepo.UpdateCourtActiveStatusAsync(booking.Id, false);
+            
             await _bookingRepo.UpdateAsync(booking);
 
             // Cập nhật court → AVAILABLE
@@ -1225,7 +1290,7 @@ namespace SmashCourt_BE.Services
                 loyalty.TotalPoints += pointsEarned;
                 loyalty.UpdatedAt = DateTime.UtcNow;
 
-                // Check lên hạng — dùng ILoyaltyTierRepository đã được inject
+                // Kiểm tra lên hạng loyalty
                 var allTiers = await _loyaltyTierRepo.GetAllLoyaltyTiersAsync();
                 var newTier = allTiers
                     .Where(t => t.MinPoints <= loyalty.TotalPoints)
@@ -1248,7 +1313,7 @@ namespace SmashCourt_BE.Services
                     CreatedAt = DateTime.UtcNow
                 });
 
-                // Email lên hạng — lấy user qua IUserRepository
+                // Gửi email thông báo lên hạng
                 if (newTier != null && newTier.Id != tierBefore)
                 {
                     try
@@ -1273,7 +1338,7 @@ namespace SmashCourt_BE.Services
             }
         }
 
-        // Gửi email xác nhận booking với token hủy (nếu có) và log lỗi nếu thất bại nhưng không rollback booking
+        // Gửi email xác nhận booking với token hủy
         private async Task SendConfirmationEmailAsync(
             Booking booking, List<(CourtSlotDto Slot, Court Court)> courts)
         {

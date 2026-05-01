@@ -97,6 +97,13 @@ public static class HangfireExtensions
             "*/30 * * * * *",
             new RecurringJobOptions { TimeZone = vnTimezone });
 
+        // Mỗi 5 phút — phát hiện NO_SHOW
+        RecurringJob.AddOrUpdate<IBookingJob>(
+            "detect-no-show",
+            job => job.DetectNoShowBookingsAsync(),
+            "*/5 * * * *",
+            new RecurringJobOptions { TimeZone = vnTimezone });
+
         return app;
     }
 }

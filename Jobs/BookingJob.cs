@@ -1,6 +1,7 @@
 using SmashCourt_BE.Data;
 using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Jobs.Interfaces;
+using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using Microsoft.EntityFrameworkCore;
 
@@ -107,44 +108,7 @@ namespace SmashCourt_BE.Jobs
             {
                 var now = DateTime.UtcNow;
 
-                // PHẦN 1: Update court → BOOKED khi đến giờ bắt đầu (StartTime)
-                var bookingsToStart = await _db.Bookings
-                    .Include(b => b.BookingCourts)
-                        .ThenInclude(bc => bc.Court)
-                    .Where(b =>
-                        (b.Status == BookingStatus.PAID_ONLINE ||
-                         b.Status == BookingStatus.CONFIRMED) &&
-                        b.BookingCourts.Any())
-                    .ToListAsync();
-
-                foreach (var booking in bookingsToStart)
-                {
-                    if (!booking.BookingCourts.Any()) continue;
-
-                    // Lấy min StartTime, convert sang UTC
-                    var minStartTime = booking.BookingCourts.Min(bc => bc.StartTime);
-                    var vnStartDateTime = booking.BookingDate.ToDateTime(minStartTime);
-                    var utcStartDateTime = TimeZoneInfo.ConvertTimeToUtc(
-                        DateTime.SpecifyKind(vnStartDateTime, DateTimeKind.Unspecified),
-                        DateTimeHelper.VNTimezone);
-
-                    // Chỉ update court khi đã đến giờ bắt đầu
-                    if (utcStartDateTime <= now)
-                    {
-                        foreach (var bc in booking.BookingCourts)
-                        {
-                            // Chỉ set BOOKED nếu court đang AVAILABLE
-                            // (nếu court đang bị chiếm thì Status đã không phải AVAILABLE)
-                            if (bc.Court != null && bc.Court.Status == CourtStatus.AVAILABLE)
-                            {
-                                bc.Court.Status = CourtStatus.BOOKED;
-                                bc.Court.UpdatedAt = now;
-                            }
-                        }
-                    }
-                }
-
-                // PHẦN 2: Xử lý booking hết giờ (EndTime)
+                // Xử lý booking hết giờ (EndTime)
                 var activeBookings = await _db.Bookings
                     .Include(b => b.BookingCourts)
                         .ThenInclude(bc => bc.Court)
@@ -211,19 +175,40 @@ namespace SmashCourt_BE.Jobs
                                 booking.Status = BookingStatus.COMPLETED;
                                 invoice.PaymentStatus = InvoicePaymentStatus.PAID;
                                 invoice.UpdatedAt = now;
+                                
+                                // Deactivate booking courts khi COMPLETED
+                                foreach (var bc in booking.BookingCourts)
+                                    bc.IsActive = false;
                             }
                             else
                             {
                                 // Walk-in (chưa thu tiền) hoặc online có service fee
                                 // → PENDING_PAYMENT để staff checkout tại quầy
                                 booking.Status = BookingStatus.PENDING_PAYMENT;
-                                // Court giữ nguyên IN_USE cho đến khi staff checkout
+                                
+                                // Release slot ngay để đảm bảo nhất quán: Court = AVAILABLE + IsActive = false
+                                foreach (var bc in booking.BookingCourts)
+                                {
+                                    bc.IsActive = false;
+                                    
+                                    // Chỉ set AVAILABLE nếu court không bị booking khác chiếm
+                                    if (bc.Court != null && !busyCourtIds.Contains(bc.CourtId))
+                                    {
+                                        bc.Court.Status = CourtStatus.AVAILABLE;
+                                        bc.Court.UpdatedAt = now;
+                                    }
+                                }
                             }
                             break;
 
                         case BookingStatus.PAID_ONLINE:
-                            // Khách đã thanh toán nhưng không check-in, hết giờ
-                            // → COMPLETED (tiền đã thu)
+                            // Khách đã thanh toán nhưng chưa check-in, bỏ qua để NO_SHOW job xử lý
+                            if (booking.CheckedInAt == null)
+                            {
+                                continue;
+                            }
+                            
+                            // Đã check-in nhưng hết giờ → COMPLETED
                             booking.Status = BookingStatus.COMPLETED;
                             if (invoice != null)
                             {
@@ -236,22 +221,35 @@ namespace SmashCourt_BE.Jobs
                             break;
 
                         case BookingStatus.CONFIRMED:
-                            // Walk-in no-show: hết giờ mà chưa check-in → CANCELLED
-                            booking.Status = BookingStatus.CANCELLED;
-                            booking.CancelledAt = now;
-                            booking.CancelSource = CancelSourceEnum.SYSTEM;
+                            // Walk-in chưa check-in, bỏ qua để NO_SHOW job xử lý
+                            if (booking.CheckedInAt == null)
+                            {
+                                continue;
+                            }
+                            
+                            // Đã check-in, xử lý như IN_PROGRESS
+                            booking.Status = BookingStatus.PENDING_PAYMENT;
+                            
+                            // Release slot ngay
                             foreach (var bc in booking.BookingCourts)
+                            {
                                 bc.IsActive = false;
+                                
+                                if (bc.Court != null && !busyCourtIds.Contains(bc.CourtId))
+                                {
+                                    bc.Court.Status = CourtStatus.AVAILABLE;
+                                    bc.Court.UpdatedAt = now;
+                                }
+                            }
                             break;
                     }
 
                     booking.UpdatedAt = now;
 
                     // Update court status → AVAILABLE khi booking kết thúc
-                    // Áp dụng cho: COMPLETED hoặc CANCELLED
-                    // KHÔNG áp dụng cho: PENDING_PAYMENT (staff còn cần checkout)
-                    if (booking.Status == BookingStatus.COMPLETED ||
-                        booking.Status == BookingStatus.CANCELLED)
+                    // Áp dụng cho: COMPLETED
+                    // KHÔNG áp dụng cho: PENDING_PAYMENT (đã release ở trên)
+                    if (booking.Status == BookingStatus.COMPLETED)
                     {
                         foreach (var bc in booking.BookingCourts)
                         {
@@ -297,6 +295,148 @@ namespace SmashCourt_BE.Jobs
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error cleaning up slot locks");
+            }
+        }
+
+        // Job-04: Phát hiện NO_SHOW (mỗi 5 phút)
+        // Đánh dấu booking là NO_SHOW khi khách không đến sau 15 phút kể từ StartTime
+        public async Task DetectNoShowBookingsAsync()
+        {
+            try
+            {
+                _logger.LogInformation("Starting NO_SHOW detection job");
+
+                var now = DateTime.UtcNow;
+                
+                // Lấy danh sách status đủ điều kiện cho NO_SHOW từ helper
+                var noShowEligibleStatuses = BookingStatusTransition.GetNoShowEligibleStatuses();
+
+                // Query bookings đủ điều kiện: CONFIRMED hoặc PAID_ONLINE chưa check-in
+                var eligibleBookings = await _db.Bookings
+                    .Include(b => b.BookingCourts)
+                        .ThenInclude(bc => bc.Court)
+                    .Include(b => b.Invoice)
+                    .Where(b => noShowEligibleStatuses.Contains(b.Status) 
+                                && b.CheckedInAt == null)
+                    .ToListAsync();
+
+                if (eligibleBookings.Count == 0)
+                {
+                    _logger.LogInformation("No bookings to process for NO_SHOW detection");
+                    return;
+                }
+
+                var noShowBookings = new List<Booking>();
+
+                foreach (var booking in eligibleBookings)
+                {
+                    if (!booking.BookingCourts.Any()) continue;
+
+                    // Lấy StartTime sớm nhất của booking
+                    var minStartTime = booking.BookingCourts.Min(bc => bc.StartTime);
+                    
+                    // Tạo Booking_DateTime với DateTimeKind.Utc
+                    var bookingDateTime = DateTime.SpecifyKind(
+                        booking.BookingDate.ToDateTime(minStartTime),
+                        DateTimeKind.Utc);
+
+                    // Kiểm tra đã quá 15 phút sau StartTime chưa
+                    if (bookingDateTime.AddMinutes(15) < now)
+                    {
+                        noShowBookings.Add(booking);
+                    }
+                }
+
+                if (noShowBookings.Count == 0)
+                {
+                    _logger.LogInformation("No NO_SHOW bookings detected");
+                    return;
+                }
+
+                // Lấy danh sách courtIds bị ảnh hưởng
+                var affectedCourtIds = noShowBookings
+                    .SelectMany(b => b.BookingCourts)
+                    .Select(bc => bc.CourtId)
+                    .Distinct()
+                    .ToHashSet();
+
+                // Loại trừ chính các booking đang xử lý
+                var processingBookingIds = noShowBookings.Select(b => b.Id).ToHashSet();
+
+                // Kiểm tra court đang bị booking active khác dùng
+                var busyCourtIds = (await _db.BookingCourts
+                    .Where(other =>
+                        affectedCourtIds.Contains(other.CourtId) &&
+                        other.IsActive &&
+                        !processingBookingIds.Contains(other.BookingId) &&
+                        ActiveStatuses.Contains(other.Booking.Status))
+                    .Select(other => other.CourtId)
+                    .Distinct()
+                    .ToListAsync())
+                    .ToHashSet();
+
+                int markedCount = 0;
+
+                foreach (var booking in noShowBookings)
+                {
+                    try
+                    {
+                        // Đánh dấu NO_SHOW
+                        booking.Status = BookingStatus.NO_SHOW;
+                        booking.UpdatedAt = now;
+
+                        // Deactivate booking courts
+                        foreach (var bc in booking.BookingCourts)
+                        {
+                            bc.IsActive = false;
+
+                            // Update court status → AVAILABLE nếu không bị booking khác chiếm
+                            if (bc.Court != null && !busyCourtIds.Contains(bc.CourtId))
+                            {
+                                // Chỉ set AVAILABLE nếu court không ở trạng thái đặc biệt
+                                if (bc.Court.Status != CourtStatus.SUSPENDED &&
+                                    bc.Court.Status != CourtStatus.INACTIVE)
+                                {
+                                    bc.Court.Status = CourtStatus.AVAILABLE;
+                                    bc.Court.UpdatedAt = now;
+                                }
+                            }
+                        }
+
+                        markedCount++;
+                        
+                        // Log chi tiết cho NO_SHOW
+                        var minStartTime = booking.BookingCourts.Min(bc => bc.StartTime);
+                        _logger.LogWarning(
+                            "[NO_SHOW] Booking {BookingId} marked as NO_SHOW. " +
+                            "Customer: {CustomerId}, Courts: [{CourtIds}], " +
+                            "BookingDate: {BookingDate}, StartTime: {StartTime}, " +
+                            "PaymentTiming: {PaymentTiming}, Amount: {Amount}",
+                            booking.Id,
+                            booking.CustomerId ?? Guid.Empty,
+                            string.Join(", ", booking.BookingCourts.Select(bc => bc.CourtId)),
+                            booking.BookingDate,
+                            minStartTime,
+                            booking.Invoice?.PaymentTiming.ToString() ?? "N/A",
+                            booking.Invoice?.FinalTotal ?? 0
+                        );
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, 
+                            "Error marking booking {BookingId} as NO_SHOW", booking.Id);
+                        // Tiếp tục xử lý các booking khác
+                    }
+                }
+
+                await _db.SaveChangesAsync();
+
+                _logger.LogInformation(
+                    "Marked {Count} bookings as NO_SHOW", markedCount);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in NO_SHOW detection job");
             }
         }
     }

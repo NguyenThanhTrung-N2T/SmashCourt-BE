@@ -30,7 +30,6 @@ namespace SmashCourt_BE.Repositories
                 query = query.Where(c =>
                     c.Status == CourtStatus.AVAILABLE ||
                     c.Status == CourtStatus.LOCKED ||
-                    c.Status == CourtStatus.BOOKED ||
                     c.Status == CourtStatus.IN_USE);
 
             return await query

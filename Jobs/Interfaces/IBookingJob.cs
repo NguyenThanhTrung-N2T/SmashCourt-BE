@@ -10,5 +10,8 @@
 
         // Xóa slot lock hết hạn
         Task CleanupExpiredSlotLocksAsync();
+
+        // Phát hiện và đánh dấu NO_SHOW
+        Task DetectNoShowBookingsAsync();
     }
 }
