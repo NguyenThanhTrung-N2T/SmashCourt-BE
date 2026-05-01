@@ -25,6 +25,9 @@ namespace SmashCourt_BE.DTOs.Booking
 
         public string? Note { get; set; }
 
+        // Thanh toán ngay hay sau (PREPAID vs POSTPAID)
+        public bool PayNow { get; set; } = false;  // Default: trả sau (POSTPAID)
+
         public IEnumerable<ValidationResult> Validate(ValidationContext context)
         {
             var today = DateTimeHelper.GetTodayInVietnam();
@@ -77,3 +80,4 @@ namespace SmashCourt_BE.DTOs.Booking
         }
     }
 }
+

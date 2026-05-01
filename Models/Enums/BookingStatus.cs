@@ -10,6 +10,7 @@
         COMPLETED = 5,
         CANCELLED = 6,
         CANCELLED_PENDING_REFUND = 7,
-        CANCELLED_REFUNDED = 8
+        CANCELLED_REFUNDED = 8,
+        NO_SHOW = 9  // Khách không đến sau khi đặt
     }
 }
