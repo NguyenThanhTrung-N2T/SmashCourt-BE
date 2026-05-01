@@ -306,7 +306,8 @@ namespace SmashCourt_BE.Services
                 promotionDiscountAmount,
                 totalCourtFee,
                 loyaltyDiscountAmount,
-                finalTotal);
+                finalTotal,
+                PaymentTiming.PREPAID);  // Online booking luôn PREPAID (trả trước qua VNPay)
 
             // 11. Tạo SlotLock cho từng court — ngăn double-booking trong thời gian thanh toán
             // Court.Status KHÔNG thay đổi ở bước này:
@@ -497,7 +498,11 @@ namespace SmashCourt_BE.Services
 
                 var finalTotal = totalAfterLoyalty - promotionDiscountAmount;
 
-                // 5. Tạo booking CONFIRMED
+                // 5. Xác định PaymentTiming dựa trên PayNow
+                var paymentTiming = dto.PayNow ? PaymentTiming.PREPAID : PaymentTiming.POSTPAID;
+                var paymentStatus = dto.PayNow ? InvoicePaymentStatus.PAID : InvoicePaymentStatus.UNPAID;
+
+                // 6. Tạo booking CONFIRMED
                 var booking = new Booking
                 {
                     BranchId = branchId,
@@ -515,7 +520,7 @@ namespace SmashCourt_BE.Services
                 };
                 booking = await _bookingRepo.CreateAsync(booking);
 
-                // 6-8. Tạo BookingCourt, PriceItems, Promotion, và Invoice (logic chung)
+                // 7-9. Tạo BookingCourt, PriceItems, Promotion, và Invoice (logic chung)
                 var invoice = await CreateBookingDetailsAsync(
                     booking,
                     booking.BookingDate,
@@ -524,29 +529,51 @@ namespace SmashCourt_BE.Services
                     promotionDiscountAmount,
                     totalCourtFee,
                     loyaltyDiscountAmount,
-                    finalTotal);
+                    finalTotal,
+                    paymentTiming);  // Walk-in: PREPAID nếu PayNow=true, POSTPAID nếu PayNow=false
 
-                // 9. Court status sẽ được update bởi scheduled job khi đến StartTime
+                // 10. Nếu PayNow=true (PREPAID), cập nhật PaymentStatus và tạo Payment record
+                if (dto.PayNow)
+                {
+                    invoice.PaymentStatus = InvoicePaymentStatus.PAID;
+                    await _invoiceRepo.UpdateAsync(invoice);
+
+                    await _paymentRepo.CreateAsync(new Payment
+                    {
+                        InvoiceId = invoice.Id,
+                        Method = PaymentTxMethod.CASH,
+                        Amount = finalTotal,
+                        Status = PaymentTxStatus.SUCCESS,
+                        PaidAt = DateTime.UtcNow,
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow
+                    });
+                }
+
+                // 11. Court status sẽ được update bởi scheduled job khi đến StartTime
                 // KHÔNG update court ở đây để cho phép overbooking
 
-                // 10. Lưu bookingId để query sau khi transaction complete
+                // 12. Lưu bookingId để query sau khi transaction complete
                 bookingId = booking.Id;
 
-                // 11. COMMIT TRANSACTION
+                // 13. COMMIT TRANSACTION
                 transaction.Complete();
             } // ← Kết thúc transaction scope
 
-            // 12. Query booking details NGOÀI transaction scope
+            // 14. Query booking details NGOÀI transaction scope
             var result = await _bookingRepo.GetByIdWithDetailsAsync(bookingId);
 
-            // 13. Gửi email xác nhận NGOÀI transaction — lỗi email không ảnh hưởng booking
-            try
+            // 15. Gửi email xác nhận CHỈ cho PREPAID booking NGOÀI transaction — lỗi email không ảnh hưởng booking
+            if (dto.PayNow)  // Chỉ gửi email cho PREPAID
             {
-                await SendConfirmationEmailAsync(result!, courtEntities.Select(c => (c.Slot, c.Court)).ToList());
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to send confirmation email for booking {Id}", bookingId);
+                try
+                {
+                    await SendConfirmationEmailAsync(result!, courtEntities.Select(c => (c.Slot, c.Court)).ToList());
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to send confirmation email for booking {Id}", bookingId);
+                }
             }
 
             return MapToDto(result!);
@@ -1383,7 +1410,8 @@ namespace SmashCourt_BE.Services
             decimal promotionDiscountAmount,
             decimal totalCourtFee,
             decimal loyaltyDiscountAmount,
-            decimal finalTotal)
+            decimal finalTotal,
+            PaymentTiming paymentTiming)
         {
             var dayType = bookingDate.DayOfWeek == DayOfWeek.Saturday ||
                           bookingDate.DayOfWeek == DayOfWeek.Sunday
@@ -1449,6 +1477,7 @@ namespace SmashCourt_BE.Services
                 PromotionDiscountAmount = promotionDiscountAmount,
                 FinalTotal = finalTotal,
                 PaymentStatus = InvoicePaymentStatus.UNPAID,
+                PaymentTiming = paymentTiming,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             });
