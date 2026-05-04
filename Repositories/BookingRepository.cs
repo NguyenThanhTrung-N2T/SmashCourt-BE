@@ -233,5 +233,37 @@ namespace SmashCourt_BE.Repositories
                     s.SetProperty(bc => bc.IsActive, isActive));
         }
 
+        /// <summary>
+        /// Atomic consume cancel token để tránh race condition khi hủy booking qua link
+        /// Sử dụng WHERE condition để đảm bảo chỉ 1 request thành công (first-come-first-served)
+        /// </summary>
+        /// <param name="bookingId">Booking ID</param>
+        /// <param name="tokenHash">Token hash (SHA256)</param>
+        /// <param name="consumedAt">Thời gian consume token</param>
+        /// <returns>true nếu consume thành công, false nếu token đã được dùng</returns>
+        /// <remarks>
+        /// Race condition protection:
+        /// - User 1 và User 2 click cùng link → cả 2 gọi TryConsumeTokenAsync
+        /// - WHERE condition: CancelTokenUsedAt == null
+        /// - Chỉ 1 request thắng (rowsAffected = 1), request kia thua (rowsAffected = 0)
+        /// - Request thua sẽ nhận "Link đã được sử dụng"
+        /// </remarks>
+        public async Task<bool> TryConsumeTokenAsync(Guid bookingId, string tokenHash, DateTime consumedAt)
+        {
+            // ExecuteUpdateAsync với WHERE condition = Atomic operation
+            // UPDATE bookings SET cancel_token_used_at = @consumedAt
+            // WHERE id = @bookingId AND cancel_token_hash = @tokenHash AND cancel_token_used_at IS NULL
+            var rowsAffected = await _context.Bookings
+                .Where(b => b.Id == bookingId &&
+                           b.CancelTokenHash == tokenHash &&
+                           b.CancelTokenUsedAt == null)  // Chỉ update nếu chưa dùng
+                .ExecuteUpdateAsync(s =>
+                    s.SetProperty(b => b.CancelTokenUsedAt, consumedAt));
+
+            // rowsAffected = 1 → thành công (token chưa dùng)
+            // rowsAffected = 0 → thất bại (token đã dùng hoặc không tồn tại)
+            return rowsAffected > 0;
+        }
+
     }
 }

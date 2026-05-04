@@ -15,8 +15,9 @@ public static class BookingEmailFactory
     /// </summary>
     /// <param name="booking">Booking entity với tất cả navigation properties đã load</param>
     /// <param name="cancelToken">Raw cancel token (chưa hash) để tạo cancel URL</param>
+    /// <param name="frontendBaseUrl">Frontend base URL (e.g., https://smashcourt.vn hoặc http://localhost:3000)</param>
     /// <returns>BookingEmailModel ready để gửi email</returns>
-    public static BookingEmailModel Build(Booking booking, string cancelToken)
+    public static BookingEmailModel Build(Booking booking, string cancelToken, string? frontendBaseUrl = null)
     {
         // Validate input
         if (booking == null)
@@ -67,8 +68,9 @@ public static class BookingEmailFactory
         var paymentMethod = MapPaymentMethod(invoice?.Payments?.FirstOrDefault()?.Method);
         var paymentStatus = MapPaymentStatus(invoice?.PaymentStatus);
 
-        // Build cancel URL
-        var cancelUrl = $"https://smashcourt.vn/cancel?token={Uri.EscapeDataString(cancelToken)}";
+        // Build cancel URL - sử dụng frontend base URL từ config hoặc default
+        var baseUrl = frontendBaseUrl ?? "https://smashcourt.vn";
+        var cancelUrl = $"{baseUrl}/booking/cancel?token={Uri.EscapeDataString(cancelToken)}";
 
         // Build booking code (8 ký tự đầu của GUID)
         var bookingCode = booking.Id.ToString()[..8].ToUpper();

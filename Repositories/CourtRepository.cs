@@ -105,5 +105,25 @@ namespace SmashCourt_BE.Repositories
             _context.Courts.Update(court);
             await _context.SaveChangesAsync();
         }
+
+        /// <summary>
+        /// Batch update trạng thái nhiều sân cùng lúc (tránh N+1 query)
+        /// Dùng ExecuteUpdateAsync để update trực tiếp trong DB mà không cần load entities vào memory
+        /// </summary>
+        /// <param name="courtIds">Danh sách court IDs cần update</param>
+        /// <param name="status">Status mới (AVAILABLE, BOOKED, IN_USE, SUSPENDED)</param>
+        /// <param name="updatedAt">Thời gian update</param>
+        public async Task BatchUpdateStatusAsync(List<Guid> courtIds, CourtStatus status, DateTime updatedAt)
+        {
+            if (!courtIds.Any()) return;
+
+            // ExecuteUpdateAsync: Bulk update trực tiếp trong DB (không load entities)
+            // Performance: O(1) query thay vì O(N) queries
+            await _context.Courts
+                .Where(c => courtIds.Contains(c.Id))
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(c => c.Status, status)
+                    .SetProperty(c => c.UpdatedAt, updatedAt));
+        }
     }
 }

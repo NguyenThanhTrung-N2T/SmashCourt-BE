@@ -1,4 +1,5 @@
 using SmashCourt_BE.Models.Entities;
+using SmashCourt_BE.Models.Enums;
 
 namespace SmashCourt_BE.Repositories.IRepository
 {
@@ -24,5 +25,8 @@ namespace SmashCourt_BE.Repositories.IRepository
 
         // cập nhật thông tin sân
         Task UpdateAsync(Court court);
+
+        // cập nhật trạng thái nhiều sân cùng lúc (batch update để tránh N+1 query)
+        Task BatchUpdateStatusAsync(List<Guid> courtIds, CourtStatus status, DateTime updatedAt);
     }
 }

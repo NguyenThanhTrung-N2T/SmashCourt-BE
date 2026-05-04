@@ -7,6 +7,7 @@ using SmashCourt_BE.DTOs.Payment;
 using SmashCourt_BE.Factories;
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.Extensions.Configuration;
 
 namespace SmashCourt_BE.Services
 {
@@ -20,6 +21,7 @@ namespace SmashCourt_BE.Services
         private readonly IVnPayService _vnPayService;
         private readonly EmailService _emailService;
         private readonly ILogger<PaymentService> _logger;
+        private readonly IConfiguration _config;
 
         public PaymentService(
             IPaymentRepository paymentRepo,
@@ -29,7 +31,8 @@ namespace SmashCourt_BE.Services
             ICourtRepository courtRepo,
             IVnPayService vnPayService,
             EmailService emailService,
-            ILogger<PaymentService> logger)
+            ILogger<PaymentService> logger,
+            IConfiguration config)
         {
             _paymentRepo = paymentRepo;
             _bookingRepo = bookingRepo;
@@ -39,6 +42,7 @@ namespace SmashCourt_BE.Services
             _vnPayService = vnPayService;
             _emailService = emailService;
             _logger = logger;
+            _config = config;
         }
 
         public async Task HandleVnPayIpnAsync(IQueryCollection query, HttpRequest request)
@@ -341,8 +345,11 @@ namespace SmashCourt_BE.Services
 
             _logger.LogInformation("Calling EmailService.SendBookingConfirmationAsync for {Email}", email);
             
+            // Lấy frontend base URL từ config
+            var frontendBaseUrl = _config["FrontendBaseUrl"] ?? "http://localhost:3000";
+            
             // Build email model using Factory
-            var emailModel = BookingEmailFactory.Build(booking, rawToken);
+            var emailModel = BookingEmailFactory.Build(booking, rawToken, frontendBaseUrl);
             
             // Send email using new method
             await _emailService.SendBookingConfirmationAsync(emailModel);

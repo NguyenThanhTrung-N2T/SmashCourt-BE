@@ -47,5 +47,8 @@ namespace SmashCourt_BE.Repositories.IRepository
 
         // Cập nhật trạng thái active của booking court (dùng để check-in/check-out)
         Task UpdateCourtActiveStatusAsync(Guid bookingId, bool isActive);
+
+        // Atomic consume token để tránh race condition khi hủy booking qua link
+        Task<bool> TryConsumeTokenAsync(Guid bookingId, string tokenHash, DateTime consumedAt);
     }
 }

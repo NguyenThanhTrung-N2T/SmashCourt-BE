@@ -10,5 +10,11 @@ namespace SmashCourt_BE.Repositories.IRepository
 
         // ghi lịch sử giao dịch điểm mới (earn / redeem)
         Task AddAsync(LoyaltyTransaction transaction);
+
+        // lấy transaction theo booking ID (để check đã cộng điểm chưa)
+        Task<LoyaltyTransaction?> GetByBookingIdAsync(Guid bookingId);
+
+        // lấy transaction DEDUCT theo booking ID (để check đã trừ điểm chưa)
+        Task<LoyaltyTransaction?> GetDeductByBookingIdAsync(Guid bookingId);
     }
 }
