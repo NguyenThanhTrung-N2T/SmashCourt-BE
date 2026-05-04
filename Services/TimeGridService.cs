@@ -72,11 +72,30 @@ namespace SmashCourt_BE.Services
                     continue;
                 }
 
-                // Check booking — in-memory overlap check
-                var hasBooking = allBookings.Any(bc =>
-                    bc.StartTime < slot.EndTime && bc.EndTime > slot.StartTime);
+                // Check booking — in-memory overlap check với priority logic
+                // Lấy tất cả booking overlap với slot này
+                var overlappedBookings = allBookings
+                    .Where(bc => bc.StartTime < slot.EndTime && bc.EndTime > slot.StartTime)
+                    .Select(bc => bc.Booking.Status)
+                    .ToList();
 
-                var status = hasBooking ? "IN_USE" : "AVAILABLE";
+                // Xác định status theo priority: IN_USE > RESERVED > LOCKED > AVAILABLE
+                string status = "AVAILABLE";
+
+                if (overlappedBookings.Any())
+                {
+                    // Priority 1: Đang chơi (cao nhất)
+                    if (overlappedBookings.Contains(BookingStatus.IN_PROGRESS))
+                        status = "IN_USE";
+                    // Priority 2: Đã đặt chắc chắn
+                    else if (overlappedBookings.Any(s => 
+                        s == BookingStatus.CONFIRMED || 
+                        s == BookingStatus.PAID_ONLINE))
+                        status = "RESERVED";
+                    // Priority 3: Đang giữ slot tạm thời
+                    else if (overlappedBookings.Contains(BookingStatus.PENDING))
+                        status = "LOCKED";
+                }
 
                 result.Add(new TimeGridSlotDto
                 {

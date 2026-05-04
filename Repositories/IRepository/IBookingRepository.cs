@@ -1,6 +1,7 @@
 using SmashCourt_BE.Common;
 using SmashCourt_BE.DTOs.Booking;
 using SmashCourt_BE.Models.Entities;
+using SmashCourt_BE.Models.Enums;
 
 namespace SmashCourt_BE.Repositories.IRepository
 {
@@ -50,5 +51,14 @@ namespace SmashCourt_BE.Repositories.IRepository
 
         // Atomic consume token để tránh race condition khi hủy booking qua link
         Task<bool> TryConsumeTokenAsync(Guid bookingId, string tokenHash, DateTime consumedAt);
+
+        /// <summary>
+        /// Cập nhật booking status với conditional update để tránh race condition
+        /// </summary>
+        /// <param name="bookingId">ID của booking</param>
+        /// <param name="newStatus">Status mới</param>
+        /// <param name="expectedStatus">Status mong đợi (status cũ)</param>
+        /// <returns>Số rows affected (1 = thành công, 0 = conflict)</returns>
+        Task<int> UpdateWithStatusCheckAsync(Guid bookingId, BookingStatus newStatus, BookingStatus expectedStatus);
     }
 }

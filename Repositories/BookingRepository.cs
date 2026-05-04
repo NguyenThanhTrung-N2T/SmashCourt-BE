@@ -165,11 +165,23 @@ namespace SmashCourt_BE.Repositories
         public async Task<List<BookingCourt>> GetActiveByCourtAndDateAsync(
             Guid courtId, DateOnly date)
         {
+            // Source of truth: Booking.Status (không phụ thuộc IsActive)
+            // IsActive là derived state → có thể bị bug khi update
+            // Chỉ lọc theo status thực sự chiếm sân
+            var validStatuses = new[]
+            {
+                BookingStatus.PENDING,
+                BookingStatus.CONFIRMED,
+                BookingStatus.PAID_ONLINE,
+                BookingStatus.IN_PROGRESS
+            };
+
             return await _context.BookingCourts
+                .Include(bc => bc.Booking)
                 .Where(bc =>
                     bc.CourtId == courtId &&
                     bc.Date == date &&
-                    bc.IsActive)
+                    validStatuses.Contains(bc.Booking.Status))  // ✅ Chỉ dựa vào Status
                 .ToListAsync();
         }
 
@@ -265,5 +277,41 @@ namespace SmashCourt_BE.Repositories
             return rowsAffected > 0;
         }
 
+        /// <summary>
+        /// Cập nhật booking status với conditional update để tránh race condition
+        /// Sử dụng WHERE condition để đảm bảo chỉ update nếu status vẫn đúng như mong đợi
+        /// </summary>
+        /// <param name="bookingId">ID của booking</param>
+        /// <param name="newStatus">Status mới</param>
+        /// <param name="expectedStatus">Status mong đợi (status cũ trước khi update)</param>
+        /// <returns>Số rows affected (1 = thành công, 0 = conflict)</returns>
+        /// <remarks>
+        /// Race condition protection cho checkout:
+        /// - Staff A và Staff B cùng checkout 1 booking
+        /// - WHERE condition: status = expectedStatus (IN_PROGRESS hoặc PENDING_PAYMENT)
+        /// - Chỉ 1 request thắng (rowsAffected = 1), request kia thua (rowsAffected = 0)
+        /// - Request thua sẽ nhận "Đơn đã được checkout bởi người khác"
+        /// 
+        /// DB-level atomic operation:
+        /// UPDATE bookings SET status = @newStatus, updated_at = NOW()
+        /// WHERE id = @bookingId AND status = @expectedStatus
+        /// </remarks>
+        public async Task<int> UpdateWithStatusCheckAsync(
+            Guid bookingId, 
+            BookingStatus newStatus, 
+            BookingStatus expectedStatus)
+        {
+            // ExecuteUpdateAsync với WHERE condition = Atomic operation
+            // Pass giá trị trực tiếp, KHÔNG dùng entity tracking
+            var rowsAffected = await _context.Bookings
+                .Where(b => b.Id == bookingId && b.Status == expectedStatus)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(b => b.Status, newStatus)  // ← Pass giá trị trực tiếp
+                    .SetProperty(b => b.UpdatedAt, DateTime.UtcNow));
+
+            // rowsAffected = 1 → thành công (status đúng như mong đợi)
+            // rowsAffected = 0 → conflict (status đã thay đổi bởi request khác)
+            return rowsAffected;
+        }
     }
 }

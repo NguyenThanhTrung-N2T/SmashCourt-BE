@@ -10,6 +10,7 @@ using SmashCourt_BE.Factories;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Configuration;
+using Microsoft.EntityFrameworkCore;
 
 namespace SmashCourt_BE.Services
 {
@@ -693,8 +694,13 @@ namespace SmashCourt_BE.Services
             decimal refundAmount = 0;
             if (invoice?.PaymentStatus != InvoicePaymentStatus.UNPAID)
             {
+                // Defensive: Check BookingCourts không empty
+                var firstCourt = booking.BookingCourts.FirstOrDefault();
+                if (firstCourt == null)
+                    throw new AppException(500, "Booking không có sân nào", ErrorCodes.InternalError);
+
                 var refundPercent = await CalculateRefundPercentAsync(
-                    booking.BookingCourts.First().StartTime, booking.BookingDate);
+                    firstCourt.StartTime, booking.BookingDate);
 
                 var payment = invoice?.Payments?.FirstOrDefault(
                     p => p.Status == PaymentTxStatus.SUCCESS);
@@ -767,9 +773,13 @@ namespace SmashCourt_BE.Services
                     "Tài khoản bị khóa, vui lòng liên hệ nhân viên để được hỗ trợ",
                     ErrorCodes.AccountLocked);
 
+            // Defensive: Check BookingCourts không empty
             // Các sân trong cùng booking đều có chung StartTime/EndTime
-            // → lấy First() cho thời gian là đúng; CourtNames liệt kê tất cả sân
-            var firstCourt = booking.BookingCourts.First();
+            // → lấy FirstOrDefault() cho thời gian là đúng; CourtNames liệt kê tất cả sân
+            var firstCourt = booking.BookingCourts.FirstOrDefault();
+            if (firstCourt == null)
+                throw new AppException(500, "Booking không có sân nào", ErrorCodes.InternalError);
+
             var refundPercent = await CalculateRefundPercentAsync(
                 firstCourt.StartTime, booking.BookingDate);
 
@@ -1050,70 +1060,92 @@ namespace SmashCourt_BE.Services
                 throw new AppException(500, "Không tìm thấy hóa đơn", ErrorCodes.InternalError);
 
             var now = DateTime.UtcNow;
+            var originalStatus = booking.Status;
 
-            // Tạo Payment record CASH cho phần chưa thu tiền
-            // - Invoice UNPAID (walk-in chưa thu tiền): thu toàn bộ FinalTotal
-            // - Invoice PARTIALLY_PAID (online có service fee phát sinh): thu phần ServiceFee
-            // - Invoice PAID (trả trước đủ): không cần tạo thêm
-            if (invoice.PaymentStatus == InvoicePaymentStatus.UNPAID)
+            // Bọc toàn bộ checkout logic trong transaction để đảm bảo atomicity
+            // Tránh trường hợp: payment created nhưng booking status update fail
+            using (var transaction = new System.Transactions.TransactionScope(
+                System.Transactions.TransactionScopeAsyncFlowOption.Enabled))
             {
-                await _paymentRepo.CreateAsync(new Payment
-                {
-                    InvoiceId = invoice.Id,
-                    Method = PaymentTxMethod.CASH,
-                    Amount = invoice.FinalTotal,
-                    Status = PaymentTxStatus.SUCCESS,
-                    PaidAt = now,
-                    CreatedAt = now,
-                    UpdatedAt = now
-                });
-            }
-            else if (invoice.PaymentStatus == InvoicePaymentStatus.PARTIALLY_PAID
-                     && invoice.ServiceFee > 0)
-            {
-                // Đã thanh toán sân online (PARTIALLY_PAID), còn lại service fee thu tại quầy
-                await _paymentRepo.CreateAsync(new Payment
-                {
-                    InvoiceId = invoice.Id,
-                    Method = PaymentTxMethod.CASH,
-                    Amount = invoice.ServiceFee,
-                    Status = PaymentTxStatus.SUCCESS,
-                    PaidAt = now,
-                    CreatedAt = now,
-                    UpdatedAt = now
-                });
-            }
+                // 1. Conditional update booking status TRƯỚC (DB-level concurrency control)
+                // Chỉ 1 trong 2 concurrent requests sẽ thành công
+                var rowsAffected = await _bookingRepo.UpdateWithStatusCheckAsync(
+                    booking.Id, 
+                    BookingStatus.COMPLETED, 
+                    originalStatus);
+                
+                if (rowsAffected == 0)
+                    throw new AppException(409, 
+                        "Đơn đã được checkout bởi người khác", 
+                        ErrorCodes.Conflict);
 
-            // Cập nhật invoice → PAID
-            invoice.PaymentStatus = InvoicePaymentStatus.PAID;
-            invoice.UpdatedAt = now;
-            await _invoiceRepo.UpdateAsync(invoice);
+                // CRITICAL: ExecuteUpdateAsync không update entity trong memory
+                // Phải update thủ công để logic phía sau dùng đúng giá trị
+                booking.Status = BookingStatus.COMPLETED;
+                booking.UpdatedAt = now;
 
-            // Cập nhật booking → COMPLETED
-            booking.Status = BookingStatus.COMPLETED;
-            booking.UpdatedAt = now;
-            
-            // Deactivate booking courts khi COMPLETED
-            await _bookingRepo.UpdateCourtActiveStatusAsync(booking.Id, false);
-            
-            await _bookingRepo.UpdateAsync(booking);
-
-            // Cập nhật court → AVAILABLE
-            // bc.Court đã được load sẵn qua GetByIdWithDetailsAsync().ThenInclude
-            foreach (var bc in booking.BookingCourts)
-            {
-                var court = bc.Court;
-                if (court != null)
+                // 2. Tạo Payment record CASH cho phần chưa thu tiền
+                // - Invoice UNPAID (walk-in chưa thu tiền): thu toàn bộ FinalTotal
+                // - Invoice PARTIALLY_PAID (online có service fee phát sinh): thu phần ServiceFee
+                // - Invoice PAID (trả trước đủ): không cần tạo thêm
+                if (invoice.PaymentStatus == InvoicePaymentStatus.UNPAID)
                 {
-                    court.Status = CourtStatus.AVAILABLE;
-                    court.UpdatedAt = now;
-                    await _courtRepo.UpdateAsync(court);
+                    await _paymentRepo.CreateAsync(new Payment
+                    {
+                        InvoiceId = invoice.Id,
+                        Method = PaymentTxMethod.CASH,
+                        Amount = invoice.FinalTotal,
+                        Status = PaymentTxStatus.SUCCESS,
+                        PaidAt = now,
+                        CreatedAt = now,
+                        UpdatedAt = now
+                    });
                 }
-            }
+                else if (invoice.PaymentStatus == InvoicePaymentStatus.PARTIALLY_PAID
+                         && invoice.ServiceFee > 0)
+                {
+                    // Đã thanh toán sân online (PARTIALLY_PAID), còn lại service fee thu tại quầy
+                    await _paymentRepo.CreateAsync(new Payment
+                    {
+                        InvoiceId = invoice.Id,
+                        Method = PaymentTxMethod.CASH,
+                        Amount = invoice.ServiceFee,
+                        Status = PaymentTxStatus.SUCCESS,
+                        PaidAt = now,
+                        CreatedAt = now,
+                        UpdatedAt = now
+                    });
+                }
 
-            // Tích điểm loyalty nếu có tài khoản
-            if (booking.CustomerId.HasValue)
-                await EarnLoyaltyPointsAsync(booking, invoice.CourtFee);
+                // 3. Cập nhật invoice → PAID
+                invoice.PaymentStatus = InvoicePaymentStatus.PAID;
+                invoice.UpdatedAt = now;
+                await _invoiceRepo.UpdateAsync(invoice);
+
+                // 4. Deactivate booking courts khi COMPLETED
+                await _bookingRepo.UpdateCourtActiveStatusAsync(booking.Id, false);
+
+                // 5. Cập nhật court → AVAILABLE (batch update để tránh N+1 query)
+                var courtIds = booking.BookingCourts
+                    .Where(bc => bc.Court != null)
+                    .Select(bc => bc.Court!.Id)
+                    .ToList();
+                
+                if (courtIds.Any())
+                {
+                    await _courtRepo.BatchUpdateStatusAsync(
+                        courtIds, 
+                        CourtStatus.AVAILABLE, 
+                        now);
+                }
+
+                // 6. Tích điểm loyalty nếu có tài khoản (atomic update bên trong)
+                if (booking.CustomerId.HasValue)
+                    await EarnLoyaltyPointsAsync(booking, invoice.CourtFee);
+
+                // 7. Commit transaction
+                transaction.Complete();
+            }
 
             // TODO: Broadcast SignalR
         }
@@ -1385,42 +1417,64 @@ namespace SmashCourt_BE.Services
                 if (pointsEarned <= 0) return;
 
                 var tierBefore = loyalty.TierId;
-                loyalty.TotalPoints += pointsEarned;
-                loyalty.UpdatedAt = DateTime.UtcNow;
-
-                // Kiểm tra lên hạng loyalty
-                var allTiers = await _loyaltyTierRepo.GetAllLoyaltyTiersAsync();
-                var newTier = allTiers
-                    .Where(t => t.MinPoints <= loyalty.TotalPoints)
-                    .OrderByDescending(t => t.MinPoints)
-                    .FirstOrDefault();
-
-                if (newTier != null && newTier.Id != loyalty.TierId)
-                    loyalty.TierId = newTier.Id;
-
-                await _loyaltyRepo.UpdateAsync(loyalty);
-
-                // Ghi transaction — dùng AddAsync đã thêm vào interface
-                await _loyaltyTransactionRepo.AddAsync(new LoyaltyTransaction
+                
+                // Wrap toàn bộ loyalty logic trong transaction để đảm bảo atomicity
+                // Nếu insert transaction log fail → rollback points và tier
+                using (var transaction = new System.Transactions.TransactionScope(
+                    System.Transactions.TransactionScopeAsyncFlowOption.Enabled))
                 {
-                    UserId = booking.CustomerId!.Value,
-                    BookingId = booking.Id,
-                    Points = pointsEarned,
-                    TotalPointsAfter = loyalty.TotalPoints,
-                    Type = LoyaltyTransactionType.EARN,
-                    CreatedAt = DateTime.UtcNow
-                });
+                    // Atomic update: Cập nhật TotalPoints trực tiếp trong DB để tránh race condition
+                    // Không read → modify → write (có thể bị overwrite)
+                    // Mà dùng: UPDATE loyalty SET total_points = total_points + @points
+                    var newTotalPoints = await _loyaltyRepo.AddPointsAtomicAsync(
+                        booking.CustomerId!.Value, pointsEarned);
 
-                // Gửi email thông báo lên hạng
-                if (newTier != null && newTier.Id != tierBefore)
+                    // Kiểm tra lên hạng loyalty dựa trên newTotalPoints
+                    var allTiers = await _loyaltyTierRepo.GetAllLoyaltyTiersAsync();
+                    var newTier = allTiers
+                        .Where(t => t.MinPoints <= newTotalPoints)
+                        .OrderByDescending(t => t.MinPoints)
+                        .FirstOrDefault();
+
+                    // Cập nhật tier nếu thay đổi
+                    // CRITICAL: So sánh với tierBefore (giá trị cũ), KHÔNG dùng loyalty.TierId
+                    // Vì loyalty.TierId có thể đã bị update bởi request khác
+                    if (newTier != null && newTier.Id != tierBefore)
+                    {
+                        await _loyaltyRepo.UpdateTierAsync(
+                            booking.CustomerId!.Value, newTier.Id);
+                    }
+
+                    // Ghi transaction — CRITICAL: Phải thành công, nếu fail → rollback all
+                    await _loyaltyTransactionRepo.AddAsync(new LoyaltyTransaction
+                    {
+                        UserId = booking.CustomerId!.Value,
+                        BookingId = booking.Id,
+                        Points = pointsEarned,
+                        TotalPointsAfter = newTotalPoints,
+                        Type = LoyaltyTransactionType.EARN,
+                        CreatedAt = DateTime.UtcNow
+                    });
+
+                    // Commit transaction
+                    transaction.Complete();
+                }
+
+                // Gửi email thông báo lên hạng (NGOÀI transaction - không ảnh hưởng nếu fail)
+                if (tierBefore != loyalty.TierId)
                 {
                     try
                     {
                         var user = await _userRepo.GetUserByIdAsync(booking.CustomerId!.Value);
                         if (user != null)
                         {
-                            await _emailService.SendTierUpgradeAsync(
-                                user.Email, user.FullName, newTier.Name);
+                            var allTiers = await _loyaltyTierRepo.GetAllLoyaltyTiersAsync();
+                            var newTier = allTiers.FirstOrDefault(t => t.Id != tierBefore);
+                            if (newTier != null)
+                            {
+                                await _emailService.SendTierUpgradeAsync(
+                                    user.Email, user.FullName, newTier.Name);
+                            }
                         }
                     }
                     catch (Exception ex)
@@ -1438,7 +1492,7 @@ namespace SmashCourt_BE.Services
 
         /// <summary>
         /// Trừ điểm loyalty khi refund được confirm (theo % refund)
-        /// Logic: Tìm transaction EARN → Tính điểm cần trừ → Update loyalty → Check xuống hạng → Ghi transaction DEDUCT
+        /// Logic: Tìm transaction EARN → Tính điểm cần trừ → Atomic update loyalty → Check xuống hạng → Ghi transaction DEDUCT
         /// </summary>
         /// <param name="booking">Booking đã được refund</param>
         /// <param name="refundPercent">% refund (0-100)</param>
@@ -1476,60 +1530,100 @@ namespace SmashCourt_BE.Services
                 var originalPoints = existingTransaction.Points;
                 
                 // 5. Tính điểm cần trừ theo % refund
-                // Dùng Math.Round thay vì Math.Floor để tránh drift
-                // Ví dụ: 100 điểm, refund 50% → trừ 50 điểm
-                var pointsToDeduct = (int)Math.Round(
-                    originalPoints * refundPercent / 100, 
-                    MidpointRounding.AwayFromZero);
+                // Dùng Math.Floor để consistent với logic cộng điểm
+                // Ví dụ: 100 điểm, refund 50% → 50.0 → Floor → 50 điểm
+                // Tránh trường hợp: Round lên → trừ nhiều hơn đã cộng
+                var pointsToDeduct = (int)Math.Floor(
+                    originalPoints * refundPercent / 100);
                 
                 if (pointsToDeduct <= 0) return; // Không có điểm cần trừ
 
                 var tierBefore = loyalty.TierId;
 
-                // 6. Trừ điểm (không cho âm)
-                loyalty.TotalPoints = Math.Max(0, loyalty.TotalPoints - pointsToDeduct);
-                loyalty.UpdatedAt = DateTime.UtcNow;
-
-                // 7. Kiểm tra xuống hạng
-                // Tìm tier phù hợp với số điểm mới (tier có MinPoints <= TotalPoints, lấy tier cao nhất)
-                var allTiers = await _loyaltyTierRepo.GetAllLoyaltyTiersAsync();
-                var newTier = allTiers
-                    .Where(t => t.MinPoints <= loyalty.TotalPoints)
-                    .OrderByDescending(t => t.MinPoints)
-                    .FirstOrDefault();
-
-                if (newTier != null && newTier.Id != loyalty.TierId)
+                // Wrap toàn bộ loyalty logic trong transaction để đảm bảo atomicity
+                // Nếu insert transaction log fail → rollback points và tier
+                using (var transaction = new System.Transactions.TransactionScope(
+                    System.Transactions.TransactionScopeAsyncFlowOption.Enabled))
                 {
-                    loyalty.TierId = newTier.Id;
-                    _logger.LogInformation(
-                        "[LOYALTY] User {UserId} downgraded from tier {OldTier} to {NewTier} after refund",
-                        booking.CustomerId.Value, tierBefore, newTier.Id);
+                    // 6. Atomic update: Trừ điểm trực tiếp trong DB để tránh race condition
+                    // Không read → modify → write (có thể bị overwrite)
+                    // Mà dùng: UPDATE loyalty SET total_points = total_points - @points (không cho âm)
+                    var newTotalPoints = await _loyaltyRepo.AddPointsAtomicAsync(
+                        booking.CustomerId.Value, -pointsToDeduct);
+
+                    // 7. Kiểm tra xuống hạng dựa trên newTotalPoints
+                    var allTiers = await _loyaltyTierRepo.GetAllLoyaltyTiersAsync();
+                    var newTier = allTiers
+                        .Where(t => t.MinPoints <= newTotalPoints)
+                        .OrderByDescending(t => t.MinPoints)
+                        .FirstOrDefault();
+
+                    // Cập nhật tier nếu thay đổi
+                    // CRITICAL: So sánh với tierBefore (giá trị cũ), KHÔNG dùng loyalty.TierId
+                    // Vì loyalty.TierId có thể đã bị update bởi request khác
+                    if (newTier != null && newTier.Id != tierBefore)
+                    {
+                        await _loyaltyRepo.UpdateTierAsync(
+                            booking.CustomerId.Value, newTier.Id);
+                        
+                        _logger.LogInformation(
+                            "[LOYALTY] User {UserId} downgraded from tier {OldTier} to {NewTier} after refund",
+                            booking.CustomerId.Value, tierBefore, newTier.Id);
+                    }
+
+                    // 8. Ghi transaction trừ điểm (Points = số âm để đánh dấu DEDUCT)
+                    // CRITICAL: Phải thành công, nếu fail → rollback all
+                    try
+                    {
+                        await _loyaltyTransactionRepo.AddAsync(new LoyaltyTransaction
+                        {
+                            UserId = booking.CustomerId.Value,
+                            BookingId = booking.Id,
+                            Points = -pointsToDeduct, // Số âm để đánh dấu trừ điểm
+                            TotalPointsAfter = newTotalPoints,
+                            Type = LoyaltyTransactionType.DEDUCT,
+                            CreatedAt = DateTime.UtcNow
+                        });
+                    }
+                    catch (DbUpdateException ex) when (ex.InnerException?.Message?.Contains("ux_loyalty_deduct_booking") == true)
+                    {
+                        // Unique index violation - duplicate deduction detected
+                        // Another request already processed this deduction
+                        _logger.LogWarning(
+                            "[LOYALTY] Duplicate deduction detected for booking {BookingId} (caught by unique index). " +
+                            "Another request already processed this deduction. Skipping.",
+                            booking.Id);
+                        return; // Skip gracefully - không rollback vì đã có request khác xử lý
+                    }
+
+                    // 9. Commit transaction
+                    transaction.Complete();
                 }
 
-                // 8. Lưu loyalty với điểm mới và tier mới (nếu có)
-                await _loyaltyRepo.UpdateAsync(loyalty);
-
-                // 9. Ghi transaction trừ điểm (Points = số âm để đánh dấu DEDUCT)
-                await _loyaltyTransactionRepo.AddAsync(new LoyaltyTransaction
-                {
-                    UserId = booking.CustomerId.Value,
-                    BookingId = booking.Id,
-                    Points = -pointsToDeduct, // Số âm để đánh dấu trừ điểm
-                    TotalPointsAfter = loyalty.TotalPoints,
-                    Type = LoyaltyTransactionType.DEDUCT,
-                    CreatedAt = DateTime.UtcNow
-                });
-
-                // 10. Logging để tracking
+                // 10. Logging để tracking (NGOÀI transaction)
                 _logger.LogInformation(
                     "[LOYALTY] Deducted {Points} points ({Percent}% of {Original}) from user {UserId} for refunded booking {BookingId}. Balance: {Balance}",
-                    pointsToDeduct, refundPercent, originalPoints, booking.CustomerId.Value, booking.Id, loyalty.TotalPoints);
+                    pointsToDeduct, refundPercent, originalPoints, booking.CustomerId.Value, booking.Id, await GetUserPointsBalance(booking.CustomerId.Value));
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex,
                     "Failed to deduct loyalty points for booking {BookingId}", booking.Id);
                 // Không throw - loyalty points không nên block refund process
+            }
+        }
+
+        // Helper method để lấy balance hiện tại (cho logging)
+        private async Task<int> GetUserPointsBalance(Guid userId)
+        {
+            try
+            {
+                var loyalty = await _loyaltyRepo.GetByUserIdAsync(userId);
+                return loyalty?.TotalPoints ?? 0;
+            }
+            catch
+            {
+                return 0;
             }
         }
 
