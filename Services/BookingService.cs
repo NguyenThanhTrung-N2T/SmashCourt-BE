@@ -1084,32 +1084,39 @@ namespace SmashCourt_BE.Services
                 booking.Status = BookingStatus.COMPLETED;
                 booking.UpdatedAt = now;
 
+                // 1.5. Query lại invoice FinalTotal từ DB để đảm bảo có service mới nhất
+                // Tránh race condition: Staff B add service sau khi Staff A đã load invoice
+                var latestInvoice = await _invoiceRepo.GetByBookingIdAsync(booking.Id);
+                if (latestInvoice == null)
+                    throw new AppException(500, "Không tìm thấy hóa đơn", ErrorCodes.InternalError);
+
                 // 2. Tạo Payment record CASH cho phần chưa thu tiền
+                // Dùng latestInvoice để đảm bảo FinalTotal và ServiceFee là mới nhất
                 // - Invoice UNPAID (walk-in chưa thu tiền): thu toàn bộ FinalTotal
                 // - Invoice PARTIALLY_PAID (online có service fee phát sinh): thu phần ServiceFee
                 // - Invoice PAID (trả trước đủ): không cần tạo thêm
-                if (invoice.PaymentStatus == InvoicePaymentStatus.UNPAID)
+                if (latestInvoice.PaymentStatus == InvoicePaymentStatus.UNPAID)
                 {
                     await _paymentRepo.CreateAsync(new Payment
                     {
-                        InvoiceId = invoice.Id,
+                        InvoiceId = latestInvoice.Id,
                         Method = PaymentTxMethod.CASH,
-                        Amount = invoice.FinalTotal,
+                        Amount = latestInvoice.FinalTotal,  // ← Dùng latest
                         Status = PaymentTxStatus.SUCCESS,
                         PaidAt = now,
                         CreatedAt = now,
                         UpdatedAt = now
                     });
                 }
-                else if (invoice.PaymentStatus == InvoicePaymentStatus.PARTIALLY_PAID
-                         && invoice.ServiceFee > 0)
+                else if (latestInvoice.PaymentStatus == InvoicePaymentStatus.PARTIALLY_PAID
+                         && latestInvoice.ServiceFee > 0)
                 {
                     // Đã thanh toán sân online (PARTIALLY_PAID), còn lại service fee thu tại quầy
                     await _paymentRepo.CreateAsync(new Payment
                     {
-                        InvoiceId = invoice.Id,
+                        InvoiceId = latestInvoice.Id,
                         Method = PaymentTxMethod.CASH,
-                        Amount = invoice.ServiceFee,
+                        Amount = latestInvoice.ServiceFee,  // ← Dùng latest
                         Status = PaymentTxStatus.SUCCESS,
                         PaidAt = now,
                         CreatedAt = now,
@@ -1118,9 +1125,9 @@ namespace SmashCourt_BE.Services
                 }
 
                 // 3. Cập nhật invoice → PAID
-                invoice.PaymentStatus = InvoicePaymentStatus.PAID;
-                invoice.UpdatedAt = now;
-                await _invoiceRepo.UpdateAsync(invoice);
+                latestInvoice.PaymentStatus = InvoicePaymentStatus.PAID;
+                latestInvoice.UpdatedAt = now;
+                await _invoiceRepo.UpdateAsync(latestInvoice);
 
                 // 4. Deactivate booking courts khi COMPLETED
                 await _bookingRepo.UpdateCourtActiveStatusAsync(booking.Id, false);
@@ -1140,6 +1147,7 @@ namespace SmashCourt_BE.Services
                 }
 
                 // 6. Tích điểm loyalty nếu có tài khoản (atomic update bên trong)
+                // Dùng invoice.CourtFee (không thay đổi) thay vì latestInvoice
                 if (booking.CustomerId.HasValue)
                     await EarnLoyaltyPointsAsync(booking, invoice.CourtFee);
 
@@ -1150,7 +1158,7 @@ namespace SmashCourt_BE.Services
             // TODO: Broadcast SignalR
         }
 
-        // thêm dịch vụ vào booking, chỉ cho phép thêm khi booking đang CONFIRMED, IN_PROGRESS hoặc PENDING_PAYMENT
+        // thêm dịch vụ vào booking, chỉ cho phép thêm khi booking đang active và invoice chưa thanh toán đủ
         public async Task<BookingDto> AddServiceAsync(
             Guid id, AddBookingServiceDto dto,
             Guid currentUserId, string currentUserRole)
@@ -1161,30 +1169,17 @@ namespace SmashCourt_BE.Services
 
             await ValidateBranchAccessAsync(booking.BranchId, currentUserId, currentUserRole);
 
-            var allowedStatuses = new[]
-            {
-                BookingStatus.CONFIRMED,
-                BookingStatus.IN_PROGRESS,
-                BookingStatus.PENDING_PAYMENT
-            };
-
-            if (!allowedStatuses.Contains(booking.Status))
-                throw new AppException(400,
-                    "Không thể thêm dịch vụ ở trạng thái này", ErrorCodes.BadRequest);
-
             var invoice = booking.Invoice;
             if (invoice == null)
                 throw new AppException(500, "Không tìm thấy hóa đơn", ErrorCodes.InternalError);
 
-            if (invoice.PaymentStatus == InvoicePaymentStatus.PAID)
+            // LAYER A: Early validation (UX / fail-fast)
+            // Validate có thể chỉnh sửa dịch vụ hay không (dựa trên data đã load)
+            // NOTE: Đây chỉ là early check để fail-fast, KHÔNG phải source of truth
+            // Source of truth là re-check TRONG transaction (Layer B)
+            if (!CanModifyServices(booking, invoice))
                 throw new AppException(400,
-                    "Hóa đơn đã thanh toán, không thể thêm dịch vụ", ErrorCodes.BadRequest);
-
-            // PARTIALLY_PAID chỉ cho thêm khi IN_PROGRESS
-            if (invoice?.PaymentStatus == InvoicePaymentStatus.PARTIALLY_PAID &&
-                booking.Status != BookingStatus.IN_PROGRESS)
-                throw new AppException(400,
-                    "Chỉ có thể thêm dịch vụ khi đang tiến hành", ErrorCodes.BadRequest);
+                    "Không thể thêm dịch vụ ở trạng thái hiện tại", ErrorCodes.BadRequest);
 
             // Tìm branch service
             var branchService = await _branchServiceRepo.GetByBranchServiceAsync(
@@ -1196,36 +1191,73 @@ namespace SmashCourt_BE.Services
                 throw new AppException(400,
                     "Dịch vụ không tồn tại hoặc đã bị tắt", ErrorCodes.BadRequest);
 
-            // Snapshot giá + tên tại thời điểm thêm
-            var bookingService = new SmashCourt_BE.Models.Entities.BookingService
+            // Wrap toàn bộ logic trong transaction để đảm bảo atomicity
+            // Nếu update invoice fail → rollback service insert
+            using (var transaction = new System.Transactions.TransactionScope(
+                System.Transactions.TransactionScopeAsyncFlowOption.Enabled))
             {
-                BookingId = booking.Id,
-                ServiceId = dto.ServiceId,
-                ServiceName = branchService.Service.Name,
-                Unit = branchService.Service.Unit,
-                UnitPrice = branchService.Price,
-                Quantity = dto.Quantity,
-                CreatedAt = DateTime.UtcNow
-            };
-            await _bookingRepo.AddServiceAsync(bookingService);
+                // LAYER B: Source of truth - Re-check TRONG transaction (CRITICAL)
+                // Query fresh data từ DB và validate bằng consolidated method
+                var currentStatus = await _bookingRepo.GetBookingStatusAsync(booking.Id);
+                var latestInvoice = await _invoiceRepo.GetByBookingIdAsync(booking.Id);
+                
+                if (latestInvoice == null)
+                    throw new AppException(500, "Không tìm thấy hóa đơn", ErrorCodes.InternalError);
 
-            // Cập nhật service_fee trong invoice
-            var serviceFeeTotal = booking.BookingServices.Sum(s => s.UnitPrice * s.Quantity)
-                                + branchService.Price * dto.Quantity;
+                // Consolidated validation: Double protection (Status + PaymentStatus)
+                EnsureBookingModifiable(currentStatus, latestInvoice.PaymentStatus);
 
-            invoice!.ServiceFee = serviceFeeTotal;
-            invoice.FinalTotal = invoice.CourtFee
-                               - invoice.LoyaltyDiscountAmount
-                               - invoice.PromotionDiscountAmount
-                               + serviceFeeTotal;
-            invoice.UpdatedAt = DateTime.UtcNow;
-            await _invoiceRepo.UpdateAsync(invoice);
+                // Check duplicate service - nếu đã tồn tại thì tăng quantity thay vì tạo mới
+                var existingService = booking.BookingServices
+                    .FirstOrDefault(bs => bs.ServiceId == dto.ServiceId);
 
+                if (existingService != null)
+                {
+                    // UX tốt hơn: Merge quantity bằng atomic update (tránh race condition)
+                    // Dùng ExecuteUpdateAsync: UPDATE SET quantity = quantity + @delta
+                    // → Không bị lost update khi 2 staff add cùng lúc
+                    await _bookingRepo.UpdateServiceQuantityAtomicAsync(
+                        existingService.Id, dto.Quantity);
+                }
+                else
+                {
+                    // Tạo service mới với snapshot giá + tên tại thời điểm thêm
+                    var bookingService = new SmashCourt_BE.Models.Entities.BookingService
+                    {
+                        BookingId = booking.Id,
+                        ServiceId = dto.ServiceId,
+                        ServiceName = branchService.Service.Name,
+                        Unit = branchService.Service.Unit,
+                        UnitPrice = branchService.Price,
+                        Quantity = dto.Quantity,
+                        CreatedAt = DateTime.UtcNow
+                    };
+                    await _bookingRepo.AddServiceAsync(bookingService);
+                }
+
+                // Tính lại service_fee từ DB (không dùng memory collection)
+                // Dùng SumAsync để tối ưu performance (không load list vào memory)
+                var serviceFeeTotal = await _bookingRepo.CalculateServiceFeeAsync(booking.Id);
+
+                // Cập nhật invoice (dùng latestInvoice từ DB, không dùng invoice từ memory)
+                latestInvoice.ServiceFee = serviceFeeTotal;
+                latestInvoice.FinalTotal = latestInvoice.CourtFee
+                                   - latestInvoice.LoyaltyDiscountAmount
+                                   - latestInvoice.PromotionDiscountAmount
+                                   + serviceFeeTotal;
+                latestInvoice.UpdatedAt = DateTime.UtcNow;
+                await _invoiceRepo.UpdateAsync(latestInvoice);
+
+                // Commit transaction
+                transaction.Complete();
+            }
+
+            // Query lại booking với details để trả về
             var result = await _bookingRepo.GetByIdWithDetailsAsync(booking.Id);
             return MapToDto(result!);
         }
 
-        // Xóa dịch vụ khỏi booking, chỉ cho phép xóa khi booking đang CONFIRMED, IN_PROGRESS hoặc PENDING_PAYMENT
+        // Xóa dịch vụ khỏi booking, chỉ cho phép xóa khi booking đang active và invoice chưa thanh toán đủ
         public async Task<BookingDto> RemoveServiceAsync(
             Guid id, Guid serviceId,
             Guid currentUserId, string currentUserRole)
@@ -1236,52 +1268,72 @@ namespace SmashCourt_BE.Services
 
             await ValidateBranchAccessAsync(booking.BranchId, currentUserId, currentUserRole);
 
-            var allowedStatuses = new[]
-            {
-                BookingStatus.CONFIRMED,
-                BookingStatus.IN_PROGRESS,
-                BookingStatus.PENDING_PAYMENT
-            };
-
-            if (!allowedStatuses.Contains(booking.Status))
-                throw new AppException(400,
-                    "Không thể xóa dịch vụ ở trạng thái này", ErrorCodes.BadRequest);
-
             var invoice = booking.Invoice;
             if (invoice == null)
                 throw new AppException(500, "Không tìm thấy hóa đơn", ErrorCodes.InternalError);
 
-            if (invoice.PaymentStatus == InvoicePaymentStatus.PAID)
+            // LAYER A: Early validation (UX / fail-fast)
+            // Validate có thể chỉnh sửa dịch vụ hay không (dựa trên data đã load)
+            // NOTE: Đây chỉ là early check để fail-fast, KHÔNG phải source of truth
+            // Source of truth là re-check TRONG transaction (Layer B)
+            if (!CanModifyServices(booking, invoice))
                 throw new AppException(400,
-                    "Hóa đơn đã thanh toán, không thể xóa dịch vụ", ErrorCodes.BadRequest);
-
-            // PARTIALLY_PAID chỉ cho xóa khi IN_PROGRESS
-            if (invoice?.PaymentStatus == InvoicePaymentStatus.PARTIALLY_PAID &&
-                booking.Status != BookingStatus.IN_PROGRESS)
-                throw new AppException(400,
-                    "Chỉ có thể xóa dịch vụ khi đang IN_PROGRESS", ErrorCodes.BadRequest);
+                    "Không thể xóa dịch vụ ở trạng thái hiện tại", ErrorCodes.BadRequest);
 
             var bookingService = booking.BookingServices
                 .FirstOrDefault(bs => bs.Id == serviceId);
 
+            // IDEMPOTENCY: Nếu service đã bị xóa rồi → return success (không throw 404)
+            // Lý do: Client có thể retry request do network issue
+            // → Lần 1: success, Lần 2: không nên báo lỗi mà nên return success
             if (bookingService == null)
-                throw new AppException(404, "Không tìm thấy dịch vụ", ErrorCodes.NotFound);
+            {
+                _logger.LogInformation(
+                    "Service {ServiceId} already removed from booking {BookingId} - idempotent success",
+                    serviceId, id);
+                
+                // Query lại booking và return (operation đã thành công trước đó)
+                var currentBooking = await _bookingRepo.GetByIdWithDetailsAsync(id);
+                return MapToDto(currentBooking!);
+            }
 
-            await _bookingRepo.RemoveServiceAsync(bookingService);
+            // Wrap toàn bộ logic trong transaction để đảm bảo atomicity
+            // Nếu update invoice fail → rollback service delete
+            using (var transaction = new System.Transactions.TransactionScope(
+                System.Transactions.TransactionScopeAsyncFlowOption.Enabled))
+            {
+                // LAYER B: Source of truth - Re-check TRONG transaction (CRITICAL)
+                // Query fresh data từ DB và validate bằng consolidated method
+                var currentStatus = await _bookingRepo.GetBookingStatusAsync(booking.Id);
+                var latestInvoice = await _invoiceRepo.GetByBookingIdAsync(booking.Id);
+                
+                if (latestInvoice == null)
+                    throw new AppException(500, "Không tìm thấy hóa đơn", ErrorCodes.InternalError);
 
-            // Tái tính invoice
-            var remainingServiceFee = booking.BookingServices
-                .Where(bs => bs.Id != serviceId)
-                .Sum(s => s.UnitPrice * s.Quantity);
+                // Consolidated validation: Double protection (Status + PaymentStatus)
+                EnsureBookingModifiable(currentStatus, latestInvoice.PaymentStatus);
 
-            invoice!.ServiceFee = remainingServiceFee;
-            invoice.FinalTotal = invoice.CourtFee
-                               - invoice.LoyaltyDiscountAmount
-                               - invoice.PromotionDiscountAmount
-                               + remainingServiceFee;
-            invoice.UpdatedAt = DateTime.UtcNow;
-            await _invoiceRepo.UpdateAsync(invoice);
+                // Xóa service
+                await _bookingRepo.RemoveServiceAsync(bookingService);
 
+                // Tính lại service_fee từ DB (không dùng memory collection)
+                // Dùng SumAsync để tối ưu performance (không load list vào memory)
+                var remainingServiceFee = await _bookingRepo.CalculateServiceFeeAsync(booking.Id);
+
+                // Cập nhật invoice (dùng latestInvoice từ DB, không dùng invoice từ memory)
+                latestInvoice.ServiceFee = remainingServiceFee;
+                latestInvoice.FinalTotal = latestInvoice.CourtFee
+                                   - latestInvoice.LoyaltyDiscountAmount
+                                   - latestInvoice.PromotionDiscountAmount
+                                   + remainingServiceFee;
+                latestInvoice.UpdatedAt = DateTime.UtcNow;
+                await _invoiceRepo.UpdateAsync(latestInvoice);
+
+                // Commit transaction
+                transaction.Complete();
+            }
+
+            // Query lại booking với details để trả về
             var result = await _bookingRepo.GetByIdWithDetailsAsync(booking.Id);
             return MapToDto(result!);
         }
@@ -1403,6 +1455,76 @@ namespace SmashCourt_BE.Services
                 .FirstOrDefault();
 
             return applicable?.RefundPercent ?? 0;
+        }
+
+        /// <summary>
+        /// Kiểm tra xem có thể chỉnh sửa dịch vụ (add/remove) hay không
+        /// Rule: Chỉ cho phép khi khách đã đến sân (IN_PROGRESS hoặc PENDING_PAYMENT)
+        /// </summary>
+        /// <param name="booking">Booking entity</param>
+        /// <param name="invoice">Invoice entity</param>
+        /// <returns>true nếu có thể chỉnh sửa, false nếu không</returns>
+        /// <remarks>
+        /// Business rule (Option B - Service chỉ order tại sân):
+        /// - Khách đặt online → KHÔNG cho phép add service (tránh no-show, inventory issue)
+        /// - Khách đến sân → Check-in → IN_PROGRESS → Cho phép add service
+        /// - Hết giờ → PENDING_PAYMENT → Vẫn cho phép add service (trước khi checkout)
+        /// - Đã checkout → COMPLETED → KHÔNG cho phép (đã thanh toán xong)
+        /// 
+        /// Payment rule:
+        /// - PaymentStatus = PAID → KHÔNG cho phép (đã thanh toán đủ, không thể chỉnh sửa)
+        /// - PaymentStatus = UNPAID/PARTIALLY_PAID → Cho phép (còn thiếu tiền, có thể chỉnh sửa)
+        /// </remarks>
+        private bool CanModifyServices(Booking booking, Invoice invoice)
+        {
+            // Rule 1: Đã thanh toán đủ → KHÔNG cho phép chỉnh sửa
+            if (invoice.PaymentStatus == InvoicePaymentStatus.PAID)
+                return false;
+
+            // Rule 2: Chỉ cho phép khi khách đã đến sân
+            // IN_PROGRESS: Khách đang chơi → cho phép add service
+            // PENDING_PAYMENT: Hết giờ, chờ checkout → vẫn cho phép add service nếu cần
+            return booking.Status switch
+            {
+                BookingStatus.IN_PROGRESS => true,
+                BookingStatus.PENDING_PAYMENT => true,
+                _ => false
+            };
+        }
+
+        /// <summary>
+        /// LAYER B: Source of truth validation - Đảm bảo booking có thể modify TRONG transaction
+        /// Consolidated validation method để reuse và test riêng
+        /// </summary>
+        /// <param name="status">Booking status (fresh from DB)</param>
+        /// <param name="paymentStatus">Invoice payment status (fresh from DB)</param>
+        /// <exception cref="AppException">Throw nếu không thể modify</exception>
+        /// <remarks>
+        /// Method này được gọi TRONG transaction với data fresh từ DB
+        /// → Đây là source of truth, không phải CanModifyServices (Layer A)
+        /// </remarks>
+        private void EnsureBookingModifiable(BookingStatus status, InvoicePaymentStatus paymentStatus)
+        {
+            // Protection 1: Booking Status Check (Workflow Protection)
+            if (status == BookingStatus.COMPLETED ||
+                status == BookingStatus.CANCELLED ||
+                status == BookingStatus.CANCELLED_PENDING_REFUND ||
+                status == BookingStatus.CANCELLED_REFUNDED ||
+                status == BookingStatus.NO_SHOW)
+            {
+                throw new AppException(400,
+                    "Không thể thêm/xóa dịch vụ - đơn đã kết thúc hoặc bị hủy",
+                    ErrorCodes.BadRequest);
+            }
+
+            // Protection 2: Payment Status Check (Financial Protection)
+            // CRITICAL: Đây là protection quan trọng nhất - ngăn modify sau khi đã thu tiền
+            if (paymentStatus == InvoicePaymentStatus.PAID)
+            {
+                throw new AppException(400,
+                    "Không thể thêm/xóa dịch vụ - hóa đơn đã thanh toán",
+                    ErrorCodes.BadRequest);
+            }
         }
 
         // Tích điểm loyalty dựa trên court_fee, tạo transaction và gửi email nếu lên hạng

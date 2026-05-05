@@ -128,6 +128,20 @@ namespace SmashCourt_BE.Repositories
                 .FirstOrDefaultAsync(b => b.Id == id);
         }
 
+        /// <summary>
+        /// Lấy booking status (lightweight query - chỉ lấy status)
+        /// Dùng để re-check status trong transaction, tránh race condition
+        /// </summary>
+        /// <param name="id">Booking ID</param>
+        /// <returns>BookingStatus hiện tại</returns>
+        public async Task<BookingStatus> GetBookingStatusAsync(Guid id)
+        {
+            return await _context.Bookings
+                .Where(b => b.Id == id)
+                .Select(b => b.Status)
+                .FirstOrDefaultAsync();
+        }
+
 
         // Lấy thông tin booking theo token hủy (dùng cho khách hàng hủy booking online)
         public async Task<Booking?> GetByCancelTokenAsync(string tokenHash)
@@ -227,6 +241,53 @@ namespace SmashCourt_BE.Repositories
         {
             _context.BookingServices.Add(service);
             await _context.SaveChangesAsync();
+        }
+
+        // Cập nhật dịch vụ trong booking
+        public async Task UpdateServiceAsync(BookingService service)
+        {
+            _context.BookingServices.Update(service);
+            await _context.SaveChangesAsync();
+        }
+
+        /// <summary>
+        /// Cập nhật quantity của service một cách atomic để tránh race condition
+        /// Sử dụng ExecuteUpdateAsync với SET quantity = quantity + @delta
+        /// </summary>
+        /// <param name="serviceId">ID của booking service</param>
+        /// <param name="quantityToAdd">Số lượng cần thêm (có thể âm để trừ)</param>
+        /// <returns>Quantity mới sau khi update</returns>
+        /// <remarks>
+        /// Race condition protection:
+        /// - Thread A và B cùng đọc quantity = 1
+        /// - Nếu dùng read-modify-write: cả 2 đều update thành 2 (lost update)
+        /// - Dùng atomic update: UPDATE SET quantity = quantity + @delta
+        /// - DB đảm bảo serializable → không bị lost update
+        /// </remarks>
+        public async Task<int> UpdateServiceQuantityAtomicAsync(Guid serviceId, int quantityToAdd)
+        {
+            // Atomic update: UPDATE booking_services SET quantity = quantity + @quantityToAdd
+            // WHERE id = @serviceId
+            await _context.BookingServices
+                .Where(s => s.Id == serviceId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(x => x.Quantity, x => x.Quantity + quantityToAdd));
+
+            // Đọc lại giá trị mới để return
+            var newQuantity = await _context.BookingServices
+                .Where(s => s.Id == serviceId)
+                .Select(s => s.Quantity)
+                .FirstOrDefaultAsync();
+
+            return newQuantity;
+        }
+
+        // Tính tổng service fee của booking (query từ DB, không dùng memory)
+        public async Task<decimal> CalculateServiceFeeAsync(Guid bookingId)
+        {
+            return await _context.BookingServices
+                .Where(s => s.BookingId == bookingId)
+                .SumAsync(s => s.UnitPrice * s.Quantity);
         }
 
         // Xóa dịch vụ khỏi booking

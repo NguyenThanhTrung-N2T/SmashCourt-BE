@@ -16,6 +16,9 @@ namespace SmashCourt_BE.Repositories.IRepository
         // Lấy thông tin booking theo id, có phân quyền
         Task<Booking?> GetByIdWithDetailsAsync(Guid id);
 
+        // Lấy booking status (lightweight query - chỉ lấy status)
+        Task<BookingStatus> GetBookingStatusAsync(Guid id);
+
         // Lấy thông tin booking theo token hủy (dùng cho khách hàng hủy booking online)
         Task<Booking?> GetByCancelTokenAsync(string tokenHash);
 
@@ -42,6 +45,15 @@ namespace SmashCourt_BE.Repositories.IRepository
 
         // Thêm dịch vụ vào booking
         Task AddServiceAsync(BookingService service);
+
+        // Cập nhật dịch vụ trong booking (quantity, price, etc.)
+        Task UpdateServiceAsync(BookingService service);
+
+        // Cập nhật quantity của service một cách atomic (tránh race condition)
+        Task<int> UpdateServiceQuantityAtomicAsync(Guid serviceId, int quantityToAdd);
+
+        // Tính tổng service fee của booking (query từ DB, không dùng memory)
+        Task<decimal> CalculateServiceFeeAsync(Guid bookingId);
 
         // Xóa dịch vụ khỏi booking
         Task RemoveServiceAsync(BookingService service);
