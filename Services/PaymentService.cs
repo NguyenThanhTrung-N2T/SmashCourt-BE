@@ -78,14 +78,24 @@ namespace SmashCourt_BE.Services
             var booking = payment.Invoice?.Booking;
             if (booking == null) return;
 
-            // 3. Idempotent check - bỏ qua nếu đã xử lý rồi
+            // 3. 🔒 IDEMPOTENCY CHECK - Ngăn chặn duplicate processing
+            // VNPay có thể gọi IPN nhiều lần (retry mechanism)
+            // Chỉ xử lý nếu booking chưa được finalized
             if (booking.Status == BookingStatus.PAID_ONLINE ||
                 booking.Status == BookingStatus.CANCELLED)
             {
-                _logger.LogInformation("IPN already processed for booking {BookingId}, status: {Status}", 
-                    booking.Id, booking.Status);
+                _logger.LogInformation(
+                    "🔒 IDEMPOTENT | IPN already processed | BookingId={BookingId} | " +
+                    "Status={Status} | TransactionRef={TransactionRef} | " +
+                    "Result=SKIPPED (already finalized)",
+                    booking.Id, booking.Status, transactionRef);
                 return;
             }
+            
+            _logger.LogInformation(
+                "✅ PROCESSING | IPN first time | BookingId={BookingId} | " +
+                "CurrentStatus={Status} | TransactionRef={TransactionRef}",
+                booking.Id, booking.Status, transactionRef);
 
             // 4. Verify amount từ VNPay - bảo vệ khỏi tampered callback
             if (query.TryGetValue("vnp_Amount", out var vnpAmountStr) &&
@@ -111,17 +121,31 @@ namespace SmashCourt_BE.Services
             if (isSuccess)
             {
                 // 5A. Xử lý thanh toán thành công
-                booking.Status = BookingStatus.PAID_ONLINE;
-                booking.ExpiresAt = null;   // Clear ExpiresAt vì không còn ý nghĩa sau khi paid
-                booking.UpdatedAt = now;
-
-                // Generate cancel token TRƯỚC KHI update để update cùng lúc
+                
+                // Generate cancel token TRƯỚC KHI update
                 var (cancelToken, cancelTokenHash, cancelTokenExpiry) = GenerateCancelTokenData(booking);
 
-                booking.CancelTokenHash = cancelTokenHash;
-                booking.CancelTokenExpiresAt = cancelTokenExpiry;
-                await _bookingRepo.UpdateAsync(booking);
+                // 🔒 ATOMIC UPDATE: Update TẤT CẢ fields trong 1 operation duy nhất
+                // Bảo vệ khỏi race condition khi IPN và Confirm gọi cùng lúc
+                var rowsAffected = await _bookingRepo.AtomicUpdatePaymentSuccessAsync(
+                    booking.Id,
+                    BookingStatus.PENDING,  // expectedStatus
+                    cancelTokenHash,
+                    cancelTokenExpiry,
+                    now);
 
+                if (rowsAffected == 0)
+                {
+                    // ⚠️ RACE CONDITION: Booking đã được update bởi request khác
+                    _logger.LogWarning(
+                        "⚠️ RACE CONDITION | Booking already updated by another request | " +
+                        "BookingId={BookingId} | ExpectedStatus={ExpectedStatus} | " +
+                        "TransactionRef={TransactionRef}",
+                        booking.Id, BookingStatus.PENDING, transactionRef);
+                    return;
+                }
+
+                // ✅ Request thắng → tiếp tục update payment, invoice, etc.
                 payment.Status = PaymentTxStatus.SUCCESS;
                 payment.PaidAt = now;
                 payment.UpdatedAt = now;
@@ -142,7 +166,12 @@ namespace SmashCourt_BE.Services
 
                 transaction.Complete();
 
-                _logger.LogInformation("IPN processed successfully for booking {BookingId}", booking.Id);
+                _logger.LogInformation(
+                    "✅ SUCCESS | IPN processed successfully | BookingId={BookingId} | " +
+                    "NewStatus={NewStatus} | TransactionRef={TransactionRef} | " +
+                    "PaymentAmount={Amount} | InvoiceStatus={InvoiceStatus}",
+                    booking.Id, BookingStatus.PAID_ONLINE, transactionRef, 
+                    payment.Amount, InvoicePaymentStatus.PARTIALLY_PAID);
 
                 // Gửi email xác nhận NGOÀI transaction
                 // Lỗi email không được rollback payment transaction
@@ -193,7 +222,12 @@ namespace SmashCourt_BE.Services
 
                 transaction.Complete();
 
-                _logger.LogInformation("IPN processed (payment failed) for booking {BookingId}", booking.Id);
+                _logger.LogInformation(
+                    "❌ FAILED | IPN processed (payment failed) | BookingId={BookingId} | " +
+                    "NewStatus={NewStatus} | TransactionRef={TransactionRef} | " +
+                    "ResponseCode={ResponseCode}",
+                    booking.Id, BookingStatus.CANCELLED, transactionRef, 
+                    query["vnp_ResponseCode"].ToString());
 
                 // TODO: Broadcast SignalR notification
             }

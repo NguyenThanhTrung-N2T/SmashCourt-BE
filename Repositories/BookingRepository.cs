@@ -374,5 +374,50 @@ namespace SmashCourt_BE.Repositories
             // rowsAffected = 0 → conflict (status đã thay đổi bởi request khác)
             return rowsAffected;
         }
+
+        /// <summary>
+        /// Atomic update booking khi thanh toán thành công (VNPay IPN)
+        /// Update TẤT CẢ fields trong 1 operation duy nhất để tránh race condition
+        /// </summary>
+        /// <param name="bookingId">ID của booking</param>
+        /// <param name="expectedStatus">Status mong đợi (PENDING)</param>
+        /// <param name="cancelTokenHash">Cancel token hash</param>
+        /// <param name="cancelTokenExpiry">Cancel token expiry</param>
+        /// <param name="now">Timestamp hiện tại</param>
+        /// <returns>Số rows affected (1 = thành công, 0 = conflict)</returns>
+        /// <remarks>
+        /// Race condition protection cho VNPay payment:
+        /// - IPN và Confirm có thể gọi cùng lúc
+        /// - WHERE condition: status = PENDING
+        /// - Chỉ 1 request thắng (rowsAffected = 1), request kia thua (rowsAffected = 0)
+        /// 
+        /// DB-level atomic operation (1 UPDATE statement duy nhất):
+        /// UPDATE bookings 
+        /// SET status = 'PAID_ONLINE',
+        ///     expires_at = NULL,
+        ///     cancel_token_hash = @hash,
+        ///     cancel_token_expires_at = @expiry,
+        ///     updated_at = @now
+        /// WHERE id = @bookingId AND status = @expectedStatus
+        /// </remarks>
+        public async Task<int> AtomicUpdatePaymentSuccessAsync(
+            Guid bookingId, 
+            BookingStatus expectedStatus,
+            string cancelTokenHash, 
+            DateTime cancelTokenExpiry, 
+            DateTime now)
+        {
+            // ✅ ATOMIC: Tất cả updates trong 1 ExecuteUpdateAsync duy nhất
+            var rowsAffected = await _context.Bookings
+                .Where(b => b.Id == bookingId && b.Status == expectedStatus)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(b => b.Status, BookingStatus.PAID_ONLINE)
+                    .SetProperty(b => b.ExpiresAt, (DateTime?)null)
+                    .SetProperty(b => b.CancelTokenHash, cancelTokenHash)
+                    .SetProperty(b => b.CancelTokenExpiresAt, cancelTokenExpiry)
+                    .SetProperty(b => b.UpdatedAt, now));
+
+            return rowsAffected;
+        }
     }
 }

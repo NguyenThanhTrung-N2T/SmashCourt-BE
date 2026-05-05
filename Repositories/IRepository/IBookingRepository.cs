@@ -72,5 +72,22 @@ namespace SmashCourt_BE.Repositories.IRepository
         /// <param name="expectedStatus">Status mong đợi (status cũ)</param>
         /// <returns>Số rows affected (1 = thành công, 0 = conflict)</returns>
         Task<int> UpdateWithStatusCheckAsync(Guid bookingId, BookingStatus newStatus, BookingStatus expectedStatus);
+
+        /// <summary>
+        /// Atomic update booking khi thanh toán thành công (VNPay IPN)
+        /// Update tất cả fields trong 1 operation duy nhất để tránh race condition
+        /// </summary>
+        /// <param name="bookingId">ID của booking</param>
+        /// <param name="expectedStatus">Status mong đợi (PENDING)</param>
+        /// <param name="cancelTokenHash">Cancel token hash</param>
+        /// <param name="cancelTokenExpiry">Cancel token expiry</param>
+        /// <param name="now">Timestamp hiện tại</param>
+        /// <returns>Số rows affected (1 = thành công, 0 = conflict)</returns>
+        Task<int> AtomicUpdatePaymentSuccessAsync(
+            Guid bookingId, 
+            BookingStatus expectedStatus,
+            string cancelTokenHash, 
+            DateTime cancelTokenExpiry, 
+            DateTime now);
     }
 }

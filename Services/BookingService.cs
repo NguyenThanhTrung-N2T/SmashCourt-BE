@@ -906,20 +906,42 @@ namespace SmashCourt_BE.Services
 
                 if (courtIds.Any())
                 {
-                    // Check busy courts để tránh conflict (nếu có booking khác đang dùng court)
-                    var busyCourtIds = await _bookingRepo.GetActiveByCourtAndDateAsync(
-                        courtIds.First(), booking.BookingDate);
-                    var busyIds = busyCourtIds
-                        .Where(bc => bc.BookingId != booking.Id)
-                        .Select(bc => bc.CourtId)
-                        .Distinct()
-                        .ToHashSet();
+                    // ✅ FIX: Check busy courts cho TẤT CẢ courtIds (không chỉ court đầu tiên)
+                    // Mỗi court có thể có booking khác nhau, cần check riêng lẻ
+                    var busyIds = new HashSet<Guid>();
+
+                    foreach (var courtId in courtIds)
+                    {
+                        var busyCourts = await _bookingRepo.GetActiveByCourtAndDateAsync(
+                            courtId, booking.BookingDate);
+                        
+                        // Lọc ra courts của booking khác (không phải booking đang cancel)
+                        foreach (var bc in busyCourts.Where(bc => bc.BookingId != booking.Id))
+                        {
+                            busyIds.Add(bc.CourtId);
+                        }
+                    }
 
                     // Chỉ update courts không bị busy
-                    await _courtRepo.BatchUpdateStatusAsync(
-                        courtIds.Where(id => !busyIds.Contains(id)).ToList(),
-                        CourtStatus.AVAILABLE,
-                        now);
+                    var courtsToUpdate = courtIds.Where(id => !busyIds.Contains(id)).ToList();
+                    
+                    if (courtsToUpdate.Any())
+                    {
+                        await _courtRepo.BatchUpdateStatusAsync(
+                            courtsToUpdate,
+                            CourtStatus.AVAILABLE,
+                            now);
+                        
+                        _logger.LogInformation(
+                            "[CANCEL] Updated {Count} courts to AVAILABLE. Skipped {SkippedCount} busy courts.",
+                            courtsToUpdate.Count, busyIds.Count);
+                    }
+                    else
+                    {
+                        _logger.LogInformation(
+                            "[CANCEL] All {Count} courts are busy, no status update needed.",
+                            courtIds.Count);
+                    }
                 }
 
                 // 9.5. Xử lý refund nếu đã thanh toán
@@ -1572,6 +1594,10 @@ namespace SmashCourt_BE.Services
 
                 var tierBefore = loyalty.TierId;
                 
+                // ✅ Variables để lưu tier info cho email (fix bug: loyalty object không được refresh)
+                Guid? upgradedTierId = null;
+                string? upgradedTierName = null;
+                
                 // Wrap toàn bộ loyalty logic trong transaction để đảm bảo atomicity
                 // Nếu insert transaction log fail → rollback points và tier
                 using (var transaction = new System.Transactions.TransactionScope(
@@ -1597,6 +1623,10 @@ namespace SmashCourt_BE.Services
                     {
                         await _loyaltyRepo.UpdateTierAsync(
                             booking.CustomerId!.Value, newTier.Id);
+                        
+                        // ✅ FIX: Lưu tier info để gửi email sau (vì loyalty object không được refresh)
+                        upgradedTierId = newTier.Id;
+                        upgradedTierName = newTier.Name;
                     }
 
                     // Ghi transaction — CRITICAL: Phải thành công, nếu fail → rollback all
@@ -1614,21 +1644,21 @@ namespace SmashCourt_BE.Services
                     transaction.Complete();
                 }
 
-                // Gửi email thông báo lên hạng (NGOÀI transaction - không ảnh hưởng nếu fail)
-                if (tierBefore != loyalty.TierId)
+                // ✅ FIX: Gửi email thông báo lên hạng (NGOÀI transaction - không ảnh hưởng nếu fail)
+                // Dùng upgradedTierId thay vì so sánh loyalty.TierId (vì object không được refresh)
+                if (upgradedTierId.HasValue)
                 {
                     try
                     {
                         var user = await _userRepo.GetUserByIdAsync(booking.CustomerId!.Value);
                         if (user != null)
                         {
-                            var allTiers = await _loyaltyTierRepo.GetAllLoyaltyTiersAsync();
-                            var newTier = allTiers.FirstOrDefault(t => t.Id != tierBefore);
-                            if (newTier != null)
-                            {
-                                await _emailService.SendTierUpgradeAsync(
-                                    user.Email, user.FullName, newTier.Name);
-                            }
+                            await _emailService.SendTierUpgradeAsync(
+                                user.Email, user.FullName, upgradedTierName!);
+                            
+                            _logger.LogInformation(
+                                "[LOYALTY] Tier upgrade email sent to {Email} for tier {TierName}",
+                                user.Email, upgradedTierName);
                         }
                     }
                     catch (Exception ex)

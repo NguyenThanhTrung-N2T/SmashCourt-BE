@@ -30,6 +30,29 @@ namespace SmashCourt_BE.Repositories
                 .FirstOrDefaultAsync(p => p.TransactionRef == transactionRef);
         }
 
+        public async Task<Payment?> GetByTransactionRefAsync(string transactionRef, bool asNoTracking)
+        {
+            var query = _context.Payments
+                .Include(p => p.Invoice)
+                    .ThenInclude(i => i.Booking)
+                        .ThenInclude(b => b.BookingCourts)
+                            .ThenInclude(bc => bc.Court)
+                .Include(p => p.Invoice)
+                    .ThenInclude(i => i.Booking)
+                        .ThenInclude(b => b.Customer)
+                .Include(p => p.Invoice)
+                    .ThenInclude(i => i.Booking)
+                        .ThenInclude(b => b.Branch)
+                .Where(p => p.TransactionRef == transactionRef);
+
+            if (asNoTracking)
+            {
+                query = query.AsNoTracking();
+            }
+
+            return await query.FirstOrDefaultAsync();
+        }
+
         public async Task<Payment> CreateAsync(Payment payment)
         {
             _context.Payments.Add(payment);
