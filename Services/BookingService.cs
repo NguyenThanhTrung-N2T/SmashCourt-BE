@@ -1163,6 +1163,11 @@ namespace SmashCourt_BE.Services
             Guid id, AddBookingServiceDto dto,
             Guid currentUserId, string currentUserRole)
         {
+            // Validate quantity > 0
+            if (dto.Quantity <= 0)
+                throw new AppException(400,
+                    "Số lượng phải lớn hơn 0", ErrorCodes.BadRequest);
+
             var booking = await _bookingRepo.GetByIdWithDetailsAsync(id);
             if (booking == null)
                 throw new AppException(404, "Không tìm thấy đơn đặt sân", ErrorCodes.NotFound);
@@ -1250,6 +1255,16 @@ namespace SmashCourt_BE.Services
 
                 // Commit transaction
                 transaction.Complete();
+
+                // Audit-grade logging: Structured log với tất cả context quan trọng
+                _logger.LogInformation(
+                    "SERVICE_MODIFICATION | Action={Action} | BookingId={BookingId} | ServiceId={ServiceId} | " +
+                    "ServiceName={ServiceName} | Quantity={Quantity} | UnitPrice={UnitPrice} | " +
+                    "UserId={UserId} | BookingStatus={BookingStatus} | PaymentStatus={PaymentStatus} | " +
+                    "OldTotal={OldTotal} | NewTotal={NewTotal}",
+                    "ADD", booking.Id, dto.ServiceId, branchService.Service.Name, dto.Quantity, branchService.Price,
+                    currentUserId, currentStatus, latestInvoice.PaymentStatus,
+                    invoice.FinalTotal, latestInvoice.FinalTotal);
             }
 
             // Query lại booking với details để trả về
@@ -1288,9 +1303,11 @@ namespace SmashCourt_BE.Services
             // → Lần 1: success, Lần 2: không nên báo lỗi mà nên return success
             if (bookingService == null)
             {
+                // Audit-grade logging cho idempotent case
                 _logger.LogInformation(
-                    "Service {ServiceId} already removed from booking {BookingId} - idempotent success",
-                    serviceId, id);
+                    "SERVICE_MODIFICATION | Action={Action} | BookingId={BookingId} | ServiceId={ServiceId} | " +
+                    "UserId={UserId} | Result={Result}",
+                    "REMOVE", id, serviceId, currentUserId, "IDEMPOTENT_SUCCESS");
                 
                 // Query lại booking và return (operation đã thành công trước đó)
                 var currentBooking = await _bookingRepo.GetByIdWithDetailsAsync(id);
@@ -1331,6 +1348,17 @@ namespace SmashCourt_BE.Services
 
                 // Commit transaction
                 transaction.Complete();
+
+                // Audit-grade logging: Structured log với tất cả context quan trọng
+                _logger.LogInformation(
+                    "SERVICE_MODIFICATION | Action={Action} | BookingId={BookingId} | ServiceId={ServiceId} | " +
+                    "ServiceName={ServiceName} | Quantity={Quantity} | UnitPrice={UnitPrice} | " +
+                    "UserId={UserId} | BookingStatus={BookingStatus} | PaymentStatus={PaymentStatus} | " +
+                    "OldTotal={OldTotal} | NewTotal={NewTotal}",
+                    "REMOVE", booking.Id, bookingService.ServiceId, bookingService.ServiceName, 
+                    bookingService.Quantity, bookingService.UnitPrice,
+                    currentUserId, currentStatus, latestInvoice.PaymentStatus,
+                    invoice.FinalTotal, latestInvoice.FinalTotal);
             }
 
             // Query lại booking với details để trả về
@@ -1505,7 +1533,20 @@ namespace SmashCourt_BE.Services
         /// </remarks>
         private void EnsureBookingModifiable(BookingStatus status, InvoicePaymentStatus paymentStatus)
         {
-            // Protection 1: Booking Status Check (Workflow Protection)
+            // 🔴 PRIORITY 1: Financial Truth (Payment Status Check)
+            // CRITICAL: Check này PHẢI đi trước vì PaymentStatus là source of truth cuối cùng
+            // Ngăn modify sau khi đã thu tiền - quan trọng nhất về mặt tài chính
+            // Case: Status = PENDING_PAYMENT + PaymentStatus = PAID → PHẢI block (đã thu tiền rồi)
+            if (paymentStatus == InvoicePaymentStatus.PAID)
+            {
+                throw new AppException(400,
+                    "Không thể thêm/xóa dịch vụ - hóa đơn đã thanh toán",
+                    ErrorCodes.BadRequest);
+            }
+
+            // 🟡 PRIORITY 2: Workflow State (Booking Status Check)
+            // Check workflow state - quan trọng nhưng ít hơn PaymentStatus
+            // Mindset: Money state > Workflow state
             if (status == BookingStatus.COMPLETED ||
                 status == BookingStatus.CANCELLED ||
                 status == BookingStatus.CANCELLED_PENDING_REFUND ||
@@ -1514,15 +1555,6 @@ namespace SmashCourt_BE.Services
             {
                 throw new AppException(400,
                     "Không thể thêm/xóa dịch vụ - đơn đã kết thúc hoặc bị hủy",
-                    ErrorCodes.BadRequest);
-            }
-
-            // Protection 2: Payment Status Check (Financial Protection)
-            // CRITICAL: Đây là protection quan trọng nhất - ngăn modify sau khi đã thu tiền
-            if (paymentStatus == InvoicePaymentStatus.PAID)
-            {
-                throw new AppException(400,
-                    "Không thể thêm/xóa dịch vụ - hóa đơn đã thanh toán",
                     ErrorCodes.BadRequest);
             }
         }
