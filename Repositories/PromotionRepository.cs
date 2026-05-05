@@ -1,4 +1,4 @@
-﻿using SmashCourt_BE.Common;
+using SmashCourt_BE.Common;
 using SmashCourt_BE.Data;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
@@ -10,7 +10,6 @@ namespace SmashCourt_BE.Repositories
     public class PromotionRepository : IPromotionRepository
     {
         private readonly SmashCourtContext _context;
-        private static readonly TimeZoneInfo VnTimezone = TimeZoneInfo.FindSystemTimeZoneById("SE Asia Standard Time");
 
         public PromotionRepository(SmashCourtContext context)
         {
@@ -69,11 +68,9 @@ namespace SmashCourt_BE.Repositories
             await _context.SaveChangesAsync();
         }
 
-        // Scheduled job — cập nhật status theo ngày
         public async Task UpdateExpiredStatusAsync()
         {
-            var vnNow = TimeZoneInfo.ConvertTime(DateTime.UtcNow, VnTimezone);
-            var today = DateOnly.FromDateTime(vnNow);
+            var today = SmashCourt_BE.Helpers.DateTimeHelper.GetTodayInVietnam();
 
             // INACTIVE → ACTIVE nếu đến ngày bắt đầu
             await _context.Promotions

@@ -74,6 +74,7 @@ namespace SmashCourt_BE.Data
             modelBuilder.HasPostgresEnum<BookingSource>("booking_source");
             modelBuilder.HasPostgresEnum<CancelSourceEnum>("cancel_source_enum");
             modelBuilder.HasPostgresEnum<InvoicePaymentStatus>("invoice_payment_status");
+            modelBuilder.HasPostgresEnum<PaymentTiming>("payment_timing");
             modelBuilder.HasPostgresEnum<PaymentTxStatus>("payment_tx_status");
             modelBuilder.HasPostgresEnum<PaymentTxMethod>("payment_tx_method");
             modelBuilder.HasPostgresEnum<RefundStatus>("refund_status");
@@ -414,6 +415,7 @@ namespace SmashCourt_BE.Data
                 e.Property(x => x.Source).HasColumnName("source");
                 e.Property(x => x.Note).HasColumnName("note");
                 e.Property(x => x.ExpiresAt).HasColumnName("expires_at");
+                e.Property(x => x.CheckedInAt).HasColumnName("checked_in_at");
                 e.Property(x => x.CreatedBy).HasColumnName("created_by");
                 e.Property(x => x.CancelledBy).HasColumnName("cancelled_by");
                 e.Property(x => x.CancelledAt).HasColumnName("cancelled_at");
@@ -523,6 +525,7 @@ namespace SmashCourt_BE.Data
                 e.Property(x => x.PromotionDiscountAmount).HasColumnName("promotion_discount_amount").HasPrecision(12, 2).HasDefaultValue(0m);
                 e.Property(x => x.FinalTotal).HasColumnName("final_total").HasPrecision(12, 2);
                 e.Property(x => x.PaymentStatus).HasColumnName("payment_status");
+                e.Property(x => x.PaymentTiming).HasColumnName("payment_timing");
                 e.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()");
                 e.Property(x => x.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("now()");
             });

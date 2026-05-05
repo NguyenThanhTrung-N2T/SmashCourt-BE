@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
@@ -22,9 +23,12 @@ using SmashCourt_BE.Services.IService;
 using SmashCourt_BE.Utils;
 using System.IdentityModel.Tokens.Jwt;
 using System.Text;
-
+using VNPAY.Extensions;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Đảm bảo Npgsql enlist vào TransactionScope (hỗ trợ distributed transaction/ambient transaction)
+AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 
 // Database 
 var dataSourceBuilder = new NpgsqlDataSourceBuilder(
@@ -69,6 +73,10 @@ builder.Services.AddControllers()
     {
         options.JsonSerializerOptions.Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping;
         options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+
+        // Tự động convert DateTime UTC → giờ VN "dd/MM/yyyy HH:mm:ss" trong mọi API response
+        options.JsonSerializerOptions.Converters.Add(new SmashCourt_BE.Helpers.VietnamDateTimeConverter());
+        options.JsonSerializerOptions.Converters.Add(new SmashCourt_BE.Helpers.NullableVietnamDateTimeConverter());
     });
 
 // Custom model validation response — KHÔNG tắt auto validation, chỉ override format trả về
@@ -133,6 +141,18 @@ builder.Services.AddScoped<ISystemPriceService, SystemPriceService>();
 builder.Services.AddScoped<ISystemPriceRepository, SystemPriceRepository>();
 builder.Services.AddScoped<IBranchPriceService, BranchPriceService>();
 builder.Services.AddScoped<IBranchPriceRepository, BranchPriceRepository>();
+
+builder.Services.AddScoped<IBookingService, BookingService>();
+builder.Services.AddScoped<IBookingRepository, BookingRepository>();
+builder.Services.AddScoped<ISlotLockRepository, SlotLockRepository>();
+builder.Services.AddScoped<IInvoiceRepository, InvoiceRepository>();
+builder.Services.AddScoped<IPaymentRepository, PaymentRepository>();
+builder.Services.AddScoped<IRefundRepository, RefundRepository>();
+builder.Services.AddScoped<IBranchServiceRepository, BranchServiceRepository>();
+builder.Services.AddScoped<IPaymentService, PaymentService>();
+builder.Services.AddScoped<ITimeGridService, TimeGridService>();
+builder.Services.AddScoped<IBookingJob, BookingJob>();
+builder.Services.AddScoped<IVnPayService, VnPayService>();
 builder.Services.AddScoped<IBranchManagerService, BranchManagerService>();
 builder.Services.AddScoped<IBranchStaffService, BranchStaffService>();
 builder.Services.AddScoped<IBranchUserService, BranchUserService>();
@@ -147,6 +167,31 @@ builder.Services.Configure<GoogleSettings>(
 
 builder.Services.AddMemoryCache();
 builder.Services.AddHttpClient();
+builder.Services.AddHttpContextAccessor();
+var vnPayConfig = builder.Configuration.GetSection("VnPay");
+builder.Services.AddVnpayClient(config =>
+{
+    config.TmnCode = vnPayConfig["TmnCode"]!;
+    config.HashSecret = vnPayConfig["HashSecret"]!;
+    config.CallbackUrl = vnPayConfig["CallbackUrl"]!;
+
+    if (!string.IsNullOrWhiteSpace(vnPayConfig["BaseUrl"]))
+        config.BaseUrl = vnPayConfig["BaseUrl"]!;
+    if (!string.IsNullOrWhiteSpace(vnPayConfig["Version"]))
+        config.Version = vnPayConfig["Version"]!;
+    if (!string.IsNullOrWhiteSpace(vnPayConfig["OrderType"]))
+        config.OrderType = vnPayConfig["OrderType"]!;
+});
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders =
+        ForwardedHeaders.XForwardedFor |
+        ForwardedHeaders.XForwardedProto |
+        ForwardedHeaders.XForwardedHost;
+
+    options.KnownNetworks.Clear();
+    options.KnownProxies.Clear();
+});
 
 
 
@@ -348,6 +393,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+app.UseForwardedHeaders();
 app.UseHttpsRedirection();
 
 // Sử dụng CORS policy đã định nghĩa

@@ -10,7 +10,6 @@ namespace SmashCourt_BE.Services
     public class PromotionService : IPromotionService
     {
         private readonly IPromotionRepository _repo;
-        private static readonly TimeZoneInfo VnTimezone = TimeZoneInfo.FindSystemTimeZoneById("SE Asia Standard Time");
 
 
         public PromotionService(IPromotionRepository repo)
@@ -52,9 +51,7 @@ namespace SmashCourt_BE.Services
         // Tính status tự động theo ngày
         private static PromotionStatus CalculateStatus(DateOnly startDate, DateOnly endDate)
         {
-            // Lấy ngày hiện tại theo timezone VN
-            var vnNow = TimeZoneInfo.ConvertTime(DateTime.UtcNow, VnTimezone);
-            var today = DateOnly.FromDateTime(vnNow);
+            var today = SmashCourt_BE.Helpers.DateTimeHelper.GetTodayInVietnam();
 
             return (today >= startDate && today <= endDate)
                 ? PromotionStatus.ACTIVE

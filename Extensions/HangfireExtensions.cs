@@ -1,4 +1,4 @@
-﻿using Hangfire;
+using Hangfire;
 using Hangfire.PostgreSql;
 using SmashCourt_BE.Jobs;
 using SmashCourt_BE.Jobs.Interfaces;
@@ -23,6 +23,7 @@ public static class HangfireExtensions
         services.AddHangfireServer();
         services.AddScoped<IAuthCleanupJob, AuthCleanupJob>();
         services.AddScoped<IPromotionJob, PromotionJob>();
+        services.AddScoped<IBookingJob, BookingJob>();
 
         return services;
     }
@@ -46,7 +47,7 @@ public static class HangfireExtensions
             });
         }
 
-        var vnTimezone = TimeZoneInfo.FindSystemTimeZoneById("SE Asia Standard Time");
+        var vnTimezone = SmashCourt_BE.Helpers.DateTimeHelper.VNTimezone;
 
         //  Mỗi 30 phút — dọn OTP hết hạn
         RecurringJob.AddOrUpdate<IAuthCleanupJob>(
@@ -74,6 +75,33 @@ public static class HangfireExtensions
             "update-promotion-status",
             job => job.UpdateStatusAsync(),
             "0 0 * * *",
+            new RecurringJobOptions { TimeZone = vnTimezone });
+
+        // Mỗi 1 phút — hủy PENDING hết hạn + xử lý booking hết giờ
+        RecurringJob.AddOrUpdate<IBookingJob>(
+            "cancel-expired-pending",
+            job => job.CancelExpiredPendingBookingsAsync(),
+            "* * * * *",
+            new RecurringJobOptions { TimeZone = vnTimezone });
+
+        RecurringJob.AddOrUpdate<IBookingJob>(
+            "process-expired-bookings",
+            job => job.ProcessExpiredActiveBookingsAsync(),
+            "* * * * *",
+            new RecurringJobOptions { TimeZone = vnTimezone });
+
+        // Mỗi 30 giây — xóa slot_locks hết hạn
+        RecurringJob.AddOrUpdate<IBookingJob>(
+            "cleanup-slot-locks",
+            job => job.CleanupExpiredSlotLocksAsync(),
+            "*/30 * * * * *",
+            new RecurringJobOptions { TimeZone = vnTimezone });
+
+        // Mỗi 5 phút — phát hiện NO_SHOW
+        RecurringJob.AddOrUpdate<IBookingJob>(
+            "detect-no-show",
+            job => job.DetectNoShowBookingsAsync(),
+            "*/5 * * * *",
             new RecurringJobOptions { TimeZone = vnTimezone });
 
         return app;

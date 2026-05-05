@@ -1,4 +1,4 @@
-﻿using SmashCourt_BE.Data;
+using SmashCourt_BE.Data;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
@@ -30,7 +30,6 @@ namespace SmashCourt_BE.Repositories
                 query = query.Where(c =>
                     c.Status == CourtStatus.AVAILABLE ||
                     c.Status == CourtStatus.LOCKED ||
-                    c.Status == CourtStatus.BOOKED ||
                     c.Status == CourtStatus.IN_USE);
 
             return await query
@@ -38,15 +37,26 @@ namespace SmashCourt_BE.Repositories
                 .ToListAsync();
         }
 
-        // lấy thông tin sân theo id, chỉ lấy sân đang hoạt động + sân bị khóa + sân bị đặt + sân đang sử dụng
-        public async Task<Court?> GetByIdAsync(Guid id, Guid branchId)
+        // lấy thông tin sân theo id
+        // nếu branchId được truyền vào thì chỉ lấy sân thuộc chi nhánh đó (bảo mật cho staff)
+        // nếu branchId là null thì lấy theo id đơn thuần, không lọc branch (dùng trong booking khi chưa biết branchId)
+        public async Task<Court?> GetByIdAsync(Guid id, Guid? branchId = null)
         {
             return await _context.Courts
                 .Include(c => c.CourtType)
                 .FirstOrDefaultAsync(c =>
                     c.Id == id &&
-                    c.BranchId == branchId &&
+                    (branchId == null || c.BranchId == branchId) &&
                     c.Status != CourtStatus.INACTIVE);
+        }
+
+        // lấy danh sách sân theo id, bỏ qua các sân đã bị xóa (INACTIVE)
+        public async Task<List<Court>> GetByIdsAsync(IEnumerable<Guid> ids)
+        {
+            return await _context.Courts
+                .Include(c => c.CourtType)
+                .Where(c => ids.Contains(c.Id) && c.Status != CourtStatus.INACTIVE)
+                .ToListAsync();
         }
 
         // kiểm tra tên sân đã tồn tại trong chi nhánh hay chưa, chỉ kiểm tra sân đang hoạt động + sân bị khóa + sân bị đặt + sân đang sử dụng
@@ -94,6 +104,26 @@ namespace SmashCourt_BE.Repositories
         {
             _context.Courts.Update(court);
             await _context.SaveChangesAsync();
+        }
+
+        /// <summary>
+        /// Batch update trạng thái nhiều sân cùng lúc (tránh N+1 query)
+        /// Dùng ExecuteUpdateAsync để update trực tiếp trong DB mà không cần load entities vào memory
+        /// </summary>
+        /// <param name="courtIds">Danh sách court IDs cần update</param>
+        /// <param name="status">Status mới (AVAILABLE, BOOKED, IN_USE, SUSPENDED)</param>
+        /// <param name="updatedAt">Thời gian update</param>
+        public async Task BatchUpdateStatusAsync(List<Guid> courtIds, CourtStatus status, DateTime updatedAt)
+        {
+            if (!courtIds.Any()) return;
+
+            // ExecuteUpdateAsync: Bulk update trực tiếp trong DB (không load entities)
+            // Performance: O(1) query thay vì O(N) queries
+            await _context.Courts
+                .Where(c => courtIds.Contains(c.Id))
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(c => c.Status, status)
+                    .SetProperty(c => c.UpdatedAt, updatedAt));
         }
     }
 }

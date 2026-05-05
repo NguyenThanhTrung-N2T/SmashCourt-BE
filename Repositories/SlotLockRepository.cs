@@ -1,0 +1,81 @@
+using SmashCourt_BE.Data;
+using SmashCourt_BE.Helpers;
+using SmashCourt_BE.Models.Entities;
+using SmashCourt_BE.Repositories.IRepository;
+using Microsoft.EntityFrameworkCore;
+
+namespace SmashCourt_BE.Repositories
+{
+    public class SlotLockRepository : ISlotLockRepository
+    {
+        private readonly SmashCourtContext _context;
+
+        public SlotLockRepository(SmashCourtContext context)
+        {
+            _context = context;
+        }
+
+        // Lấy slot lock của sân vào một khoảng thời gian cụ thể, nếu có
+        public async Task<SlotLock?> GetByCourtAndTimeAsync(
+            Guid courtId, DateOnly date,
+            TimeOnly startTime, TimeOnly endTime)
+        {
+            return await _context.SlotLocks
+                .FirstOrDefaultAsync(sl =>
+                    sl.CourtId == courtId &&
+                    sl.Date == date &&
+                    sl.StartTime < endTime &&
+                    sl.EndTime > startTime &&
+                    sl.ExpiresAt > DateTimeHelper.GetNowInVietnam());
+        }
+
+        public async Task<SlotLock> CreateAsync(SlotLock slotLock)
+        {
+            _context.SlotLocks.Add(slotLock);
+            await _context.SaveChangesAsync();
+            return slotLock;
+        }
+
+        public async Task DeleteAsync(Guid id)
+        {
+            await _context.SlotLocks
+                .Where(sl => sl.Id == id)
+                .ExecuteDeleteAsync();
+        }
+
+        // Xóa expired locks của chi nhánh trước khi INSERT mới
+        public async Task DeleteExpiredByBranchAsync(Guid branchId)
+        {
+            var courtIds = await _context.Courts
+                .Where(c => c.BranchId == branchId)
+                .Select(c => c.Id)
+                .ToListAsync();
+
+            await _context.SlotLocks
+                .Where(sl =>
+                    courtIds.Contains(sl.CourtId) &&
+                    sl.ExpiresAt <= DateTimeHelper.GetNowInVietnam())
+                .ExecuteDeleteAsync();
+        }
+
+        // Batch load tất cả lock của court trong ngày — dùng cho TimeGrid
+        public async Task<List<SlotLock>> GetByCourtAndDateAsync(
+            Guid courtId, DateOnly date)
+        {
+            return await _context.SlotLocks
+                .Where(sl =>
+                    sl.CourtId == courtId &&
+                    sl.Date == date &&
+                    sl.ExpiresAt > DateTimeHelper.GetNowInVietnam())
+                .ToListAsync();
+        }
+
+        // Xóa tất cả lock của booking khi booking được hủy hoặc hoàn thành
+        public async Task DeleteByBookingIdAsync(Guid bookingId)
+        {
+            await _context.SlotLocks
+                .Where(sl => sl.BookingId == bookingId)
+                .ExecuteDeleteAsync();
+        }
+    }
+}
