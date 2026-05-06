@@ -109,6 +109,37 @@ namespace SmashCourt_BE.Services
             return result;
         }
 
+        // List branch override price versions by effective date.
+        public async Task<List<PriceVersionListDto>> GetVersionsAsync(Guid branchId, Guid courtTypeId)
+        {
+            await ValidateBranchAsync(branchId);
+
+            var dates = await _repo.GetVersionsAsync(branchId, courtTypeId);
+
+            if (!dates.Any())
+                return new List<PriceVersionListDto>();
+
+            var today = DateTimeHelper.GetTodayInVietnam();
+
+            // Find latest version <= today
+            var current = dates
+                .Where(d => d <= today)
+                .OrderByDescending(d => d)
+                .FirstOrDefault();
+
+            // Edge case: all versions are future
+            if (current == default)
+            {
+                current = dates.First(); // earliest future (since already sorted DESC, this is max)
+            }
+
+            return dates.Select(d => new PriceVersionListDto
+            {
+                EffectiveFrom = d.ToString("yyyy-MM-dd"),
+                IsCurrent = d == current
+            }).ToList();
+        }
+
         // Lấy chi tiết một phiên bản giá chi nhánh (override) cho ngày hiệu lực cụ thể
         public async Task<BranchPriceVersionDetailDto?> GetVersionDetailAsync(
             Guid branchId, Guid courtTypeId, DateOnly effectiveFrom)

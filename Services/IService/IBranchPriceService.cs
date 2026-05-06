@@ -13,6 +13,9 @@ namespace SmashCourt_BE.Services.IService
         // Lấy snapshot giá thực tế cho 1 ngày cụ thể (branch override nếu có, fallback về system price)
         Task<List<EffectivePriceDto>> GetEffectiveResolvedAsync(Guid branchId, DateOnly date, Guid? courtTypeId = null);
 
+        // List branch override price versions by effective date.
+        Task<List<PriceVersionListDto>> GetVersionsAsync(Guid branchId, Guid courtTypeId);
+
         // Lấy chi tiết một phiên bản giá chi nhánh (override) cho ngày hiệu lực cụ thể
         Task<BranchPriceVersionDetailDto?> GetVersionDetailAsync(Guid branchId, Guid courtTypeId, DateOnly effectiveFrom);
 

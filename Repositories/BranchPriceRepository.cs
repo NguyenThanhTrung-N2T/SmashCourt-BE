@@ -103,6 +103,17 @@ namespace SmashCourt_BE.Repositories
         }
 
 
+        // List branch override price versions by effective date.
+        public async Task<List<DateOnly>> GetVersionsAsync(Guid branchId, Guid courtTypeId)
+        {
+            return await _context.BranchPriceOverrides
+                .Where(bp => bp.BranchId == branchId && bp.CourtTypeId == courtTypeId)
+                .Select(bp => bp.EffectiveFrom)
+                .Distinct()
+                .OrderByDescending(d => d)
+                .ToListAsync();
+        }
+
         // Kiểm tra đã tồn tại giá override nào cho branch + court type + time slot + effective_from cụ thể chưa
         public async Task<bool> ExistsAsync(
             Guid branchId, Guid courtTypeId, Guid timeSlotId, DateOnly effectiveFrom)

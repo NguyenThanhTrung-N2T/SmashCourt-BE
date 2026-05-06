@@ -70,6 +70,20 @@ namespace SmashCourt_BE.Controllers
         }
 
         /// <summary>
+        /// List branch override price versions by effective date.
+        /// </summary>
+        [HttpGet("versions")]
+        [Authorize(Policy = AuthorizationPolicies.OwnerOnly)]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        public async Task<IActionResult> GetVersions(
+            Guid branchId,
+            [FromQuery] Guid courtTypeId)
+        {
+            var result = await _service.GetVersionsAsync(branchId, courtTypeId);
+            return Ok(ApiResponse<List<PriceVersionListDto>>.Ok(result));
+        }
+
+        /// <summary>
         /// Lấy chi tiết một phiên bản giá chi nhánh theo ngày hiệu lực.
         /// </summary>
         [HttpGet("version")]

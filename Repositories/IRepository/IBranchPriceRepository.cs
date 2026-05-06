@@ -13,6 +13,9 @@ namespace SmashCourt_BE.Repositories.IRepository
         // Lấy cấu hình giá override có hiệu lực vào một ngày cụ thể của chi nhánh, có thể filter theo courtTypeId
         Task<List<BranchPriceOverride>> GetCurrentForDateAsync(Guid branchId, DateOnly targetDate, Guid? courtTypeId = null);
 
+        // List branch override price versions by effective date.
+        Task<List<DateOnly>> GetVersionsAsync(Guid branchId, Guid courtTypeId);
+
         // Kiểm tra xem đã tồn tại cấu hình giá override nào cho chi nhánh, loại sân, khung giờ và ngày hiệu lực cụ thể chưa
         Task<bool> ExistsAsync(Guid branchId, Guid courtTypeId, Guid timeSlotId, DateOnly effectiveFrom);
 

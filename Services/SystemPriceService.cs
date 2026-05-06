@@ -170,15 +170,33 @@ namespace SmashCourt_BE.Services
         public async Task<List<PriceVersionListDto>> GetVersionsAsync(Guid courtTypeId)
         {
             var dates = await _repo.GetVersionsAsync(courtTypeId);
+
+            if (!dates.Any())
+                return new List<PriceVersionListDto>();
+
             var today = DateTimeHelper.GetTodayInVietnam();
 
-            return dates.Select(d => new PriceVersionListDto
-            {
-                EffectiveFrom = d.ToString("yyyy-MM-dd"),
-                IsCurrent = d <= today
-            }).ToList();
-        }
+            // Find latest version <= today
+            var current = dates
+                .Where(d => d <= today)
+                .OrderByDescending(d => d)
+                .FirstOrDefault();
 
+            // Edge case: all versions are future
+            if (current == default)
+            {
+                current = dates.First(); // since repo should return DESC
+            }
+
+            return dates
+                .OrderByDescending(d => d) // ensure correct order
+                .Select(d => new PriceVersionListDto
+                {
+                    EffectiveFrom = d.ToString("yyyy-MM-dd"),
+                    IsCurrent = d == current
+                })
+                .ToList();
+        }
         // Lấy chi tiết một phiên bản giá chung cho ngày hiệu lực cụ thể
         public async Task<PriceVersionDetailDto?> GetVersionDetailAsync(Guid courtTypeId, DateOnly effectiveFrom)
         {
