@@ -1,4 +1,5 @@
 ﻿using SmashCourt_BE.Data;
+using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Jobs.Interfaces;
 using Microsoft.EntityFrameworkCore;
 
@@ -55,8 +56,10 @@ public class AuthCleanupJob : IAuthCleanupJob
     {
         try
         {
+            // So sánh với giờ VN
+            var now = DateTimeHelper.GetNowInVietnam();
             var deleted = await _db.OtpCodes
-                .Where(o => o.ExpiresAt < DateTime.UtcNow)
+                .Where(o => o.ExpiresAt < now)
                 .ExecuteDeleteAsync();
 
             _logger.LogInformation(
@@ -73,8 +76,10 @@ public class AuthCleanupJob : IAuthCleanupJob
     {
         try
         {
+            // So sánh với giờ VN
+            var now = DateTimeHelper.GetNowInVietnam();
             var deleted = await _db.RefreshTokens
-                .Where(t => t.ExpiresAt < DateTime.UtcNow)
+                .Where(t => t.ExpiresAt < now)
                 .ExecuteDeleteAsync();
 
             _logger.LogInformation(

@@ -31,8 +31,8 @@ namespace SmashCourt_BE.Jobs
         {
             try
             {
-                // timestamptz đọc từ DB ra là Kind=Utc → so sánh với UTC
-                var now = DateTime.UtcNow;
+                // So sánh với giờ VN (database trả về Local time do EnableLegacyTimestampBehavior=true)
+                var now = DateTimeHelper.GetNowInVietnam();
                 var expiredBookings = await _db.Bookings
                     .Include(b => b.BookingCourts)
                         .ThenInclude(bc => bc.Court)
@@ -87,7 +87,7 @@ namespace SmashCourt_BE.Jobs
                 }
 
                 await _db.SlotLocks
-                    .Where(sl => sl.ExpiresAt <= now)  // now = UTC
+                    .Where(sl => sl.ExpiresAt <= now)  // now = VN time
                     .ExecuteDeleteAsync();
 
                 await _db.SaveChangesAsync();
@@ -106,7 +106,8 @@ namespace SmashCourt_BE.Jobs
         {
             try
             {
-                var now = DateTime.UtcNow;
+                // So sánh với giờ VN
+                var now = DateTimeHelper.GetNowInVietnam();
 
                 // Xử lý booking hết giờ (EndTime)
                 var activeBookings = await _db.Bookings
@@ -284,8 +285,10 @@ namespace SmashCourt_BE.Jobs
         {
             try
             {
+                // So sánh với giờ VN
+                var now = DateTimeHelper.GetNowInVietnam();
                 var deleted = await _db.SlotLocks
-                    .Where(sl => sl.ExpiresAt <= DateTime.UtcNow)  // UTC
+                    .Where(sl => sl.ExpiresAt <= now)
                     .ExecuteDeleteAsync();
 
                 if (deleted > 0)
@@ -306,7 +309,8 @@ namespace SmashCourt_BE.Jobs
             {
                 _logger.LogInformation("Starting NO_SHOW detection job");
 
-                var now = DateTime.UtcNow;
+                // So sánh với giờ VN
+                var now = DateTimeHelper.GetNowInVietnam();
                 
                 // Lấy danh sách status đủ điều kiện cho NO_SHOW từ helper
                 var noShowEligibleStatuses = BookingStatusTransition.GetNoShowEligibleStatuses();

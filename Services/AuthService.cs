@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using SmashCourt_BE.Common;
 using SmashCourt_BE.Configurations;
 using SmashCourt_BE.DTOs.Auth;
+using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
@@ -55,7 +56,21 @@ public class AuthService : IAuthService
         var latestOtp = await _otpRepo.GetLatestActiveOtpAsync(userId, OtpType.EMAIL_VERIFY);
         if (latestOtp != null)
         {
-            var secondsElapsed = (DateTime.UtcNow - latestOtp.CreatedAt).TotalSeconds;
+            // So sánh UTC với UTC (database lưu UTC, EF Core đọc ra UTC)
+            var now = DateTimeHelper.GetNowInVietnam(); // Trả về DateTime.UtcNow
+            var secondsElapsed = (now - latestOtp.CreatedAt).TotalSeconds;
+            
+            // Debug log - convert sang VN time để dễ đọc
+            var createdAtVN = DateTimeHelper.ToVietnamTime(latestOtp.CreatedAt);
+            var nowVN = DateTimeHelper.ToVietnamTime(now);
+            
+            _logger.LogInformation(
+                "[ResendOtpForUserAsync] OTP Cooldown Check | " +
+                "CreatedAt(UTC)={CreatedAtUtc} | CreatedAt(VN)={CreatedAtVN} | " +
+                "Now(UTC)={NowUtc} | Now(VN)={NowVN} | Elapsed={Elapsed}s",
+                latestOtp.CreatedAt, createdAtVN,
+                now, nowVN, secondsElapsed);
+            
             if (secondsElapsed < 60)
                 throw new AppException(429,
                     $"Vui lòng chờ {60 - (int)secondsElapsed} giây trước khi gửi lại OTP",
@@ -232,7 +247,21 @@ public class AuthService : IAuthService
         var latestOtp = await _otpRepo.GetLatestActiveOtpAsync(user.Id, dto.Type);
         if (latestOtp != null)
         {
-            var secondsElapsed = (DateTime.UtcNow - latestOtp.CreatedAt).TotalSeconds;
+            // So sánh UTC với UTC (database lưu UTC, EF Core đọc ra UTC)
+            var now = DateTimeHelper.GetNowInVietnam(); // Trả về DateTime.UtcNow
+            var secondsElapsed = (now - latestOtp.CreatedAt).TotalSeconds;
+            
+            // Debug log - convert sang VN time để dễ đọc
+            var createdAtVN = DateTimeHelper.ToVietnamTime(latestOtp.CreatedAt);
+            var nowVN = DateTimeHelper.ToVietnamTime(now);
+            
+            _logger.LogInformation(
+                "OTP Cooldown Check | " +
+                "CreatedAt(UTC)={CreatedAtUtc} | CreatedAt(VN)={CreatedAtVN} | " +
+                "Now(UTC)={NowUtc} | Now(VN)={NowVN} | Elapsed={Elapsed}s",
+                latestOtp.CreatedAt, createdAtVN,
+                now, nowVN, secondsElapsed);
+            
             if (secondsElapsed < 60)
                 throw new AppException(429,
                     $"Vui lòng chờ {60 - (int)secondsElapsed} giây trước khi gửi lại OTP",
@@ -626,7 +655,10 @@ public class AuthService : IAuthService
         var latestOtp = await _otpRepo.GetLatestActiveOtpAsync(user.Id, OtpType.FORGOT_PASSWORD);
         if (latestOtp != null)
         {
-            var secondsElapsed = (DateTime.UtcNow - latestOtp.CreatedAt).TotalSeconds;
+            // So sánh UTC với UTC (database lưu UTC, EF Core đọc ra UTC)
+            var now = DateTimeHelper.GetNowInVietnam(); // Trả về DateTime.UtcNow
+            var secondsElapsed = (now - latestOtp.CreatedAt).TotalSeconds;
+            
             if (secondsElapsed < 60)
                 throw new AppException(429,
                     $"Vui lòng chờ {60 - (int)secondsElapsed} giây trước khi gửi lại",

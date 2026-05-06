@@ -763,7 +763,7 @@ namespace SmashCourt_BE.Services
                 throw new AppException(400,
                     "Link hủy đã được sử dụng", ErrorCodes.BadRequest);
 
-            if (booking.CancelTokenExpiresAt < DateTime.UtcNow)
+            if (booking.CancelTokenExpiresAt < DateTimeHelper.GetNowInVietnam())
                 throw new AppException(400,
                     "Link hủy đã hết hạn", ErrorCodes.BadRequest);
 

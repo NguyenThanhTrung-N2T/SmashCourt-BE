@@ -27,8 +27,10 @@ using VNPAY.Extensions;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Đảm bảo Npgsql enlist vào TransactionScope (hỗ trợ distributed transaction/ambient transaction)
-AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
+// TẮT EnableLegacyTimestampBehavior để làm việc với UTC thuần
+// Npgsql sẽ đọc timestamptz ra DateTime với Kind=Utc (không convert sang Local)
+// Điều này đảm bảo timestamp luôn nhất quán, không phụ thuộc vào timezone của container
+AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", false);
 
 // Database 
 var dataSourceBuilder = new NpgsqlDataSourceBuilder(

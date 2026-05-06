@@ -1,5 +1,6 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using SmashCourt_BE.Data;
+using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
@@ -18,12 +19,15 @@ public class OtpRepository : IOtpRepository
     // Lấy OTP mới nhất còn hiệu lực — dùng để kiểm tra cooldown 60s
     public async Task<OtpCode?> GetLatestActiveOtpAsync(Guid userId, OtpType type)
     {
+        // So sánh UTC với UTC (database lưu UTC, EF Core đọc ra UTC với EnableLegacyTimestampBehavior=false)
+        var now = DateTimeHelper.GetNowInVietnam(); // Trả về DateTime.UtcNow
+        
         return await _db.OtpCodes
             .Where(o =>
                 o.UserId == userId &&
                 o.Type == type &&
                 o.UsedAt == null &&
-                o.ExpiresAt > DateTime.UtcNow)
+                o.ExpiresAt > now)
             .OrderByDescending(o => o.CreatedAt)
             .FirstOrDefaultAsync();
     }
@@ -54,11 +58,14 @@ public class OtpRepository : IOtpRepository
     // đếm số lượng OTP còn hiệu lực — dùng để giới hạn số lần gửi OTP trong 1 khoảng thời gian
     public async Task<int> CountByUserAndTypeAsync(Guid userId, OtpType type)
     {
+        // So sánh UTC với UTC (database lưu UTC, EF Core đọc ra UTC)
+        var now = DateTimeHelper.GetNowInVietnam(); // Trả về DateTime.UtcNow
+        
         return await _db.OtpCodes
             .CountAsync(o =>
                 o.UserId == userId &&
                 o.Type == type &&
                 o.UsedAt == null &&              //Chưa dùng
-                o.ExpiresAt > DateTime.UtcNow);  //Chưa hết hạn
+                o.ExpiresAt > now);              //Chưa hết hạn
     }
 }

@@ -1,4 +1,5 @@
 ﻿using SmashCourt_BE.Data;
+using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Repositories.IRepository;
 using Microsoft.EntityFrameworkCore;
@@ -25,23 +26,25 @@ namespace SmashCourt_BE.Repositories
         // Revoke toàn bộ token còn hạn khi đăng nhập mới
         public async Task RevokeAllByUserIdAsync(Guid userId)
         {
+            var now = DateTimeHelper.GetNowInVietnam();
             await _db.RefreshTokens
                 .Where(t =>
                     t.UserId == userId &&
                     t.RevokedAt == null &&
-                    t.ExpiresAt > DateTime.UtcNow)
+                    t.ExpiresAt > now)
                 .ExecuteUpdateAsync(s =>
-                    s.SetProperty(t => t.RevokedAt, DateTime.UtcNow));
+                    s.SetProperty(t => t.RevokedAt, now));
         }
 
         // Lấy refresh token còn hạn theo token hash
         public async Task<RefreshToken?> GetActiveByTokenHashAsync(string tokenHash)
         {
+            var now = DateTimeHelper.GetNowInVietnam();
             return await _db.RefreshTokens
                 .FirstOrDefaultAsync(t =>
                     t.TokenHash == tokenHash &&
                     t.RevokedAt == null &&
-                    t.ExpiresAt > DateTime.UtcNow);
+                    t.ExpiresAt > now);
         }
 
         // Revoke một token cụ thể

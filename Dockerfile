@@ -33,7 +33,7 @@ EXPOSE 8080
 # Thêm timezone và culture support cho Alpine
 RUN apk add --no-cache icu-libs tzdata
 ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false
-ENV TZ=Asia/Bangkok
+ENV TZ=Asia/Ho_Chi_Minh
 
 COPY --from=publish /app/publish .
 ENTRYPOINT ["dotnet", "SmashCourt-BE.dll"]
