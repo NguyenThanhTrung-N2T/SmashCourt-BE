@@ -31,8 +31,8 @@ namespace SmashCourt_BE.Jobs
         {
             try
             {
-                // So sánh với giờ VN (database trả về Local time do EnableLegacyTimestampBehavior=true)
-                var now = DateTimeHelper.GetNowInVietnam();
+                // So sánh UTC với UTC (database lưu UTC, EF Core đọc ra UTC)
+                var now = DateTimeHelper.GetNowInVietnam(); // Trả về DateTime.UtcNow
                 var expiredBookings = await _db.Bookings
                     .Include(b => b.BookingCourts)
                         .ThenInclude(bc => bc.Court)
@@ -87,7 +87,7 @@ namespace SmashCourt_BE.Jobs
                 }
 
                 await _db.SlotLocks
-                    .Where(sl => sl.ExpiresAt <= now)  // now = VN time
+                    .Where(sl => sl.ExpiresAt <= now)  // ✅ UTC với UTC
                     .ExecuteDeleteAsync();
 
                 await _db.SaveChangesAsync();
@@ -106,8 +106,8 @@ namespace SmashCourt_BE.Jobs
         {
             try
             {
-                // So sánh với giờ VN
-                var now = DateTimeHelper.GetNowInVietnam();
+                // So sánh UTC với UTC
+                var now = DateTimeHelper.GetNowInVietnam(); // Trả về DateTime.UtcNow
 
                 // Xử lý booking hết giờ (EndTime)
                 var activeBookings = await _db.Bookings
@@ -153,12 +153,13 @@ namespace SmashCourt_BE.Jobs
                 {
                     if (!booking.BookingCourts.Any()) continue;
 
-                    // Lấy max EndTime, convert sang UTC
+                    // Lấy max EndTime từ booking courts
                     var maxEndTime = booking.BookingCourts.Max(bc => bc.EndTime);
-                    var vnEndDateTime = booking.BookingDate.ToDateTime(maxEndTime);
-                    var utcEndDateTime = TimeZoneInfo.ConvertTimeToUtc(
-                        DateTime.SpecifyKind(vnEndDateTime, DateTimeKind.Unspecified),
-                        DateTimeHelper.VNTimezone);
+                    // BookingDate lưu DateOnly, EndTime lưu TimeOnly
+                    // Tạo DateTime từ BookingDate + EndTime (Kind=Unspecified)
+                    var bookingEndDateTime = booking.BookingDate.ToDateTime(maxEndTime);
+                    // Specify Kind=Utc vì database lưu UTC
+                    var utcEndDateTime = DateTime.SpecifyKind(bookingEndDateTime, DateTimeKind.Utc);
                     
                     if (utcEndDateTime > now) continue;
 
@@ -285,8 +286,8 @@ namespace SmashCourt_BE.Jobs
         {
             try
             {
-                // So sánh với giờ VN
-                var now = DateTimeHelper.GetNowInVietnam();
+                // So sánh UTC với UTC
+                var now = DateTimeHelper.GetNowInVietnam(); // Trả về DateTime.UtcNow
                 var deleted = await _db.SlotLocks
                     .Where(sl => sl.ExpiresAt <= now)
                     .ExecuteDeleteAsync();
@@ -309,8 +310,8 @@ namespace SmashCourt_BE.Jobs
             {
                 _logger.LogInformation("Starting NO_SHOW detection job");
 
-                // So sánh với giờ VN
-                var now = DateTimeHelper.GetNowInVietnam();
+                // So sánh UTC với UTC
+                var now = DateTimeHelper.GetNowInVietnam(); // Trả về DateTime.UtcNow
                 
                 // Lấy danh sách status đủ điều kiện cho NO_SHOW từ helper
                 var noShowEligibleStatuses = BookingStatusTransition.GetNoShowEligibleStatuses();

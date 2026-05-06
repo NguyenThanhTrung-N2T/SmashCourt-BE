@@ -56,8 +56,8 @@ public class AuthCleanupJob : IAuthCleanupJob
     {
         try
         {
-            // So sánh với giờ VN
-            var now = DateTimeHelper.GetNowInVietnam();
+            // So sánh UTC với UTC
+            var now = DateTimeHelper.GetNowInVietnam(); // Trả về DateTime.UtcNow
             var deleted = await _db.OtpCodes
                 .Where(o => o.ExpiresAt < now)
                 .ExecuteDeleteAsync();
@@ -76,8 +76,8 @@ public class AuthCleanupJob : IAuthCleanupJob
     {
         try
         {
-            // So sánh với giờ VN
-            var now = DateTimeHelper.GetNowInVietnam();
+            // So sánh UTC với UTC
+            var now = DateTimeHelper.GetNowInVietnam(); // Trả về DateTime.UtcNow
             var deleted = await _db.RefreshTokens
                 .Where(t => t.ExpiresAt < now)
                 .ExecuteDeleteAsync();

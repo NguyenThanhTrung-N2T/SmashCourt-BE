@@ -26,7 +26,8 @@ namespace SmashCourt_BE.Repositories
         // Revoke toàn bộ token còn hạn khi đăng nhập mới
         public async Task RevokeAllByUserIdAsync(Guid userId)
         {
-            var now = DateTimeHelper.GetNowInVietnam();
+            // So sánh UTC với UTC
+            var now = DateTimeHelper.GetNowInVietnam(); // Trả về DateTime.UtcNow
             await _db.RefreshTokens
                 .Where(t =>
                     t.UserId == userId &&
@@ -39,7 +40,8 @@ namespace SmashCourt_BE.Repositories
         // Lấy refresh token còn hạn theo token hash
         public async Task<RefreshToken?> GetActiveByTokenHashAsync(string tokenHash)
         {
-            var now = DateTimeHelper.GetNowInVietnam();
+            // So sánh UTC với UTC
+            var now = DateTimeHelper.GetNowInVietnam(); // Trả về DateTime.UtcNow
             return await _db.RefreshTokens
                 .FirstOrDefaultAsync(t =>
                     t.TokenHash == tokenHash &&
