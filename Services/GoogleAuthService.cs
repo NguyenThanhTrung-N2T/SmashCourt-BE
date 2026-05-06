@@ -147,26 +147,30 @@ namespace SmashCourt_BE.Services
                     throw new AppException(400, "Google account này đã được liên kết với tài khoản khác");
                 }
 
-                // Tạo hạng thành viên mặc định cho user mới
-                var defaultTier = await _loyaltyTierRepo.GetDefaultTierAsync();
-                if (defaultTier != null)
+                // Tạo hạng thành viên mặc định CHỈ cho CUSTOMER
+                // (Google OAuth luôn tạo CUSTOMER, nhưng check để chắc chắn)
+                if (user.Role == UserRole.CUSTOMER)
                 {
-                    var customerLoyalty = new CustomerLoyalty
+                    var defaultTier = await _loyaltyTierRepo.GetDefaultTierAsync();
+                    if (defaultTier != null)
                     {
-                        UserId = user.Id,
-                        TierId = defaultTier.Id,
-                        TotalPoints = 0,
-                        CreatedAt = DateTime.UtcNow,
-                        UpdatedAt = DateTime.UtcNow
-                    };
-                    try
-                    {
-                        await _customerLoyaltyRepo.CreateAsync(customerLoyalty);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Failed to create customer loyalty for new Google user {UserId}", user.Id);
-                        // Không throw — lỗi loyalty không nên block quá trình đăng nhập
+                        var customerLoyalty = new CustomerLoyalty
+                        {
+                            UserId = user.Id,
+                            TierId = defaultTier.Id,
+                            TotalPoints = 0,
+                            CreatedAt = DateTime.UtcNow,
+                            UpdatedAt = DateTime.UtcNow
+                        };
+                        try
+                        {
+                            await _customerLoyaltyRepo.CreateAsync(customerLoyalty);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Failed to create customer loyalty for new Google user {UserId}", user.Id);
+                            // Không throw — lỗi loyalty không nên block quá trình đăng nhập
+                        }
                     }
                 }
             }

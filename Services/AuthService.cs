@@ -209,26 +209,30 @@ public class AuthService : IAuthService
         user.UpdatedAt = DateTime.UtcNow;
         await _userRepo.UpdateUserAsync(user);
 
-        // 8. Tạo hạng thành viên mặc định cho khách hàng
-        var defaultTier = await _loyaltyTierRepo.GetDefaultTierAsync();
-        if (defaultTier != null)
+        // 8. Tạo hạng thành viên mặc định CHỈ cho CUSTOMER
+        // STAFF/MANAGER/ADMIN không cần loyalty
+        if (user.Role == UserRole.CUSTOMER)
         {
-            var customerLoyalty = new CustomerLoyalty
+            var defaultTier = await _loyaltyTierRepo.GetDefaultTierAsync();
+            if (defaultTier != null)
             {
-                UserId = user.Id,
-                TierId = defaultTier.Id,
-                TotalPoints = 0,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
-            };
-            try
-            {
-                await _customerLoyaltyRepo.CreateAsync(customerLoyalty);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to create customer loyalty record for user {UserId}", user.Id);
-                throw new AppException(500, "Đã xảy ra lỗi khi thiết lập hạng thành viên, vui lòng liên hệ hỗ trợ", ErrorCodes.InternalError);
+                var customerLoyalty = new CustomerLoyalty
+                {
+                    UserId = user.Id,
+                    TierId = defaultTier.Id,
+                    TotalPoints = 0,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                try
+                {
+                    await _customerLoyaltyRepo.CreateAsync(customerLoyalty);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to create customer loyalty record for user {UserId}", user.Id);
+                    throw new AppException(500, "Đã xảy ra lỗi khi thiết lập hạng thành viên, vui lòng liên hệ hỗ trợ", ErrorCodes.InternalError);
+                }
             }
         }
     }
@@ -469,7 +473,7 @@ public class AuthService : IAuthService
             Status = "Success",
             AccessToken = _tokenService.GenerateAccessToken(user),
             RefreshToken = rawRefreshToken,
-            User = MapUserInfo(user)
+            User = await MapUserInfoAsync(user)
         };
     }
 
@@ -551,7 +555,7 @@ public class AuthService : IAuthService
             Status = "Success",
             AccessToken = _tokenService.GenerateAccessToken(user),
             RefreshToken = rawRefreshToken,
-            User = MapUserInfo(user)
+            User = await MapUserInfoAsync(user)
         };
     }
 
@@ -625,17 +629,80 @@ public class AuthService : IAuthService
         }
     }
     
-    // Map thông tin user cho client
-    private static UserInfo MapUserInfo(User user) => new()
+    // Map thông tin user cho client (bao gồm loyalty info nếu là customer)
+    private async Task<UserInfo> MapUserInfoAsync(User user)
     {
-        Id = user.Id,
-        FullName = user.FullName,
-        Email = user.Email,
-        Phone = user.Phone,
-        AvatarUrl = user.AvatarUrl,
-        Role = user.Role.ToString(),
-        Status = user.Status.ToString()
-    };
+        var userInfo = new UserInfo
+        {
+            Id = user.Id,
+            FullName = user.FullName,
+            Email = user.Email,
+            Phone = user.Phone,
+            AvatarUrl = user.AvatarUrl,
+            Role = user.Role.ToString(),
+            Status = user.Status.ToString()
+        };
+
+        // Chỉ load loyalty info cho CUSTOMER
+        if (user.Role == UserRole.CUSTOMER)
+        {
+            try
+            {
+                var loyalty = await _customerLoyaltyRepo.GetByUserIdAsync(user.Id);
+                if (loyalty?.Tier != null)
+                {
+                    // Lấy tất cả tiers để tính next tier
+                    var allTiers = await _loyaltyTierRepo.GetAllLoyaltyTiersAsync();
+                    var sortedTiers = allTiers.OrderBy(t => t.MinPoints).ToList();
+                    
+                    var currentTierIndex = sortedTiers.FindIndex(t => t.Id == loyalty.TierId);
+                    var nextTier = currentTierIndex < sortedTiers.Count - 1 
+                        ? sortedTiers[currentTierIndex + 1] 
+                        : null;
+
+                    // Tính progress percentage
+                    double progressPercentage;
+                    int pointsToNextTier;
+                    
+                    if (nextTier == null)
+                    {
+                        // Đã ở hạng cao nhất
+                        progressPercentage = 100;
+                        pointsToNextTier = 0;
+                    }
+                    else
+                    {
+                        var pointsInCurrentTier = loyalty.TotalPoints - loyalty.Tier.MinPoints;
+                        var pointsNeededForNextTier = nextTier.MinPoints - loyalty.Tier.MinPoints;
+                        progressPercentage = pointsNeededForNextTier > 0
+                            ? Math.Round((double)pointsInCurrentTier / pointsNeededForNextTier * 100, 2)
+                            : 100;
+                        pointsToNextTier = nextTier.MinPoints - loyalty.TotalPoints;
+                    }
+
+                    userInfo.Loyalty = new DTOs.Loyalty.LoyaltyInfo
+                    {
+                        TierName = loyalty.Tier.Name,
+                        TierColor = LoyaltyTierHelper.GetTierColor(loyalty.Tier.Name),
+                        TierIcon = LoyaltyTierHelper.GetTierIcon(loyalty.Tier.Name),
+                        DiscountRate = loyalty.Tier.DiscountRate,
+                        CurrentPoints = loyalty.TotalPoints,
+                        NextTierPoints = nextTier?.MinPoints ?? loyalty.TotalPoints,
+                        NextTierName = nextTier?.Name,
+                        ProgressPercentage = progressPercentage,
+                        PointsToNextTier = pointsToNextTier
+                    };
+                }
+            }
+            catch (Exception ex)
+            {
+                // Log error nhưng không fail request - loyalty info là optional
+                _logger.LogError(ex, "Failed to load loyalty info for user {UserId}", user.Id);
+            }
+        }
+
+        return userInfo;
+    }
 
     // Quên mật khẩu — gửi OTP về email để xác thực
     public async Task ForgotPasswordAsync(ForgotPasswordDto dto)

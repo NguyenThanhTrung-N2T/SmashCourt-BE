@@ -1,4 +1,5 @@
-﻿using System.Text.Json.Serialization;
+﻿using SmashCourt_BE.DTOs.Loyalty;
+using System.Text.Json.Serialization;
 
 namespace SmashCourt_BE.DTOs.Auth
 {
@@ -25,5 +26,11 @@ namespace SmashCourt_BE.DTOs.Auth
         public string? AvatarUrl { get; set; }
         public string Role { get; set; } = null!;     // để FE redirect đúng trang
         public string Status { get; set; } = null!;
+        
+        /// <summary>
+        /// Thông tin hạng thành viên (chỉ có với CUSTOMER)
+        /// Null nếu user không phải customer hoặc chưa có loyalty record
+        /// </summary>
+        public LoyaltyInfo? Loyalty { get; set; }
     }
 }
