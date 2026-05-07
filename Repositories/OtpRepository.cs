@@ -20,7 +20,7 @@ public class OtpRepository : IOtpRepository
     public async Task<OtpCode?> GetLatestActiveOtpAsync(Guid userId, OtpType type)
     {
         // So sánh UTC với UTC (database lưu UTC, EF Core đọc ra UTC với EnableLegacyTimestampBehavior=false)
-        var now = DateTimeHelper.GetNowInVietnam(); // Trả về DateTime.UtcNow
+        var now = DateTimeHelper.GetUtcNow(); // Trả về DateTime.UtcNow
         
         return await _db.OtpCodes
             .Where(o =>
@@ -59,7 +59,7 @@ public class OtpRepository : IOtpRepository
     public async Task<int> CountByUserAndTypeAsync(Guid userId, OtpType type)
     {
         // So sánh UTC với UTC (database lưu UTC, EF Core đọc ra UTC)
-        var now = DateTimeHelper.GetNowInVietnam(); // Trả về DateTime.UtcNow
+        var now = DateTimeHelper.GetUtcNow(); // Trả về DateTime.UtcNow
         
         return await _db.OtpCodes
             .CountAsync(o =>
@@ -67,5 +67,19 @@ public class OtpRepository : IOtpRepository
                 o.Type == type &&
                 o.UsedAt == null &&              //Chưa dùng
                 o.ExpiresAt > now);              //Chưa hết hạn
+    }
+
+    // Đếm TẤT CẢ OTP (kể cả đã dùng/hết hạn) trong khoảng thời gian — dùng để giới hạn resend
+    public async Task<int> CountAllByUserAndTypeAsync(Guid userId, OtpType type, TimeSpan? window = null)
+    {
+        var query = _db.OtpCodes.Where(o => o.UserId == userId && o.Type == type);
+        
+        if (window.HasValue)
+        {
+            var since = DateTime.UtcNow - window.Value;
+            query = query.Where(o => o.CreatedAt >= since);
+        }
+        
+        return await query.CountAsync();
     }
 }

@@ -55,6 +55,7 @@ public class AuthController : ControllerBase
     /// Gửi lại OTP — dùng chung cho register, forgot-password, 2FA
     /// </summary>
     [HttpPost("resend-otp")]
+    [EnableRateLimiting("sensitive")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -197,5 +198,22 @@ public class AuthController : ControllerBase
 
         return Ok(ApiResponse.Ok(
             message: "Đặt lại mật khẩu thành công, vui lòng đăng nhập lại"));
+    }
+
+    /// <summary>
+    /// Đổi mật khẩu bắt buộc sau khi admin tạo user hoặc reset password
+    /// </summary>
+    [HttpPost("change-password")]
+    [EnableRateLimiting("sensitive")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordDto dto)
+    {
+        await _authService.ChangePasswordAsync(dto);
+
+        return Ok(ApiResponse.Ok(
+            message: "Đổi mật khẩu thành công, vui lòng đăng nhập lại"));
     }
 }

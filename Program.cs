@@ -158,6 +158,7 @@ builder.Services.AddScoped<IVnPayService, VnPayService>();
 builder.Services.AddScoped<IBranchManagerService, BranchManagerService>();
 builder.Services.AddScoped<IBranchStaffService, BranchStaffService>();
 builder.Services.AddScoped<IBranchUserService, BranchUserService>();
+builder.Services.AddScoped<IUserManagementService, UserManagementService>();
 
 builder.Services.AddScoped<EmailService>();
 builder.Services.AddScoped<OtpService>();
@@ -408,6 +409,8 @@ app.UseMiddleware<ExceptionMiddleware>();
 JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
 // Xác thực và phân quyền
 app.UseAuthentication();
+// Middleware kiểm tra user status (LOCKED/INACTIVE) - chặn ngay lập tức
+app.UseMiddleware<UserStatusMiddleware>();
 app.UseAuthorization();
 // Hangfire dashboard — chỉ cho phép admin xem
 app.UseHangfireServices(app.Configuration);

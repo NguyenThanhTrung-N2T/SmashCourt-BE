@@ -98,6 +98,8 @@ namespace SmashCourt_BE.Data
                 e.Property(x => x.Role).HasColumnName("role");
                 e.Property(x => x.Status).HasColumnName("status");
                 e.Property(x => x.LockReason).HasColumnName("lock_reason");
+                e.Property(x => x.LockedAt).HasColumnName("locked_at");
+                e.Property(x => x.LockedBy).HasColumnName("locked_by");
                 e.Property(x => x.IsEmailVerified).HasColumnName("is_email_verified").HasDefaultValue(false);
                 e.Property(x => x.Is2faEnabled).HasColumnName("is_2fa_enabled").HasDefaultValue(false);
                 e.Property(x => x.MustChangePassword).HasColumnName("must_change_password").HasDefaultValue(false);

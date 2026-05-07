@@ -57,7 +57,7 @@ public class AuthService : IAuthService
         if (latestOtp != null)
         {
             // So sánh UTC với UTC (database lưu UTC, EF Core đọc ra UTC)
-            var now = DateTimeHelper.GetNowInVietnam(); // Trả về DateTime.UtcNow
+            var now = DateTimeHelper.GetUtcNow(); // Trả về DateTime.UtcNow
             var secondsElapsed = (now - latestOtp.CreatedAt).TotalSeconds;
             
             // Debug log - convert sang VN time để dễ đọc
@@ -247,12 +247,32 @@ public class AuthService : IAuthService
         if (user == null)
             throw new AppException(404, "Tài khoản không tồn tại", ErrorCodes.NotFound);
 
-        // 2. Kiểm tra cooldown 60s TRƯỚC — để tránh cản trở khi user đang chờ
+        // 2. Kiểm tra type phù hợp với trạng thái user TRƯỚC (security fix)
+        switch (dto.Type)
+        {
+            case OtpType.EMAIL_VERIFY:
+                if (user.IsEmailVerified)
+                    throw new AppException(400, "Email đã được xác thực, không cần gửi lại", ErrorCodes.BadRequest);
+                break;
+
+            case OtpType.FORGOT_PASSWORD:
+                // OAuth account không có password → không cho reset
+                if (user.PasswordHash == null)
+                    throw new AppException(400, "Tài khoản này đăng nhập bằng Google, không có mật khẩu để đặt lại", ErrorCodes.BadRequest);
+                break;
+
+            case OtpType.TWO_FA:
+                if (!user.Is2faEnabled)
+                    throw new AppException(400, "Tài khoản chưa bật xác thực 2 yếu tố", ErrorCodes.BadRequest);
+                break;
+        }
+
+        // 3. Kiểm tra cooldown 60s SAU khi đã validate type
         var latestOtp = await _otpRepo.GetLatestActiveOtpAsync(user.Id, dto.Type);
         if (latestOtp != null)
         {
             // So sánh UTC với UTC (database lưu UTC, EF Core đọc ra UTC)
-            var now = DateTimeHelper.GetNowInVietnam(); // Trả về DateTime.UtcNow
+            var now = DateTimeHelper.GetUtcNow(); // Trả về DateTime.UtcNow
             var secondsElapsed = (now - latestOtp.CreatedAt).TotalSeconds;
             
             // Debug log - convert sang VN time để dễ đọc
@@ -272,51 +292,36 @@ public class AuthService : IAuthService
                     ErrorCodes.OtpLimitExceeded);
         }
 
-        // 3. Kiểm tra type phù hợp với trạng thái user
-        switch (dto.Type)
+        // 4. Kiểm tra giới hạn resend cho EMAIL_VERIFY
+        if (dto.Type == OtpType.EMAIL_VERIFY)
         {
-            case OtpType.EMAIL_VERIFY:
-                if (user.IsEmailVerified)
-                    throw new AppException(400, "Email đã được xác thực, không cần gửi lại", ErrorCodes.BadRequest);
-                // Kiểm tra tổng số lần đã gửi OTP
-                var resendCount = await _otpRepo.CountByUserAndTypeAsync(
-                    user.Id, OtpType.EMAIL_VERIFY);
+            // Kiểm tra tổng số lần đã gửi OTP (kể cả đã invalidate) trong 1 giờ qua
+            var resendCount = await _otpRepo.CountAllByUserAndTypeAsync(
+                user.Id, OtpType.EMAIL_VERIFY, TimeSpan.FromHours(1));
 
-                if (resendCount >= 3)
+            if (resendCount >= 3)
+            {
+                try
                 {
-                    try
-                    {
-                        // Vô hiệu hóa OTP trước
-                        await _otpRepo.InvalidateAllOtpAsync(user.Id, OtpType.EMAIL_VERIFY);
+                    // Vô hiệu hóa OTP trước
+                    await _otpRepo.InvalidateAllOtpAsync(user.Id, OtpType.EMAIL_VERIFY);
 
-                        // Rồi xóa user (có try-catch để xử lý nếu fail)
-                        await _userRepo.DeleteUnverifiedAsync(user.Id);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Lỗi khi xóa user chưa verify");
-                    }
-
-                    throw new AppException(400, "Đã gửi OTP quá số lần cho phép, vui lòng đăng ký lại", ErrorCodes.OtpLimitExceeded);
+                    // Rồi xóa user (có try-catch để xử lý nếu fail)
+                    await _userRepo.DeleteUnverifiedAsync(user.Id);
                 }
-                break;
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Lỗi khi xóa user chưa verify");
+                }
 
-            case OtpType.FORGOT_PASSWORD:
-                // OAuth account không có password → không cho reset
-                if (user.PasswordHash == null)
-                    throw new AppException(400, "Tài khoản này đăng nhập bằng Google, không có mật khẩu để đặt lại", ErrorCodes.BadRequest);
-                break;
-
-            case OtpType.TWO_FA:
-                if (!user.Is2faEnabled)
-                    throw new AppException(400, "Tài khoản chưa bật xác thực 2 yếu tố", ErrorCodes.BadRequest);
-                break;
+                throw new AppException(400, "Đã gửi OTP quá số lần cho phép, vui lòng đăng ký lại", ErrorCodes.OtpLimitExceeded);
+            }
         }
 
-        // 4. Invalidate OTP cũ
+        // 5. Invalidate OTP cũ
         await _otpRepo.InvalidateAllOtpAsync(user.Id, dto.Type);
 
-        // 5. Tạo OTP mới
+        // 6. Tạo OTP mới
         var rawCode = _otpService.GenerateCode();
         var codeHash = _otpService.HashCode(rawCode);
 
@@ -418,7 +423,18 @@ public class AuthService : IAuthService
         user.UpdatedAt = DateTime.UtcNow;
         await _userRepo.UpdateUserAsync(user);
 
-        // 8. Kiểm tra 2FA
+        // 8. Kiểm tra MustChangePassword — user phải đổi password trước khi tiếp tục
+        if (user.MustChangePassword)
+        {
+            return new LoginResponse
+            {
+                Status = "must_change_password",
+                TempToken = _tokenService.GenerateTempToken(user.Id, "change_password_temp"),
+                Message = "Bạn cần đổi mật khẩu trước khi tiếp tục sử dụng hệ thống"
+            };
+        }
+
+        // 9. Kiểm tra 2FA
         if (user.Is2faEnabled)
         {
             // Tạo OTP gửi về email
@@ -453,7 +469,7 @@ public class AuthService : IAuthService
             };
         }
 
-        // 9. Không có 2FA → cấp token ngay
+        // 10. Không có 2FA → cấp token ngay
         // Revoke toàn bộ refresh token cũ
         await _refreshTokenRepo.RevokeAllByUserIdAsync(user.Id);
 
@@ -480,8 +496,8 @@ public class AuthService : IAuthService
     // Đăng nhập với xác thực 2 yếu tố (2FA)
     public async Task<LoginResponse> Login2FAAsync(Login2FADto dto)
     {
-        // 1. Validate temp token
-        var userId = _tokenService.ValidateTempToken(dto.TempToken);
+        // 1. Validate temp token - PHẢI là 2fa_temp type
+        var userId = _tokenService.ValidateTempToken(dto.TempToken, "2fa_temp");
         if (userId == null)
             throw new AppException(401, "Phiên xác thực không hợp lệ hoặc đã hết hạn, vui lòng đăng nhập lại", ErrorCodes.TokenInvalid);
 
@@ -512,7 +528,11 @@ public class AuthService : IAuthService
 
         // 7. Kiểm tra attempt
         if (otp.AttemptCount >= 3)
+        {
+            // Invalidate OTP trước khi throw (security fix)
+            await _otpRepo.InvalidateAllOtpAsync(user.Id, OtpType.TWO_FA);
             throw new AppException(401, "OTP đã bị khóa do nhập sai quá 3 lần, vui lòng đăng nhập lại", ErrorCodes.OtpLimitExceeded);
+        }
 
         // 8. Verify OTP
         if (!_otpService.VerifyCode(dto.OtpCode, otp.CodeHash))
@@ -524,7 +544,11 @@ public class AuthService : IAuthService
             if (remaining > 0)
                 throw new AppException(401, $"OTP không đúng, còn {remaining} lần thử", ErrorCodes.OtpInvalid);
             else
+            {
+                // Invalidate OTP khi hết attempts (security fix)
+                await _otpRepo.InvalidateAllOtpAsync(user.Id, OtpType.TWO_FA);
                 throw new AppException(401, "OTP đã bị khóa do nhập sai quá 3 lần, vui lòng đăng nhập lại", ErrorCodes.OtpLimitExceeded);
+            }
         }
 
         // 9. OTP hợp lệ → đánh dấu đã dùng và reset failed login nếu có
@@ -705,6 +729,7 @@ public class AuthService : IAuthService
     }
 
     // Quên mật khẩu — gửi OTP về email để xác thực
+    // LƯU Ý: Method này có silent return cho nhiều trường hợp để bảo mật
     public async Task ForgotPasswordAsync(ForgotPasswordDto dto)
     {
         var email = dto.Email.Trim().ToLower();
@@ -718,12 +743,20 @@ public class AuthService : IAuthService
             return;
         }
 
-        // 2. Kiểm tra cooldown 60s
+        // 2. Silent return nếu user bị LOCKED (security: không lộ thông tin account status)
+        //    User bị khóa không được phép reset password
+        if (user.Status == UserStatus.LOCKED)
+        {
+            _logger.LogWarning("Forgot password attempt for LOCKED user {UserId} ({Email})", user.Id, email);
+            return; // Silent return - không báo lỗi
+        }
+
+        // 3. Kiểm tra cooldown 60s
         var latestOtp = await _otpRepo.GetLatestActiveOtpAsync(user.Id, OtpType.FORGOT_PASSWORD);
         if (latestOtp != null)
         {
             // So sánh UTC với UTC (database lưu UTC, EF Core đọc ra UTC)
-            var now = DateTimeHelper.GetNowInVietnam(); // Trả về DateTime.UtcNow
+            var now = DateTimeHelper.GetUtcNow(); // Trả về DateTime.UtcNow
             var secondsElapsed = (now - latestOtp.CreatedAt).TotalSeconds;
             
             if (secondsElapsed < 60)
@@ -732,10 +765,10 @@ public class AuthService : IAuthService
                     ErrorCodes.OtpLimitExceeded);
         }
 
-        // 3. Invalidate OTP cũ
+        // 4. Invalidate OTP cũ
         await _otpRepo.InvalidateAllOtpAsync(user.Id, OtpType.FORGOT_PASSWORD);
 
-        // 4. Tạo OTP mới
+        // 5. Tạo OTP mới
         var rawCode = _otpService.GenerateCode();
         var otp = new OtpCode
         {
@@ -748,7 +781,7 @@ public class AuthService : IAuthService
         };
         await _otpRepo.CreateOtpAsync(otp);
 
-        // 5. Gửi email
+        // 6. Gửi email
         try
         {
             await _emailService.SendOtpForgotPasswordAsync(email, user.FullName, rawCode);
@@ -789,7 +822,11 @@ public class AuthService : IAuthService
             if (remaining > 0)
                 throw new AppException(400, $"OTP không đúng, còn {remaining} lần thử", ErrorCodes.OtpInvalid);
             else
+            {
+                // Invalidate OTP khi hết attempts (consistency fix)
+                await _otpRepo.InvalidateAllOtpAsync(user.Id, OtpType.FORGOT_PASSWORD);
                 throw new AppException(400, "OTP đã bị khóa do nhập sai quá 3 lần, vui lòng yêu cầu mã mới", ErrorCodes.OtpLimitExceeded);
+            }
         }
 
         // 5. OTP hợp lệ → đánh dấu đã dùng
@@ -819,7 +856,7 @@ public class AuthService : IAuthService
             throw new AppException(403, "Tài khoản của bạn đã bị khóa, vui lòng liên hệ hỗ trợ", ErrorCodes.AccountLocked);
 
         // 4. Hash password mới + update
-        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.NewPassword);
+        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.NewPassword, 12);
         user.FailedLoginCount = 0;
         user.LockedUntil = null;
         user.LastFailedLoginAt = null;
@@ -831,5 +868,43 @@ public class AuthService : IAuthService
         await _refreshTokenRepo.RevokeAllByUserIdAsync(user.Id);
     }
 
+    // Đổi mật khẩu bắt buộc sau khi admin tạo user hoặc reset password
+    public async Task ChangePasswordAsync(ChangePasswordDto dto)
+    {
+        // 1. Validate temp token - PHẢI là change_password_temp type
+        var userId = _tokenService.ValidateTempToken(dto.TempToken, "change_password_temp");
+        if (userId == null)
+            throw new AppException(401, "Phiên xác thực không hợp lệ hoặc đã hết hạn, vui lòng đăng nhập lại", ErrorCodes.TokenInvalid);
 
+        // 2. Tìm user
+        var user = await _userRepo.GetUserByIdAsync(userId.Value);
+        if (user == null)
+            throw new AppException(404, "Tài khoản không tồn tại", ErrorCodes.NotFound);
+
+        // 3. Kiểm tra user có cần đổi password không
+        if (!user.MustChangePassword)
+            throw new AppException(400, "Tài khoản không yêu cầu đổi mật khẩu", ErrorCodes.BadRequest);
+
+        // 4. Kiểm tra status
+        if (user.Status == UserStatus.LOCKED)
+            throw new AppException(403, "Tài khoản của bạn đã bị khóa, vui lòng liên hệ hỗ trợ", ErrorCodes.AccountLocked);
+
+        // 5. Validate password mới (validation attribute đã check MinLength 8)
+        // Có thể thêm validation phức tạp hơn ở đây nếu cần
+
+        // 6. Update password và clear flag MustChangePassword
+        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.NewPassword, 12);
+        user.MustChangePassword = false; // ← QUAN TRỌNG: Clear flag
+        user.FailedLoginCount = 0;
+        user.LockedUntil = null;
+        user.LastFailedLoginAt = null;
+        user.UpdatedAt = DateTime.UtcNow;
+        await _userRepo.UpdateUserAsync(user);
+
+        // 7. Revoke tất cả refresh tokens (force re-login với password mới)
+        await _refreshTokenRepo.RevokeAllByUserIdAsync(user.Id);
+
+        _logger.LogInformation("User {UserId} ({Email}) đã đổi mật khẩu thành công", user.Id, user.Email);
+    }
 }
+

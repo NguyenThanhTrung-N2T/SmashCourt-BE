@@ -12,6 +12,18 @@ using System.Text.Json.Serialization;
 
 namespace SmashCourt_BE.Services
 {
+    /// <summary>
+    /// Service xử lý Google OAuth authentication
+    /// 
+    /// LƯU Ý VỀ MustChangePassword:
+    /// - User đăng nhập bằng Google OAuth KHÔNG BAO GIỜ có MustChangePassword = true
+    /// - Lý do: Google OAuth users không có password trong hệ thống (PasswordHash = null)
+    /// - Họ authenticate qua Google, không cần đổi password
+    /// - Nếu admin muốn force user đổi sang email/password login, phải:
+    ///   1. Revoke OAuth account
+    ///   2. Tạo password mới cho user (qua reset password)
+    ///   3. User login bằng email/password với MustChangePassword = true
+    /// </summary>
     public class GoogleAuthService : IGoogleAuthService
     {
         private readonly GoogleSettings _googleSettings;
@@ -217,6 +229,13 @@ namespace SmashCourt_BE.Services
                 }
                 // existingOAuth.UserId == user.Id → đã liên kết đúng → đăng nhập bình thường
             }
+
+            // 6. Kiểm tra status trước khi cấp token (CRITICAL FIX)
+            if (user.Status == UserStatus.LOCKED)
+                throw new AppException(403, "Tài khoản của bạn đã bị khóa, vui lòng liên hệ hỗ trợ", ErrorCodes.AccountLocked);
+            
+            if (user.Status == UserStatus.INACTIVE)
+                throw new AppException(403, "Tài khoản của bạn đã bị vô hiệu hóa", ErrorCodes.AccountLocked);
 
             // 7. Revoke refresh token cũ + cấp token mới
             await _refreshTokenRepo.RevokeAllByUserIdAsync(user.Id);

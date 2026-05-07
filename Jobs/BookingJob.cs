@@ -32,7 +32,7 @@ namespace SmashCourt_BE.Jobs
             try
             {
                 // So sánh UTC với UTC (database lưu UTC, EF Core đọc ra UTC)
-                var now = DateTimeHelper.GetNowInVietnam(); // Trả về DateTime.UtcNow
+                var now = DateTimeHelper.GetUtcNow(); // Trả về DateTime.UtcNow
                 var expiredBookings = await _db.Bookings
                     .Include(b => b.BookingCourts)
                         .ThenInclude(bc => bc.Court)
@@ -107,7 +107,7 @@ namespace SmashCourt_BE.Jobs
             try
             {
                 // So sánh UTC với UTC
-                var now = DateTimeHelper.GetNowInVietnam(); // Trả về DateTime.UtcNow
+                var now = DateTimeHelper.GetUtcNow(); // Trả về DateTime.UtcNow
 
                 // Xử lý booking hết giờ (EndTime)
                 var activeBookings = await _db.Bookings
@@ -287,7 +287,7 @@ namespace SmashCourt_BE.Jobs
             try
             {
                 // So sánh UTC với UTC
-                var now = DateTimeHelper.GetNowInVietnam(); // Trả về DateTime.UtcNow
+                var now = DateTimeHelper.GetUtcNow(); // Trả về DateTime.UtcNow
                 var deleted = await _db.SlotLocks
                     .Where(sl => sl.ExpiresAt <= now)
                     .ExecuteDeleteAsync();
@@ -311,7 +311,7 @@ namespace SmashCourt_BE.Jobs
                 _logger.LogInformation("Starting NO_SHOW detection job");
 
                 // So sánh UTC với UTC
-                var now = DateTimeHelper.GetNowInVietnam(); // Trả về DateTime.UtcNow
+                var now = DateTimeHelper.GetUtcNow(); // Trả về DateTime.UtcNow
                 
                 // Lấy danh sách status đủ điều kiện cho NO_SHOW từ helper
                 var noShowEligibleStatuses = BookingStatusTransition.GetNoShowEligibleStatuses();

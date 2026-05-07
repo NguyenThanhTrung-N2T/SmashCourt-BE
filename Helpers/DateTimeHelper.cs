@@ -23,10 +23,10 @@ namespace SmashCourt_BE.Helpers
         }
 
         /// <summary>
-        /// Lấy thời gian hiện tại theo giờ Việt Nam (DateTime với Kind=Utc)
+        /// Lấy thời gian UTC hiện tại (DateTime với Kind=Utc)
         /// Dùng để SO SÁNH với timestamp từ database (database lưu UTC, EF Core đọc ra UTC)
         /// </summary>
-        public static DateTime GetNowInVietnam()
+        public static DateTime GetUtcNow()
         {
             // Trả về UTC time - vì database lưu UTC và EF Core đọc ra UTC (EnableLegacyTimestampBehavior=false)
             // Khi so sánh, cả 2 bên đều là UTC nên kết quả chính xác

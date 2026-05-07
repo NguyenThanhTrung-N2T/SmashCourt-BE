@@ -342,7 +342,7 @@ namespace SmashCourt_BE.Services
             var tokenExpiry = new DateTime[]
             {
                 booking.BookingDate.ToDateTime(startTime),
-                DateTimeHelper.GetNowInVietnam().AddHours(24)
+                DateTimeHelper.GetUtcNow().AddHours(24)
             }.Min();
 
             return (rawToken, tokenHash, tokenExpiry);

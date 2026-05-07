@@ -26,7 +26,7 @@ namespace SmashCourt_BE.Repositories
                     sl.Date == date &&
                     sl.StartTime < endTime &&
                     sl.EndTime > startTime &&
-                    sl.ExpiresAt > DateTimeHelper.GetNowInVietnam());
+                    sl.ExpiresAt > DateTimeHelper.GetUtcNow());
         }
 
         public async Task<SlotLock> CreateAsync(SlotLock slotLock)
@@ -54,7 +54,7 @@ namespace SmashCourt_BE.Repositories
             await _context.SlotLocks
                 .Where(sl =>
                     courtIds.Contains(sl.CourtId) &&
-                    sl.ExpiresAt <= DateTimeHelper.GetNowInVietnam())
+                    sl.ExpiresAt <= DateTimeHelper.GetUtcNow())
                 .ExecuteDeleteAsync();
         }
 
@@ -66,7 +66,7 @@ namespace SmashCourt_BE.Repositories
                 .Where(sl =>
                     sl.CourtId == courtId &&
                     sl.Date == date &&
-                    sl.ExpiresAt > DateTimeHelper.GetNowInVietnam())
+                    sl.ExpiresAt > DateTimeHelper.GetUtcNow())
                 .ToListAsync();
         }
 

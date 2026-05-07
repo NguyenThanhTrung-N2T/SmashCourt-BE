@@ -33,4 +33,7 @@ public interface IAuthService
 
     // Đặt lại mật khẩu mới sau khi xác thực OTP thành công
     Task ResetPasswordAsync(ResetPasswordDto dto);
+
+    // Đổi mật khẩu bắt buộc (sau khi admin tạo user hoặc reset password)
+    Task ChangePasswordAsync(ChangePasswordDto dto);
 }

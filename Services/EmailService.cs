@@ -631,4 +631,129 @@ public class EmailService
     </html>
     """;
     }
+
+    /// <summary>
+    /// Gửi email chào mừng cho user mới được tạo bởi admin
+    /// Bao gồm thông tin đăng nhập (email + password tạm thời)
+    /// </summary>
+    public async Task SendWelcomeEmailAsync(string toEmail, string fullName, string temporaryPassword)
+    {
+        var subject = "🎉 Chào mừng đến với SmashCourt";
+
+        var body = $"""
+    <!DOCTYPE html>
+    <html lang="vi">
+    <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+    <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f4f7f6; margin: 0; padding: 0;">
+        <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f4f7f6; padding: 40px 0;">
+            <tr><td align="center">
+                <table width="100%" cellpadding="0" cellspacing="0" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; margin: 0 auto;">
+                    <tr><td style="background-color: #1e3a8a; padding: 35px 30px; text-align: center;">
+                        <h1 style="color: #ffffff; margin: 0; font-size: 32px; font-weight: 800; letter-spacing: 2px;">SMASHCOURT</h1>
+                        <p style="color: #bfdbfe; margin: 8px 0 0 0; font-size: 15px;">Nền Tảng Đặt Sân Thể Thao Hàng Đầu</p>
+                    </td></tr>
+                    <tr><td style="padding: 45px 35px;">
+                        <h2 style="color: #16a34a; margin: 0 0 20px 0; font-size: 24px; font-weight: 700;">🎉 Chào mừng đến với SmashCourt!</h2>
+                        <p style="color: #475569; font-size: 16px; line-height: 1.8; margin: 0 0 25px 0;">
+                            Xin chào <strong style="color: #0f172a;">{fullName}</strong>,<br/><br/>
+                            Tài khoản của bạn đã được tạo thành công. Dưới đây là thông tin đăng nhập:
+                        </p>
+                        <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f8fafc; border-radius: 10px; margin-bottom: 25px; border: 1px solid #e2e8f0;">
+                            <tr><td style="padding: 25px;">
+                                <p style="margin: 0 0 12px 0; color: #64748b; font-size: 13px; text-transform: uppercase; font-weight: 700; letter-spacing: 1px;">Thông tin đăng nhập</p>
+                                <table width="100%">
+                                    <tr>
+                                        <td style="color: #64748b; font-size: 14px; padding: 8px 0;">📧 Email:</td>
+                                        <td style="color: #0f172a; font-size: 14px; font-weight: 600; text-align: right; word-wrap: break-word;">{toEmail}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="color: #64748b; font-size: 14px; padding: 8px 0;">🔑 Mật khẩu:</td>
+                                        <td style="color: #2563eb; font-size: 14px; font-weight: 600; text-align: right; font-family: monospace;">{temporaryPassword}</td>
+                                    </tr>
+                                </table>
+                            </td></tr>
+                        </table>
+                        <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #fef2f2; border-radius: 8px; margin-bottom: 25px; border-left: 4px solid #ef4444;">
+                            <tr><td style="padding: 20px;">
+                                <p style="margin: 0 0 10px 0; color: #991b1b; font-size: 14px; font-weight: 700;">⚠️ Quan trọng</p>
+                                <p style="margin: 0; color: #7f1d1d; font-size: 14px; line-height: 1.6;">
+                                    • Vui lòng đổi mật khẩu ngay sau lần đăng nhập đầu tiên<br/>
+                                    • Không chia sẻ thông tin đăng nhập với bất kỳ ai<br/>
+                                    • Liên hệ quản trị viên nếu gặp vấn đề
+                                </p>
+                            </td></tr>
+                        </table>
+                    </td></tr>
+                    <tr><td style="background-color: #f8fafc; padding: 25px 30px; text-align: center; border-top: 1px solid #e2e8f0;">
+                        <p style="margin: 0 0 5px 0; color: #64748b; font-size: 13px;">Trân trọng,</p>
+                        <p style="margin: 0; color: #0f172a; font-size: 15px; font-weight: 600;">Đội ngũ phát triển SmashCourt</p>
+                        <p style="margin: 12px 0 0 0; color: #94a3b8; font-size: 12px;">&copy; {DateTime.UtcNow.Year} SmashCourt. Tất cả các quyền được bảo lưu.</p>
+                    </td></tr>
+                </table>
+            </td></tr>
+        </table>
+    </body></html>
+    """;
+
+        await SendAsync(toEmail, subject, body);
+    }
+
+    /// <summary>
+    /// Gửi email thông báo password đã được reset bởi admin
+    /// Bao gồm password mới
+    /// </summary>
+    public async Task SendPasswordResetByAdminAsync(string toEmail, string fullName, string newPassword)
+    {
+        var subject = "🔐 Mật khẩu đã được đặt lại - SmashCourt";
+
+        var body = $"""
+    <!DOCTYPE html>
+    <html lang="vi">
+    <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+    <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f4f7f6; margin: 0; padding: 0;">
+        <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f4f7f6; padding: 40px 0;">
+            <tr><td align="center">
+                <table width="100%" cellpadding="0" cellspacing="0" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; margin: 0 auto;">
+                    <tr><td style="background-color: #1e3a8a; padding: 35px 30px; text-align: center;">
+                        <h1 style="color: #ffffff; margin: 0; font-size: 32px; font-weight: 800; letter-spacing: 2px;">SMASHCOURT</h1>
+                        <p style="color: #bfdbfe; margin: 8px 0 0 0; font-size: 15px;">Nền Tảng Đặt Sân Thể Thao Hàng Đầu</p>
+                    </td></tr>
+                    <tr><td style="padding: 45px 35px;">
+                        <h2 style="color: #d97706; margin: 0 0 20px 0; font-size: 24px; font-weight: 700;">🔐 Mật khẩu đã được đặt lại</h2>
+                        <p style="color: #475569; font-size: 16px; line-height: 1.8; margin: 0 0 25px 0;">
+                            Xin chào <strong style="color: #0f172a;">{fullName}</strong>,<br/><br/>
+                            Mật khẩu tài khoản của bạn đã được đặt lại bởi quản trị viên. Dưới đây là mật khẩu mới:
+                        </p>
+                        <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f8fafc; border-radius: 10px; margin-bottom: 25px; border: 1px solid #e2e8f0;">
+                            <tr><td style="padding: 25px;">
+                                <p style="margin: 0 0 12px 0; color: #64748b; font-size: 13px; text-transform: uppercase; font-weight: 700; letter-spacing: 1px;">Mật khẩu mới</p>
+                                <p style="margin: 0; color: #2563eb; font-size: 18px; font-weight: 700; font-family: monospace; text-align: center; padding: 15px; background-color: #ffffff; border-radius: 8px; border: 2px dashed #3b82f6;">
+                                    {newPassword}
+                                </p>
+                            </td></tr>
+                        </table>
+                        <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #fef2f2; border-radius: 8px; margin-bottom: 25px; border-left: 4px solid #ef4444;">
+                            <tr><td style="padding: 20px;">
+                                <p style="margin: 0 0 10px 0; color: #991b1b; font-size: 14px; font-weight: 700;">⚠️ Quan trọng</p>
+                                <p style="margin: 0; color: #7f1d1d; font-size: 14px; line-height: 1.6;">
+                                    • Vui lòng đổi mật khẩu ngay sau khi đăng nhập<br/>
+                                    • Không chia sẻ mật khẩu với bất kỳ ai<br/>
+                                    • Nếu bạn không yêu cầu đặt lại mật khẩu, vui lòng liên hệ quản trị viên ngay
+                                </p>
+                            </td></tr>
+                        </table>
+                    </td></tr>
+                    <tr><td style="background-color: #f8fafc; padding: 25px 30px; text-align: center; border-top: 1px solid #e2e8f0;">
+                        <p style="margin: 0 0 5px 0; color: #64748b; font-size: 13px;">Trân trọng,</p>
+                        <p style="margin: 0; color: #0f172a; font-size: 15px; font-weight: 600;">Đội ngũ phát triển SmashCourt</p>
+                        <p style="margin: 12px 0 0 0; color: #94a3b8; font-size: 12px;">&copy; {DateTime.UtcNow.Year} SmashCourt. Tất cả các quyền được bảo lưu.</p>
+                    </td></tr>
+                </table>
+            </td></tr>
+        </table>
+    </body></html>
+    """;
+
+        await SendAsync(toEmail, subject, body);
+    }
 }

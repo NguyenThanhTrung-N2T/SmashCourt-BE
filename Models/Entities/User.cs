@@ -13,6 +13,8 @@ namespace SmashCourt_BE.Models.Entities
         public UserRole Role { get; set; } = UserRole.CUSTOMER;
         public UserStatus Status { get; set; } = UserStatus.ACTIVE;
         public string? LockReason { get; set; }
+        public DateTime? LockedAt { get; set; }
+        public Guid? LockedBy { get; set; }
         public bool IsEmailVerified { get; set; } = false;
         public bool Is2faEnabled { get; set; } = false;
         public bool MustChangePassword { get; set; } = false;

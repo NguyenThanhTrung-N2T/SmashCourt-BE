@@ -39,6 +39,18 @@ public static class ErrorCodes
     public const string InvalidStaffUser       = "INVALID_STAFF_USER";
     public const string InvalidBulkOperation   = "INVALID_BULK_OPERATION";
 
+    // ─── User Management ─────────────────────────────────────────────────
+    public const string UserAlreadyExists      = "USER_ALREADY_EXISTS";
+    public const string InvalidRole            = "INVALID_ROLE";
+    public const string CannotLockSelf         = "CANNOT_LOCK_SELF";
+    public const string CannotResetOwnPassword = "CANNOT_RESET_OWN_PASSWORD";
+    public const string UserAlreadyLocked      = "USER_ALREADY_LOCKED";
+    public const string UserNotLocked          = "USER_NOT_LOCKED";
+    public const string UserAlreadyInactive    = "USER_ALREADY_INACTIVE";
+    public const string UserNotInactive        = "USER_NOT_INACTIVE";
+    public const string LastBranchManager      = "LAST_BRANCH_MANAGER";
+    public const string UserHasNoBranch        = "USER_HAS_NO_BRANCH";
+
     // ─── Server errors (5xx) ─────────────────────────────────────────────
     public const string InternalError    = "INTERNAL_ERROR";
 }

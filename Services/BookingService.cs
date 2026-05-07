@@ -763,7 +763,7 @@ namespace SmashCourt_BE.Services
                 throw new AppException(400,
                     "Link hủy đã được sử dụng", ErrorCodes.BadRequest);
 
-            if (booking.CancelTokenExpiresAt < DateTimeHelper.GetNowInVietnam())
+            if (booking.CancelTokenExpiresAt < DateTimeHelper.GetUtcNow())
                 throw new AppException(400,
                     "Link hủy đã hết hạn", ErrorCodes.BadRequest);
 
@@ -1490,7 +1490,7 @@ namespace SmashCourt_BE.Services
         {
             // lấy thời gian hiện tại ở VN để tính số giờ còn lại trước khi bắt đầu booking
             var bookingDateTime = bookingDate.ToDateTime(startTime);
-            var vnNow = DateTimeHelper.GetNowInVietnam();
+            var vnNow = DateTimeHelper.GetUtcNow();
             
             var hoursUntilStart = (bookingDateTime - vnNow).TotalHours;
 
@@ -1832,7 +1832,7 @@ namespace SmashCourt_BE.Services
                 // Lấy VN time để nhất quán với PaymentService.SendConfirmationWithCancelTokenAsync
                 var tokenExpiry = new DateTime[] {
                     booking.BookingDate.ToDateTime(startTime),
-                    DateTimeHelper.GetNowInVietnam().AddHours(24)
+                    DateTimeHelper.GetUtcNow().AddHours(24)
                 }.Min();
 
                 booking.CancelTokenHash = tokenHash;

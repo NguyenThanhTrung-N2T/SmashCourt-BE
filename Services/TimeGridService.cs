@@ -60,7 +60,7 @@ namespace SmashCourt_BE.Services
 
                 if (slotLock != null)
                 {
-                    var vnNow = DateTimeHelper.GetNowInVietnam();
+                    var vnNow = DateTimeHelper.GetUtcNow();
                     var remainingSeconds = (int)(slotLock.ExpiresAt - vnNow).TotalSeconds;
                     result.Add(new TimeGridSlotDto
                     {

@@ -19,4 +19,7 @@ public interface IOtpRepository
 
     // đếm số lượng OTP còn hiệu lực cho một người dùng và theo loại OTP
     Task<int> CountByUserAndTypeAsync(Guid userId, OtpType type);
+
+    // Đếm TẤT CẢ OTP (kể cả đã dùng/hết hạn) trong khoảng thời gian
+    Task<int> CountAllByUserAndTypeAsync(Guid userId, OtpType type, TimeSpan? window = null);
 }

@@ -27,7 +27,7 @@ namespace SmashCourt_BE.Repositories
         public async Task RevokeAllByUserIdAsync(Guid userId)
         {
             // So sánh UTC với UTC
-            var now = DateTimeHelper.GetNowInVietnam(); // Trả về DateTime.UtcNow
+            var now = DateTimeHelper.GetUtcNow(); // Trả về DateTime.UtcNow
             await _db.RefreshTokens
                 .Where(t =>
                     t.UserId == userId &&
@@ -41,7 +41,7 @@ namespace SmashCourt_BE.Repositories
         public async Task<RefreshToken?> GetActiveByTokenHashAsync(string tokenHash)
         {
             // So sánh UTC với UTC
-            var now = DateTimeHelper.GetNowInVietnam(); // Trả về DateTime.UtcNow
+            var now = DateTimeHelper.GetUtcNow(); // Trả về DateTime.UtcNow
             return await _db.RefreshTokens
                 .FirstOrDefaultAsync(t =>
                     t.TokenHash == tokenHash &&
