@@ -906,5 +906,264 @@ public class AuthService : IAuthService
 
         _logger.LogInformation("User {UserId} ({Email}) đã đổi mật khẩu thành công", user.Id, user.Email);
     }
+
+    // ==================== 2FA MANAGEMENT ====================
+
+    /// <summary>
+    /// Bật 2FA - Gửi OTP xác nhận về email
+    /// Áp dụng cho tất cả roles: CUSTOMER, STAFF, MANAGER, ADMIN
+    /// </summary>
+    public async Task Enable2FAAsync(Guid userId)
+    {
+        // 1. Tìm user
+        var user = await _userRepo.GetUserByIdAsync(userId);
+        if (user == null)
+            throw new AppException(404, "Tài khoản không tồn tại", ErrorCodes.NotFound);
+
+        // 2. Kiểm tra email đã verify chưa
+        if (!user.IsEmailVerified)
+            throw new AppException(403, "Vui lòng xác thực email trước khi bật 2FA", ErrorCodes.Forbidden);
+
+        // 3. Kiểm tra MustChangePassword - không cho phép thay đổi security settings khi đang bị yêu cầu đổi password
+        if (user.MustChangePassword)
+            throw new AppException(403, "Vui lòng đổi mật khẩu trước khi thay đổi cài đặt bảo mật", ErrorCodes.Forbidden);
+
+        // 4. Kiểm tra status
+        if (user.Status == UserStatus.LOCKED)
+            throw new AppException(403, "Tài khoản của bạn đã bị khóa", ErrorCodes.AccountLocked);
+
+        // 5. Kiểm tra đã bật 2FA chưa
+        if (user.Is2faEnabled)
+            throw new AppException(400, "Xác thực 2 yếu tố đã được bật trước đó", ErrorCodes.BadRequest);
+
+        // 6. Kiểm tra cooldown 60s
+        var latestOtp = await _otpRepo.GetLatestActiveOtpAsync(userId, OtpType.ENABLE_2FA);
+        if (latestOtp != null)
+        {
+            var now = DateTimeHelper.GetUtcNow();
+            var secondsElapsed = (now - latestOtp.CreatedAt).TotalSeconds;
+
+            if (secondsElapsed < 60)
+                throw new AppException(429,
+                    $"Vui lòng chờ {60 - (int)secondsElapsed} giây trước khi gửi lại OTP",
+                    ErrorCodes.OtpLimitExceeded);
+        }
+
+        // 7. Invalidate OTP cũ trước khi tạo mới
+        await _otpRepo.InvalidateAllOtpAsync(userId, OtpType.ENABLE_2FA);
+
+        // 8. Tạo OTP mới
+        var rawCode = _otpService.GenerateCode();
+        var otp = new OtpCode
+        {
+            UserId = userId,
+            Type = OtpType.ENABLE_2FA,
+            CodeHash = _otpService.HashCode(rawCode),
+            AttemptCount = 0,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(5),
+            CreatedAt = DateTime.UtcNow
+        };
+        await _otpRepo.CreateOtpAsync(otp);
+
+        // 9. Gửi email
+        try
+        {
+            await _emailService.SendOtp2FAAsync(user.Email, user.FullName, rawCode);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send ENABLE_2FA OTP to {Email}", user.Email);
+            throw new AppException(500, "Không thể gửi email OTP, vui lòng thử lại", ErrorCodes.InternalError);
+        }
+
+        _logger.LogInformation("User {UserId} ({Email}) requested to enable 2FA", userId, user.Email);
+    }
+
+    /// <summary>
+    /// Bật 2FA - Xác nhận OTP và kích hoạt
+    /// </summary>
+    public async Task Enable2FAVerifyAsync(Guid userId, Verify2FASettingDto dto)
+    {
+        // 1. Tìm user
+        var user = await _userRepo.GetUserByIdAsync(userId);
+        if (user == null)
+            throw new AppException(404, "Tài khoản không tồn tại", ErrorCodes.NotFound);
+
+        // 2. Kiểm tra đã bật 2FA chưa
+        if (user.Is2faEnabled)
+            throw new AppException(400, "Xác thực 2 yếu tố đã được bật trước đó", ErrorCodes.BadRequest);
+
+        // 3. Kiểm tra status
+        if (user.Status == UserStatus.LOCKED)
+            throw new AppException(403, "Tài khoản của bạn đã bị khóa", ErrorCodes.AccountLocked);
+
+        // 4. Tìm OTP active
+        var otp = await _otpRepo.GetLatestActiveOtpAsync(userId, OtpType.ENABLE_2FA);
+        if (otp == null)
+            throw new AppException(400, "OTP không hợp lệ hoặc đã hết hạn, vui lòng yêu cầu mã mới", ErrorCodes.OtpInvalid);
+
+        // 5. Kiểm tra attempt
+        if (otp.AttemptCount >= 3)
+        {
+            await _otpRepo.InvalidateAllOtpAsync(userId, OtpType.ENABLE_2FA);
+            throw new AppException(400, "OTP đã bị khóa do nhập sai quá 3 lần, vui lòng yêu cầu mã mới", ErrorCodes.OtpLimitExceeded);
+        }
+
+        // 6. Verify OTP
+        if (!_otpService.VerifyCode(dto.OtpCode, otp.CodeHash))
+        {
+            otp.AttemptCount++;
+            await _otpRepo.UpdateOtpAsync(otp);
+
+            var remaining = 3 - otp.AttemptCount;
+            if (remaining > 0)
+                throw new AppException(400, $"OTP không đúng, còn {remaining} lần thử", ErrorCodes.OtpInvalid);
+
+            // Hết 3 lần thử → invalidate
+            await _otpRepo.InvalidateAllOtpAsync(userId, OtpType.ENABLE_2FA);
+            throw new AppException(400, "OTP đã bị khóa do nhập sai quá 3 lần, vui lòng yêu cầu mã mới", ErrorCodes.OtpLimitExceeded);
+        }
+
+        // 7. OTP hợp lệ → đánh dấu đã dùng
+        otp.UsedAt = DateTime.UtcNow;
+        await _otpRepo.UpdateOtpAsync(otp);
+
+        // 8. Bật 2FA
+        user.Is2faEnabled = true;
+        user.UpdatedAt = DateTime.UtcNow;
+        await _userRepo.UpdateUserAsync(user);
+
+        // 9. Revoke tất cả refresh tokens - force re-login với 2FA mới
+        // Lý do: Security state đã thay đổi, nên invalidate tất cả sessions cũ
+        await _refreshTokenRepo.RevokeAllByUserIdAsync(userId);
+
+        _logger.LogInformation("User {UserId} ({Email}) enabled 2FA successfully", userId, user.Email);
+    }
+
+    /// <summary>
+    /// Tắt 2FA - Gửi OTP xác nhận về email
+    /// </summary>
+    public async Task Disable2FAAsync(Guid userId)
+    {
+        // 1. Tìm user
+        var user = await _userRepo.GetUserByIdAsync(userId);
+        if (user == null)
+            throw new AppException(404, "Tài khoản không tồn tại", ErrorCodes.NotFound);
+
+        // 2. Kiểm tra MustChangePassword
+        if (user.MustChangePassword)
+            throw new AppException(403, "Vui lòng đổi mật khẩu trước khi thay đổi cài đặt bảo mật", ErrorCodes.Forbidden);
+
+        // 3. Kiểm tra status
+        if (user.Status == UserStatus.LOCKED)
+            throw new AppException(403, "Tài khoản của bạn đã bị khóa", ErrorCodes.AccountLocked);
+
+        // 4. Kiểm tra đã bật 2FA chưa
+        if (!user.Is2faEnabled)
+            throw new AppException(400, "Xác thực 2 yếu tố chưa được bật", ErrorCodes.BadRequest);
+
+        // 5. Kiểm tra cooldown 60s
+        var latestOtp = await _otpRepo.GetLatestActiveOtpAsync(userId, OtpType.DISABLE_2FA);
+        if (latestOtp != null)
+        {
+            var now = DateTimeHelper.GetUtcNow();
+            var secondsElapsed = (now - latestOtp.CreatedAt).TotalSeconds;
+
+            if (secondsElapsed < 60)
+                throw new AppException(429,
+                    $"Vui lòng chờ {60 - (int)secondsElapsed} giây trước khi gửi lại OTP",
+                    ErrorCodes.OtpLimitExceeded);
+        }
+
+        // 6. Invalidate OTP cũ trước khi tạo mới
+        await _otpRepo.InvalidateAllOtpAsync(userId, OtpType.DISABLE_2FA);
+
+        // 7. Tạo OTP mới
+        var rawCode = _otpService.GenerateCode();
+        var otp = new OtpCode
+        {
+            UserId = userId,
+            Type = OtpType.DISABLE_2FA,
+            CodeHash = _otpService.HashCode(rawCode),
+            AttemptCount = 0,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(5),
+            CreatedAt = DateTime.UtcNow
+        };
+        await _otpRepo.CreateOtpAsync(otp);
+
+        // 8. Gửi email
+        try
+        {
+            await _emailService.SendOtp2FAAsync(user.Email, user.FullName, rawCode);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send DISABLE_2FA OTP to {Email}", user.Email);
+            throw new AppException(500, "Không thể gửi email OTP, vui lòng thử lại", ErrorCodes.InternalError);
+        }
+
+        _logger.LogInformation("User {UserId} ({Email}) requested to disable 2FA", userId, user.Email);
+    }
+
+    /// <summary>
+    /// Tắt 2FA - Xác nhận OTP và vô hiệu hóa
+    /// </summary>
+    public async Task Disable2FAVerifyAsync(Guid userId, Verify2FASettingDto dto)
+    {
+        // 1. Tìm user
+        var user = await _userRepo.GetUserByIdAsync(userId);
+        if (user == null)
+            throw new AppException(404, "Tài khoản không tồn tại", ErrorCodes.NotFound);
+
+        // 2. Kiểm tra đã bật 2FA chưa
+        if (!user.Is2faEnabled)
+            throw new AppException(400, "Xác thực 2 yếu tố chưa được bật", ErrorCodes.BadRequest);
+
+        // 3. Kiểm tra status
+        if (user.Status == UserStatus.LOCKED)
+            throw new AppException(403, "Tài khoản của bạn đã bị khóa", ErrorCodes.AccountLocked);
+
+        // 4. Tìm OTP active
+        var otp = await _otpRepo.GetLatestActiveOtpAsync(userId, OtpType.DISABLE_2FA);
+        if (otp == null)
+            throw new AppException(400, "OTP không hợp lệ hoặc đã hết hạn, vui lòng yêu cầu mã mới", ErrorCodes.OtpInvalid);
+
+        // 5. Kiểm tra attempt
+        if (otp.AttemptCount >= 3)
+        {
+            await _otpRepo.InvalidateAllOtpAsync(userId, OtpType.DISABLE_2FA);
+            throw new AppException(400, "OTP đã bị khóa do nhập sai quá 3 lần, vui lòng yêu cầu mã mới", ErrorCodes.OtpLimitExceeded);
+        }
+
+        // 6. Verify OTP
+        if (!_otpService.VerifyCode(dto.OtpCode, otp.CodeHash))
+        {
+            otp.AttemptCount++;
+            await _otpRepo.UpdateOtpAsync(otp);
+
+            var remaining = 3 - otp.AttemptCount;
+            if (remaining > 0)
+                throw new AppException(400, $"OTP không đúng, còn {remaining} lần thử", ErrorCodes.OtpInvalid);
+
+            // Hết 3 lần thử → invalidate
+            await _otpRepo.InvalidateAllOtpAsync(userId, OtpType.DISABLE_2FA);
+            throw new AppException(400, "OTP đã bị khóa do nhập sai quá 3 lần, vui lòng yêu cầu mã mới", ErrorCodes.OtpLimitExceeded);
+        }
+
+        // 7. OTP hợp lệ → đánh dấu đã dùng
+        otp.UsedAt = DateTime.UtcNow;
+        await _otpRepo.UpdateOtpAsync(otp);
+
+        // 8. Tắt 2FA
+        user.Is2faEnabled = false;
+        user.UpdatedAt = DateTime.UtcNow;
+        await _userRepo.UpdateUserAsync(user);
+
+        // 9. Revoke tất cả refresh tokens - force re-login
+        // Lý do: Nếu attacker đang giữ session, user tắt 2FA → attacker không thể tiếp tục dùng session cũ
+        await _refreshTokenRepo.RevokeAllByUserIdAsync(userId);
+
+        _logger.LogInformation("User {UserId} ({Email}) disabled 2FA successfully", userId, user.Email);
+    }
 }
 

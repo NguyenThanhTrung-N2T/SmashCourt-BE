@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using SmashCourt_BE.Common;
@@ -6,6 +7,7 @@ using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Services.IService;
 using Microsoft.Extensions.Options;
 using SmashCourt_BE.Configurations;
+using System.Security.Claims;
 
 namespace SmashCourt_BE.Controllers;
 
@@ -215,5 +217,85 @@ public class AuthController : ControllerBase
 
         return Ok(ApiResponse.Ok(
             message: "Đổi mật khẩu thành công, vui lòng đăng nhập lại"));
+    }
+
+    // ==================== 2FA MANAGEMENT ====================
+
+    /// <summary>
+    /// Bật 2FA - Gửi OTP xác nhận về email
+    /// Yêu cầu: User đã đăng nhập (có access token)
+    /// </summary>
+    [HttpPost("2fa/enable")]
+    [Authorize]
+    [EnableRateLimiting("sensitive")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    public async Task<IActionResult> Enable2FA()
+    {
+        var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        await _authService.Enable2FAAsync(userId);
+
+        return Ok(ApiResponse.Ok(
+            message: "OTP đã được gửi đến email của bạn, có hiệu lực trong 5 phút"));
+    }
+
+    /// <summary>
+    /// Bật 2FA - Xác nhận OTP và kích hoạt
+    /// Yêu cầu: User đã đăng nhập (có access token)
+    /// </summary>
+    [HttpPost("2fa/enable/verify")]
+    [Authorize]
+    [EnableRateLimiting("sensitive")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> Enable2FAVerify([FromBody] Verify2FASettingDto dto)
+    {
+        var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        await _authService.Enable2FAVerifyAsync(userId, dto);
+
+        return Ok(ApiResponse.Ok(
+            message: "Bật xác thực 2 yếu tố thành công. Vui lòng đăng nhập lại để áp dụng thay đổi"));
+    }
+
+    /// <summary>
+    /// Tắt 2FA - Gửi OTP xác nhận về email
+    /// Yêu cầu: User đã đăng nhập (có access token)
+    /// </summary>
+    [HttpPost("2fa/disable")]
+    [Authorize]
+    [EnableRateLimiting("sensitive")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    public async Task<IActionResult> Disable2FA()
+    {
+        var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        await _authService.Disable2FAAsync(userId);
+
+        return Ok(ApiResponse.Ok(
+            message: "OTP đã được gửi đến email của bạn, có hiệu lực trong 5 phút"));
+    }
+
+    /// <summary>
+    /// Tắt 2FA - Xác nhận OTP và vô hiệu hóa
+    /// Yêu cầu: User đã đăng nhập (có access token)
+    /// </summary>
+    [HttpPost("2fa/disable/verify")]
+    [Authorize]
+    [EnableRateLimiting("sensitive")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> Disable2FAVerify([FromBody] Verify2FASettingDto dto)
+    {
+        var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        await _authService.Disable2FAVerifyAsync(userId, dto);
+
+        return Ok(ApiResponse.Ok(
+            message: "Tắt xác thực 2 yếu tố thành công. Vui lòng đăng nhập lại để áp dụng thay đổi"));
     }
 }
