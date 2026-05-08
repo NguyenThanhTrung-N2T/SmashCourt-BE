@@ -239,8 +239,22 @@ public class UserManagementService : IUserManagementService
         // 1. Force role dựa trên currentUserRole
         var actualRole = ForceRoleBasedOnCurrentUser(dto.RequestedRole, currentUserRole);
 
-        // 2. Validate branch
-        var branch = await _branchRepo.GetByIdAsync(dto.BranchId);
+        // 2. Auto-fill branchId cho BRANCH_MANAGER nếu không cung cấp
+        Guid branchId = dto.BranchId ?? Guid.Empty;
+        if (currentUserRole == UserRole.BRANCH_MANAGER.ToString() && branchId == Guid.Empty)
+        {
+            var managerBranch = await _userBranchRepo.GetActiveByUserIdAsync(currentUserId);
+            if (managerBranch == null)
+                throw new AppException(403, "Bạn chưa được gán chi nhánh", ErrorCodes.Forbidden);
+            branchId = managerBranch.BranchId;
+        }
+
+        // 3. Validate branchId (bắt buộc cho OWNER)
+        if (branchId == Guid.Empty)
+            throw new AppException(400, "Chi nhánh là bắt buộc", ErrorCodes.ValidationError);
+
+        // 4. Validate branch
+        var branch = await _branchRepo.GetByIdAsync(branchId);
         if (branch == null)
             throw new AppException(404, "Không tìm thấy chi nhánh", ErrorCodes.BranchNotFound);
 
@@ -248,7 +262,7 @@ public class UserManagementService : IUserManagementService
         if (currentUserRole == UserRole.BRANCH_MANAGER.ToString())
         {
             var managerBranch = await _userBranchRepo.GetActiveByUserIdAsync(currentUserId);
-            if (managerBranch == null || managerBranch.BranchId != dto.BranchId)
+            if (managerBranch == null || managerBranch.BranchId != branchId)
                 throw new AppException(403, "Bạn chỉ có thể tạo nhân viên trong chi nhánh của mình", ErrorCodes.Forbidden);
         }
 
@@ -295,7 +309,7 @@ public class UserManagementService : IUserManagementService
         var userBranch = new UserBranch
         {
             UserId = user.Id,
-            BranchId = dto.BranchId,
+            BranchId = branchId,
             Role = userBranchRole,
             IsActive = true,
             AssignedAt = DateTime.UtcNow

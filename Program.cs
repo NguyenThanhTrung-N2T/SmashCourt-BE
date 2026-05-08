@@ -249,8 +249,8 @@ builder.Services.AddRateLimiter(options =>
                 "Bạn gửi quá nhiều request, vui lòng thử lại sau",
                 ErrorCodes.OtpLimitExceeded  // 429 — dùng code rate-limit, không phải BadRequest
             ),
-            new System.Text.Json.JsonSerializerOptions 
-            { 
+            new System.Text.Json.JsonSerializerOptions
+            {
                 Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
                 PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
             }
@@ -264,6 +264,7 @@ builder.Services.AddRateLimiter(options =>
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
+    options.CustomSchemaIds(type => type.FullName);
     options.SwaggerDoc("v1", new OpenApiInfo { Title = "API", Version = "v1" });
 
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme

@@ -29,10 +29,11 @@ public class CreateUserDto
     public UserRole RequestedRole { get; set; }
 
     /// <summary>
-    /// Chi nhánh được gán (bắt buộc)
+    /// Chi nhánh được gán
+    /// OWNER: bắt buộc
+    /// BRANCH_MANAGER: tùy chọn (sẽ tự động sử dụng chi nhánh của manager nếu không cung cấp)
     /// </summary>
-    [Required(ErrorMessage = "Chi nhánh là bắt buộc")]
-    public Guid BranchId { get; set; }
+    public Guid? BranchId { get; set; }
 
     /// <summary>
     /// Mật khẩu tạm thời (tùy chọn)
