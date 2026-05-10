@@ -139,10 +139,24 @@ namespace SmashCourt_BE.Controllers
             // 🔥 STEP 1: Check đã xử lý bởi IPN chưa (idempotency check)
             var txnRef = queryCollection["vnp_TxnRef"].ToString();
             
-            // ✅ PRODUCTION MODE: Confirm chỉ READ-ONLY
-            // IPN đã update DB → Confirm chỉ đọc kết quả để return cho FE
+            // ✅ FALLBACK MODE: Sandbox/Development
+            // Gọi IPN logic trực tiếp từ Confirm endpoint để đảm bảo DB luôn được update
+            // (HandleVnPayIpnAsync đã có idempotency check bên trong)
             _logger.LogInformation(
-                "📱 CONFIRM | Reading payment result | TxnRef={TxnRef} | Mode=READ_ONLY",
+                "📱 CONFIRM | Triggering IPN fallback logic | TxnRef={TxnRef}",
+                txnRef);
+            
+            try 
+            {
+                await _service.HandleVnPayIpnAsync(queryCollection, Request);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "📱 CONFIRM | Error executing IPN fallback for TxnRef={TxnRef}", txnRef);
+            }
+
+            _logger.LogInformation(
+                "📱 CONFIRM | Reading payment result | TxnRef={TxnRef}",
                 txnRef);
             
             var result = await _service.HandleVnPayReturnAsync(queryCollection);
@@ -173,7 +187,7 @@ namespace SmashCourt_BE.Controllers
                 );
                 
                 var curlCommand = BuildCurlCommand(queryParams);
-                _logger.LogInformation("\n{Separator}\n🔥 VNPAY CALLBACK RECEIVED - Copy lệnh này để test confirm endpoint:\n{Separator}\n{CurlCommand}\n{Separator}\n", 
+                _logger.LogInformation("\n{Separator}\nVNPAY CALLBACK RECEIVED - Copy lệnh này để test confirm endpoint:\n{Separator}\n{CurlCommand}\n{Separator}\n", 
                     new string('=', 80), new string('=', 80), curlCommand, new string('=', 80));
                 // ===== END LOG =====
 

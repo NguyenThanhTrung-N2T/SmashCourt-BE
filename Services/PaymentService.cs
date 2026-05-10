@@ -264,14 +264,17 @@ namespace SmashCourt_BE.Services
 
             // 3. Tìm payment để lấy bookingId (READ-ONLY - không update)
             var payment = await _paymentRepo.GetByTransactionRefAsync(transactionRef);
-            var bookingId = payment?.Invoice?.BookingId.ToString();
+            var booking = payment?.Invoice?.Booking;
+            var bookingId = booking?.Id.ToString();
 
             // 4. Trả về kết quả để FE hiển thị
             return new VnPayReturnResult
             {
                 IsSuccess = isSuccess,
                 Message = isSuccess 
-                    ? "Thanh toán thành công! Vui lòng đợi hệ thống xác nhận." 
+                    ? (booking?.Status == BookingStatus.PAID_ONLINE 
+                        ? "Thanh toán thành công! Đặt sân của bạn đã được xác nhận." 
+                        : "Thanh toán thành công! Vui lòng đợi hệ thống xác nhận.")
                     : GetVnPayErrorMessage(responseCode),
                 BookingId = bookingId,
                 TransactionRef = transactionRef,
