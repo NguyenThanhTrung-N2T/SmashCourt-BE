@@ -17,13 +17,18 @@ namespace SmashCourt_BE.Repositories
 
         // STAFF / ADMIN → thấy tất cả sân đang hoạt động + sân bị khóa + sân bị đặt + sân đang sử dụng
         public async Task<List<Court>> GetAllByBranchAsync(
-            Guid branchId, bool isStaffOrAbove)
+            Guid branchId, bool isStaffOrAbove, Guid? courtTypeId = null)
         {
             var query = _context.Courts
                 .Include(c => c.CourtType)
                 .Where(c =>
                     c.BranchId == branchId &&
                     c.Status != CourtStatus.INACTIVE);
+
+            if (courtTypeId.HasValue)
+            {
+                query = query.Where(c => c.CourtTypeId == courtTypeId.Value);
+            }
 
             // CUSTOMER / Public → chỉ thấy sân đang hoạt động
             if (!isStaffOrAbove)

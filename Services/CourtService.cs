@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using SmashCourt_BE.Common;
 using SmashCourt_BE.DTOs.Court;
 using SmashCourt_BE.Models.Entities;
@@ -26,7 +26,7 @@ namespace SmashCourt_BE.Services
 
         // lấy tất cả sân của chi nhánh
         public async Task<List<CourtDto>> GetAllByBranchAsync(
-            Guid branchId, bool isStaffOrAbove)
+            Guid branchId, bool isStaffOrAbove, Guid? courtTypeId = null)
         {
             var branch = await _branchRepo.GetByIdAsync(branchId);
             if (branch == null)
@@ -36,7 +36,7 @@ namespace SmashCourt_BE.Services
             if (!isStaffOrAbove && branch.Status != BranchStatus.ACTIVE)
                 throw new AppException(404, "Không tìm thấy chi nhánh", ErrorCodes.NotFound);
 
-            var courts = await _repo.GetAllByBranchAsync(branchId, isStaffOrAbove);
+            var courts = await _repo.GetAllByBranchAsync(branchId, isStaffOrAbove, courtTypeId);
             return courts.Select(MapToDto).ToList();
         }
 

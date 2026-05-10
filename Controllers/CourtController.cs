@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using SmashCourt_BE.Common;
@@ -28,14 +28,14 @@ namespace SmashCourt_BE.Controllers
         [HttpGet]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<IActionResult> GetAll(Guid branchId)
+        public async Task<IActionResult> GetAll(Guid branchId, [FromQuery] Guid? courtTypeId = null)
         {
             var isStaffOrAbove = User.Identity?.IsAuthenticated == true &&
                 (User.IsInRole(UserRole.OWNER.ToString()) ||
                  User.IsInRole(UserRole.BRANCH_MANAGER.ToString()) ||
                  User.IsInRole(UserRole.STAFF.ToString()));
 
-            var result = await _service.GetAllByBranchAsync(branchId, isStaffOrAbove);
+            var result = await _service.GetAllByBranchAsync(branchId, isStaffOrAbove, courtTypeId);
             return Ok(ApiResponse<List<CourtDto>>.Ok(result));
         }
 

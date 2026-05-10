@@ -6,7 +6,7 @@ namespace SmashCourt_BE.Repositories.IRepository
     public interface ICourtRepository
     {
         // lấy tất cả sân của chi nhánh
-        Task<List<Court>> GetAllByBranchAsync(Guid branchId, bool isStaffOrAbove);
+        Task<List<Court>> GetAllByBranchAsync(Guid branchId, bool isStaffOrAbove, Guid? courtTypeId = null);
 
         // lấy sân theo id, branchId là tùy chọn — khi truyền vào sẽ scope theo chi nhánh (dùng cho staff), khi null sẽ lấy theo id đơn thuần (dùng khi booking)
         Task<Court?> GetByIdAsync(Guid id, Guid? branchId = null);

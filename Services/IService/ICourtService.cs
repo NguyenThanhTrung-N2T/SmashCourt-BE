@@ -1,11 +1,11 @@
-﻿using SmashCourt_BE.DTOs.Court;
+using SmashCourt_BE.DTOs.Court;
 
 namespace SmashCourt_BE.Services.IService
 {
     public interface ICourtService
     {
         // STAFF / ADMIN → thấy tất cả sân đang hoạt động + sân bị khóa + sân bị đặt + sân đang sử dụng
-        Task<List<CourtDto>> GetAllByBranchAsync(Guid branchId, bool isStaffOrAbove);
+        Task<List<CourtDto>> GetAllByBranchAsync(Guid branchId, bool isStaffOrAbove, Guid? courtTypeId = null);
 
         // lấy sân theo id, nếu là staff/admin thì thấy tất cả sân, nếu là khách hàng thì chỉ thấy sân đang hoạt động
         Task<CourtDto> GetByIdAsync(Guid id, Guid branchId, bool isStaffOrAbove);
