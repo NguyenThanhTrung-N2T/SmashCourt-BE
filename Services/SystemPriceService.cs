@@ -74,6 +74,7 @@ namespace SmashCourt_BE.Services
 
             // 5. Validate + build danh sách prices
             var existingPrices = await _repo.GetExactDatePricesAsync(dto.CourtTypeId, effectiveFromDate);
+            var allTimeSlots = await _timeSlotRepo.GetAllAsync();
 
             var insertPrices = new List<SystemPrice>();
             var updatePrices = new List<SystemPrice>();
@@ -81,56 +82,74 @@ namespace SmashCourt_BE.Services
             foreach (var slotPrice in dto.Prices)
             {
                 // Convert TimeSpan → TimeOnly
-                var startTime = TimeOnly.FromTimeSpan(slotPrice.StartTime);
-                var endTime = TimeOnly.FromTimeSpan(slotPrice.EndTime);
+                var requestedStart = TimeOnly.FromTimeSpan(slotPrice.StartTime);
+                var requestedEnd = TimeOnly.FromTimeSpan(slotPrice.EndTime);
 
-                // Tìm WEEKDAY + WEEKEND slot theo startTime + endTime
-                var slots = await _timeSlotRepo.GetByTimeRangeAsync(startTime, endTime);
+                // Find all DB timeslots that fall completely within the requested range
+                var matchedSlots = allTimeSlots
+                    .Where(ts => ts.StartTime >= requestedStart && ts.EndTime <= requestedEnd)
+                    .ToList();
 
-                if (slots.Count != 2)
+                if (!matchedSlots.Any())
                     throw new AppException(400,
-                        $"Không tìm thấy khung giờ {startTime:HH\\:mm} - {endTime:HH\\:mm}",
+                        $"Không tìm thấy khung giờ hệ thống cho khoảng {requestedStart:HH\\:mm} - {requestedEnd:HH\\:mm}",
                         ErrorCodes.BadRequest);
 
-                var weekdaySlot = slots.First(ts => ts.DayType == DayType.WEEKDAY);
-                var weekendSlot = slots.First(ts => ts.DayType == DayType.WEEKEND);
+                // Validation: ensure the matched timeslots continuously cover the requested range without gaps
+                // Since slots are for both WEEKDAY and WEEKEND, we group by StartTime/EndTime
+                var uniqueTimeRanges = matchedSlots
+                    .GroupBy(ts => new { ts.StartTime, ts.EndTime })
+                    .OrderBy(g => g.Key.StartTime)
+                    .ToList();
 
-                // Process WEEKDAY price
-                var existingWeekday = existingPrices.FirstOrDefault(sp => sp.TimeSlotId == weekdaySlot.Id);
-                if (existingWeekday != null)
+                if (uniqueTimeRanges.First().Key.StartTime != requestedStart || 
+                    uniqueTimeRanges.Last().Key.EndTime != requestedEnd)
                 {
-                    existingWeekday.Price = slotPrice.WeekdayPrice;
-                    updatePrices.Add(existingWeekday);
-                }
-                else
-                {
-                    insertPrices.Add(new SystemPrice
-                    {
-                        CourtTypeId = dto.CourtTypeId,
-                        TimeSlotId = weekdaySlot.Id,
-                        Price = slotPrice.WeekdayPrice,
-                        EffectiveFrom = effectiveFromDate,
-                        CreatedAt = DateTime.UtcNow
-                    });
+                    throw new AppException(400,
+                        $"Khung giờ {requestedStart:HH\\:mm} - {requestedEnd:HH\\:mm} không khớp hoặc vượt quá cấu hình của hệ thống.",
+                        ErrorCodes.BadRequest);
                 }
 
-                // Process WEEKEND price
-                var existingWeekend = existingPrices.FirstOrDefault(sp => sp.TimeSlotId == weekendSlot.Id);
-                if (existingWeekend != null)
+                // Check for contiguous blocks (no gaps)
+                for (int i = 0; i < uniqueTimeRanges.Count - 1; i++)
                 {
-                    existingWeekend.Price = slotPrice.WeekendPrice;
-                    updatePrices.Add(existingWeekend);
-                }
-                else
-                {
-                    insertPrices.Add(new SystemPrice
+                    if (uniqueTimeRanges[i].Key.EndTime != uniqueTimeRanges[i + 1].Key.StartTime)
                     {
-                        CourtTypeId = dto.CourtTypeId,
-                        TimeSlotId = weekendSlot.Id,
-                        Price = slotPrice.WeekendPrice,
-                        EffectiveFrom = effectiveFromDate,
-                        CreatedAt = DateTime.UtcNow
-                    });
+                        throw new AppException(400,
+                            $"Khung giờ {requestedStart:HH\\:mm} - {requestedEnd:HH\\:mm} bị thiếu hoặc đứt quãng trong hệ thống.",
+                            ErrorCodes.BadRequest);
+                    }
+                }
+
+                // Process assignments
+                foreach (var ts in matchedSlots)
+                {
+                    var priceToApply = ts.DayType == DayType.WEEKDAY 
+                        ? slotPrice.WeekdayPrice 
+                        : slotPrice.WeekendPrice;
+
+                    var existingPrice = existingPrices.FirstOrDefault(sp => sp.TimeSlotId == ts.Id);
+                    if (existingPrice != null)
+                    {
+                        // Avoid adding duplicates to update list if somehow multiple requested ranges overlap
+                        // though validation should theoretically catch overlap if they overlap on same slots
+                        existingPrice.Price = priceToApply;
+                        if (!updatePrices.Contains(existingPrice))
+                        {
+                            updatePrices.Add(existingPrice);
+                        }
+                    }
+                    else
+                    {
+                        insertPrices.Add(new SystemPrice
+                        {
+                            CourtTypeId = dto.CourtTypeId,
+                            TimeSlotId = ts.Id,
+                            Price = priceToApply,
+                            EffectiveFrom = effectiveFromDate,
+                            CreatedAt = DateTime.UtcNow
+                        });
+                    }
                 }
             }
 

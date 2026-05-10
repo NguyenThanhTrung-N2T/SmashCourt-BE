@@ -382,7 +382,8 @@ namespace SmashCourt_BE.Services
                         $"Chưa cấu hình giá cho khung giờ {slot.StartTime:HH\\:mm} - {slot.EndTime:HH\\:mm}",
                         ErrorCodes.BadRequest);
 
-                var subTotal = unitPrice * hours;
+                var slotHours = (decimal)(slot.EndTime - slot.StartTime).TotalHours;
+                var subTotal = unitPrice * (hours / slotHours);
                 courtFee += subTotal;
 
                 breakdown.Add(new PriceBreakdownDto
