@@ -749,6 +749,186 @@ namespace SmashCourt_BE.Services
             // TODO: Broadcast SignalR
         }
 
+        /// <summary>
+        /// Hủy booking bởi khách hàng (authenticated cancel from booking history)
+        /// Flow: Validate ownership → Atomic status update → Update courts → Create refund → Send email
+        /// </summary>
+        /// <param name="id">Booking ID</param>
+        /// <param name="customerId">Customer user ID (from JWT)</param>
+        public async Task CancelByCustomerAsync(Guid id, Guid customerId)
+        {
+            // 1. Tìm booking với details
+            var booking = await _bookingRepo.GetByIdWithDetailsAsync(id);
+            if (booking == null)
+                throw new AppException(404, "Không tìm thấy đơn đặt sân", ErrorCodes.NotFound);
+
+            // 2. Validate ownership — customer chỉ được hủy booking của chính mình
+            // Guest bookings (CustomerId = null) không thể hủy qua endpoint này
+            if (!booking.CustomerId.HasValue || booking.CustomerId.Value != customerId)
+                throw new AppException(403,
+                    "Bạn không có quyền hủy đơn này", ErrorCodes.Forbidden);
+
+            // 3. Kiểm tra tài khoản có bị khóa không
+            if (booking.Customer?.Status == UserStatus.LOCKED)
+                throw new AppException(403,
+                    "Tài khoản bị khóa, vui lòng liên hệ nhân viên",
+                    ErrorCodes.AccountLocked);
+
+            // 4. IDEMPOTENCY: Nếu booking đã bị hủy rồi, trả về success (không throw error)
+            // Tránh lỗi khi user click nút hủy nhiều lần
+            if (booking.Status == BookingStatus.CANCELLED ||
+                booking.Status == BookingStatus.CANCELLED_PENDING_REFUND ||
+                booking.Status == BookingStatus.CANCELLED_REFUNDED)
+            {
+                return;
+            }
+
+            // 5. Kiểm tra trạng thái có thể hủy không
+            // Chỉ cho phép hủy CONFIRMED (walk-in) hoặc PAID_ONLINE (online booking đã thanh toán)
+            var cancellableStatuses = new[]
+            {
+                BookingStatus.CONFIRMED,
+                BookingStatus.PAID_ONLINE
+            };
+
+            if (!cancellableStatuses.Contains(booking.Status))
+                throw new AppException(400,
+                    "Đơn đặt sân không thể hủy ở trạng thái hiện tại",
+                    ErrorCodes.BadRequest);
+
+            // 6. Validate booking có courts không (safety check)
+            var firstCourt = booking.BookingCourts.FirstOrDefault()
+                ?? throw new AppException(500, "Booking không có sân", ErrorCodes.InternalError);
+
+            var invoice = booking.Invoice;
+            decimal refundAmount = 0;
+            var now = DateTime.UtcNow;
+
+            // 7. Transaction scope - đảm bảo tất cả DB operations là atomic
+            using (var transaction = new System.Transactions.TransactionScope(
+                System.Transactions.TransactionScopeAsyncFlowOption.Enabled))
+            {
+                // 7.1. Set booking status = CANCELLED (default, có thể đổi thành CANCELLED_PENDING_REFUND sau)
+                booking.Status = BookingStatus.CANCELLED;
+                booking.CancelledAt = now;
+                booking.CancelSource = CancelSourceEnum.CUSTOMER;
+                booking.UpdatedAt = now;
+
+                // 7.2. Vô hiệu hóa cancel token nếu có (customer đã cancel qua app, không cần token nữa)
+                if (!string.IsNullOrEmpty(booking.CancelTokenHash))
+                {
+                    booking.CancelTokenUsedAt = now;
+                }
+
+                // 7.3. Cập nhật booking_courts → is_active = false
+                await _bookingRepo.UpdateCourtActiveStatusAsync(booking.Id, false);
+
+                // 7.4. Xóa slot_lock nếu có (cleanup)
+                await _slotLockRepo.DeleteByBookingIdAsync(booking.Id);
+
+                // 7.5. Batch update court status → AVAILABLE
+                var courtIds = booking.BookingCourts
+                    .Where(bc => bc.Court != null)
+                    .Select(bc => bc.CourtId)
+                    .ToList();
+
+                if (courtIds.Any())
+                {
+                    // Check busy courts cho TẤT CẢ courtIds
+                    var busyIds = new HashSet<Guid>();
+
+                    foreach (var courtId in courtIds)
+                    {
+                        var busyCourts = await _bookingRepo.GetActiveByCourtAndDateAsync(
+                            courtId, booking.BookingDate);
+                        
+                        // Lọc ra courts của booking khác (không phải booking đang cancel)
+                        foreach (var bc in busyCourts.Where(bc => bc.BookingId != booking.Id))
+                        {
+                            busyIds.Add(bc.CourtId);
+                        }
+                    }
+
+                    // Chỉ update courts không bị busy
+                    var courtsToUpdate = courtIds.Where(id => !busyIds.Contains(id)).ToList();
+                    
+                    if (courtsToUpdate.Any())
+                    {
+                        await _courtRepo.BatchUpdateStatusAsync(
+                            courtsToUpdate,
+                            CourtStatus.AVAILABLE,
+                            now);
+                        
+                        _logger.LogInformation(
+                            "[CANCEL_CUSTOMER] Updated {Count} courts to AVAILABLE. Skipped {SkippedCount} busy courts.",
+                            courtsToUpdate.Count, busyIds.Count);
+                    }
+                }
+
+                // 7.6. Xử lý refund nếu đã thanh toán
+                if (invoice?.PaymentStatus != InvoicePaymentStatus.UNPAID)
+                {
+                    // Tính % refund dựa trên cancel policy
+                    var refundPercent = await CalculateRefundPercentAsync(
+                        firstCourt.StartTime, booking.BookingDate);
+
+                    var payment = invoice?.Payments?.FirstOrDefault(
+                        p => p.Status == PaymentTxStatus.SUCCESS);
+
+                    if (payment != null && refundPercent > 0)
+                    {
+                        // Tính số tiền hoàn = FinalTotal * refundPercent / 100
+                        refundAmount = Math.Round(invoice!.FinalTotal * refundPercent / 100, 0);
+
+                        // Tạo refund record với status PENDING (chờ staff confirm)
+                        await _refundRepo.CreateAsync(new Refund
+                        {
+                            PaymentId = payment.Id,
+                            Amount = refundAmount,
+                            RefundPercent = refundPercent,
+                            Status = RefundStatus.PENDING,
+                            CreatedAt = now
+                        });
+
+                        // Đổi status thành CANCELLED_PENDING_REFUND
+                        booking.Status = BookingStatus.CANCELLED_PENDING_REFUND;
+                    }
+                }
+
+                // 7.7. Lưu booking với status mới
+                await _bookingRepo.UpdateAsync(booking);
+
+                // 7.8. Commit transaction
+                transaction.Complete();
+            }
+
+            // 8. Logging để tracking
+            _logger.LogInformation(
+                "[CANCEL_CUSTOMER] Booking {BookingId} cancelled by customer {CustomerId}. Refund: {RefundAmount} VND",
+                booking.Id, customerId, refundAmount);
+
+            // 9. Gửi email xác nhận hủy NGOÀI transaction
+            // Lỗi email không ảnh hưởng đến việc hủy booking
+            try
+            {
+                var email = booking.Customer?.Email ?? booking.GuestEmail;
+                var name = booking.Customer?.FullName ?? booking.GuestName;
+                if (!string.IsNullOrEmpty(email))
+                    await _emailService.SendCancelConfirmationAsync(
+                        email, name!, booking.Id, 
+                        booking.Branch.Name,
+                        booking.Branch.Address,
+                        booking.Branch.Phone,
+                        refundAmount);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to send cancel email for booking {BookingId}", booking.Id);
+            }
+
+            // TODO: Broadcast SignalR để update real-time cho staff
+        }
+
         // Lấy thông tin hủy booking theo token (dùng cho khách hàng hủy booking online)
         public async Task<CancelTokenInfoDto> GetCancelInfoAsync(string token)
         {

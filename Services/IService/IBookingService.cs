@@ -23,6 +23,9 @@ namespace SmashCourt_BE.Services.IService
         // Hủy booking bởi nhân viên (staff) 
         Task CancelByStaffAsync(Guid id, Guid cancelledBy, string currentUserRole);
 
+        // Hủy booking bởi khách hàng (customer) - authenticated cancel from booking history
+        Task CancelByCustomerAsync(Guid id, Guid customerId);
+
         // Lấy thông tin hủy booking theo token (dùng cho khách hàng hủy booking online)
         Task<CancelTokenInfoDto> GetCancelInfoAsync(string token);
 

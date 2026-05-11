@@ -46,5 +46,17 @@ namespace SmashCourt_BE.Controllers
             var result = await _service.GetByIdAsync(id, userId, UserRole.CUSTOMER.ToString());
             return Ok(ApiResponse<BookingDto>.Ok(result, "Thông tin chi tiết của đặt sân đã tải thành công"));
         }
+
+
+        /// <summary>
+        /// Hủy booking của khách hàng hiện tại (authenticated cancel from booking history)
+        /// </summary>
+        [HttpPost("{id:guid}/cancel")]
+        public async Task<IActionResult> CancelMyBooking(Guid id)
+        {
+            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            await _service.CancelByCustomerAsync(id, userId);
+            return Ok(ApiResponse.Ok(message: "Hủy đơn thành công"));
+        }
     }
 }
