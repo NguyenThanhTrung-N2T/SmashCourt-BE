@@ -24,6 +24,7 @@ public class AuthService : IAuthService
     private readonly JwtSettings _jwtSettings;
     private readonly ICustomerLoyaltyRepository _customerLoyaltyRepo;
     private readonly ILoyaltyTierRepository _loyaltyTierRepo;
+    private readonly IHttpContextAccessor _httpContextAccessor;
 
 
     public AuthService(
@@ -36,7 +37,8 @@ public class AuthService : IAuthService
         IRefreshTokenRepository refreshTokenRepo,
         IOptions<JwtSettings> jwtSettings,
         ICustomerLoyaltyRepository customerLoyaltyRepo,
-        ILoyaltyTierRepository loyaltyTierRepo)
+        ILoyaltyTierRepository loyaltyTierRepo,
+        IHttpContextAccessor httpContextAccessor)
     {
         _userRepo = userRepo;
         _otpRepo = otpRepo;
@@ -48,6 +50,7 @@ public class AuthService : IAuthService
         _jwtSettings = jwtSettings.Value;
         _customerLoyaltyRepo = customerLoyaltyRepo;
         _loyaltyTierRepo = loyaltyTierRepo;
+        _httpContextAccessor = httpContextAccessor;
     }
     // Gửi (hoặc gửi lại) OTP xác thực email cho user — dùng chung cho đăng ký mới và đăng ký lại
     private async Task ResendOtpForUserAsync(Guid userId, string email, string fullName)
@@ -474,13 +477,20 @@ public class AuthService : IAuthService
         await _refreshTokenRepo.RevokeAllByUserIdAsync(user.Id);
 
         var rawRefreshToken = _tokenService.GenerateRefreshToken();
+        
+        // Capture session metadata
+        var (deviceName, ipAddress, userAgent) = CaptureSessionMetadata();
 
         var refreshToken = new RefreshToken
         {
             UserId = user.Id,
             TokenHash = _otpService.HashRefreshToken(rawRefreshToken),
             ExpiresAt = DateTime.UtcNow.AddDays(7),
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = DateTime.UtcNow,
+            DeviceName = deviceName,
+            IpAddress = ipAddress,
+            UserAgent = userAgent,
+            LastUsedAt = DateTime.UtcNow
         };
         await _refreshTokenRepo.CreateAsync(refreshToken);
 
@@ -565,12 +575,20 @@ public class AuthService : IAuthService
         await _refreshTokenRepo.RevokeAllByUserIdAsync(user.Id);
 
         var rawRefreshToken = _tokenService.GenerateRefreshToken();
+        
+        // Capture session metadata
+        var (deviceName, ipAddress, userAgent) = CaptureSessionMetadata();
+        
         var refreshToken = new RefreshToken
         {
             UserId = user.Id,
             TokenHash = _otpService.HashRefreshToken(rawRefreshToken),
             ExpiresAt = DateTime.UtcNow.AddDays(7),
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = DateTime.UtcNow,
+            DeviceName = deviceName,
+            IpAddress = ipAddress,
+            UserAgent = userAgent,
+            LastUsedAt = DateTime.UtcNow
         };
         await _refreshTokenRepo.CreateAsync(refreshToken);
 
@@ -607,13 +625,21 @@ public class AuthService : IAuthService
 
         // 5. Tạo refresh token mới
         var newRawRefreshToken = _tokenService.GenerateRefreshToken();
+        
+        // Capture session metadata (inherit from old token if not available)
+        var (deviceName, ipAddress, userAgent) = CaptureSessionMetadata();
+        
         var newRefreshToken = new RefreshToken
         {
             UserId = user.Id,
             TokenHash = _otpService.HashRefreshToken(newRawRefreshToken),
             RotatedFromId = token.Id,
             ExpiresAt = DateTime.UtcNow.AddDays(_jwtSettings.RefreshTokenExpirationDays),
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = DateTime.UtcNow,
+            DeviceName = deviceName ?? token.DeviceName,  // Inherit from old token if not available
+            IpAddress = ipAddress ?? token.IpAddress,
+            UserAgent = userAgent ?? token.UserAgent,
+            LastUsedAt = DateTime.UtcNow
         };
 
         // 6. Lưu refresh token mới và revoke token cũ
@@ -651,6 +677,32 @@ public class AuthService : IAuthService
             // Token sẽ tự hết hạn trong 7 ngày
             _logger.LogError(ex, "Failed to revoke refresh token during logout");
         }
+    }
+    
+    // ===== HELPER METHOD: Capture Session Metadata =====
+    
+    /// <summary>
+    /// Capture session metadata từ HTTP request (UserAgent, IP Address, Device Name)
+    /// </summary>
+    private (string? DeviceName, string? IpAddress, string? UserAgent) CaptureSessionMetadata()
+    {
+        var httpContext = _httpContextAccessor.HttpContext;
+        if (httpContext == null)
+            return (null, null, null);
+
+        // Lấy User-Agent từ header
+        var userAgent = httpContext.Request.Headers["User-Agent"].ToString();
+        
+        // Truncate UserAgent nếu quá dài (max 500 chars)
+        var truncatedUserAgent = UserAgentParser.TruncateUserAgent(userAgent);
+        
+        // Parse UserAgent thành DeviceName dễ đọc
+        var deviceName = UserAgentParser.ParseToDeviceName(userAgent);
+        
+        // Lấy IP Address
+        var ipAddress = httpContext.Connection.RemoteIpAddress?.ToString();
+
+        return (deviceName, ipAddress, truncatedUserAgent);
     }
     
     // Map thông tin user cho client (bao gồm loyalty info nếu là customer)

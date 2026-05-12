@@ -51,6 +51,14 @@ public static class ErrorCodes
     public const string LastBranchManager      = "LAST_BRANCH_MANAGER";
     public const string UserHasNoBranch        = "USER_HAS_NO_BRANCH";
 
+    // ─── Profile & Session Management ───────────────────────────────────
+    public const string InvalidPassword              = "INVALID_PASSWORD";
+    public const string PasswordMustBeDifferent      = "PASSWORD_MUST_BE_DIFFERENT";
+    public const string OAuthUserCannotChangePassword = "OAUTH_USER_CANNOT_CHANGE_PASSWORD";
+    public const string SessionNotFound              = "SESSION_NOT_FOUND";
+    public const string CannotLogoutCurrentSession   = "CANNOT_LOGOUT_CURRENT_SESSION";
+    public const string SessionAlreadyRevoked        = "SESSION_ALREADY_REVOKED";
+
     // ─── Server errors (5xx) ─────────────────────────────────────────────
     public const string InternalError    = "INTERNAL_ERROR";
 }

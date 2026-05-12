@@ -133,6 +133,12 @@ namespace SmashCourt_BE.Data
                 e.Property(x => x.ExpiresAt).HasColumnName("expires_at");
                 e.Property(x => x.RevokedAt).HasColumnName("revoked_at");
                 e.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()");
+                
+                // Session metadata columns
+                e.Property(x => x.DeviceName).HasColumnName("device_name").HasMaxLength(200);
+                e.Property(x => x.IpAddress).HasColumnName("ip_address").HasMaxLength(45);
+                e.Property(x => x.UserAgent).HasColumnName("user_agent").HasMaxLength(500);
+                e.Property(x => x.LastUsedAt).HasColumnName("last_used_at");
 
                 e.HasOne(x => x.RotatedFrom).WithMany().HasForeignKey(x => x.RotatedFromId).OnDelete(DeleteBehavior.SetNull);
             });

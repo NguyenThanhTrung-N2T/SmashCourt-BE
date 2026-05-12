@@ -21,5 +21,25 @@ namespace SmashCourt_BE.Repositories.IRepository
 
         // Thu hồi token theo token hash
         Task RevokeByTokenHashAsync(string tokenHash);
+
+        // ===== SESSION MANAGEMENT =====
+
+        // Lấy tất cả sessions (refresh tokens) còn hạn của user
+        Task<List<RefreshToken>> GetActiveSessionsByUserIdAsync(Guid userId);
+
+        // Lấy refresh token theo ID
+        Task<RefreshToken?> GetByIdAsync(Guid tokenId);
+
+        // Lấy refresh token còn hạn theo ID (chỉ trả về nếu chưa revoke và chưa hết hạn)
+        Task<RefreshToken?> GetActiveByIdAsync(Guid tokenId);
+
+        // Thu hồi token theo ID
+        Task RevokeByIdAsync(Guid tokenId);
+
+        // Thu hồi tất cả tokens TRỪ token hiện tại
+        Task RevokeAllExceptAsync(Guid userId, string currentTokenHash);
+
+        // Update LastUsedAt khi refresh token
+        Task UpdateLastUsedAtAsync(Guid tokenId, DateTime lastUsedAt);
     }
 }

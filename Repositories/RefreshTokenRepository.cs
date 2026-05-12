@@ -93,5 +93,71 @@ namespace SmashCourt_BE.Repositories
                     s.SetProperty(t => t.RevokedAt, DateTime.UtcNow));
         }
 
+        // ===== SESSION MANAGEMENT =====
+
+        // Lấy tất cả sessions (refresh tokens) còn hạn của user
+        public async Task<List<RefreshToken>> GetActiveSessionsByUserIdAsync(Guid userId)
+        {
+            var now = DateTimeHelper.GetUtcNow();
+            return await _db.RefreshTokens
+                .AsNoTracking()
+                .Where(t =>
+                    t.UserId == userId &&
+                    t.RevokedAt == null &&
+                    t.ExpiresAt > now)
+                .OrderByDescending(t => t.LastUsedAt ?? t.CreatedAt)
+                .ToListAsync();
+        }
+
+        // Lấy refresh token theo ID
+        public async Task<RefreshToken?> GetByIdAsync(Guid tokenId)
+        {
+            return await _db.RefreshTokens.FindAsync(tokenId);
+        }
+
+        // Lấy refresh token còn hạn theo ID (chỉ trả về nếu chưa revoke và chưa hết hạn)
+        public async Task<RefreshToken?> GetActiveByIdAsync(Guid tokenId)
+        {
+            var now = DateTimeHelper.GetUtcNow();
+            return await _db.RefreshTokens
+                .AsNoTracking()
+                .FirstOrDefaultAsync(t =>
+                    t.Id == tokenId &&
+                    t.RevokedAt == null &&
+                    t.ExpiresAt > now);
+        }
+
+        // Thu hồi token theo ID
+        public async Task RevokeByIdAsync(Guid tokenId)
+        {
+            await _db.RefreshTokens
+                .Where(t => t.Id == tokenId)
+                .ExecuteUpdateAsync(s =>
+                    s.SetProperty(t => t.RevokedAt, DateTime.UtcNow));
+        }
+
+        // Thu hồi tất cả tokens TRỪ token hiện tại
+        public async Task RevokeAllExceptAsync(Guid userId, string currentTokenHash)
+        {
+            var now = DateTimeHelper.GetUtcNow();
+            await _db.RefreshTokens
+                .Where(t =>
+                    t.UserId == userId &&
+                    t.TokenHash != currentTokenHash &&
+                    t.RevokedAt == null &&
+                    t.ExpiresAt > now)
+                .ExecuteUpdateAsync(s =>
+                    s.SetProperty(t => t.RevokedAt, now));
+        }
+
+        // Update LastUsedAt khi refresh token
+        public async Task UpdateLastUsedAtAsync(Guid tokenId, DateTime lastUsedAt)
+        {
+            await _db.RefreshTokens
+                .Where(t => t.Id == tokenId)
+                .ExecuteUpdateAsync(s =>
+                    s.SetProperty(t => t.LastUsedAt, lastUsedAt));
+        }
+
     }
 }
