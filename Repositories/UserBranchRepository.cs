@@ -20,6 +20,7 @@ namespace SmashCourt_BE.Repositories
         public async Task<UserBranch?> GetActiveByUserIdAsync(Guid userId)
         {
             return await _context.UserBranches
+                .Include(ub => ub.Branch) // Include Branch để tránh double-query
                 .FirstOrDefaultAsync(ub =>
                     ub.UserId == userId &&
                     ub.IsActive);

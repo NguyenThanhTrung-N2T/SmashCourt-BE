@@ -4,6 +4,7 @@ namespace SmashCourt_BE.DTOs.Auth;
 
 /// <summary>
 /// DTO cho việc đổi mật khẩu bắt buộc sau khi admin tạo user hoặc reset password
+/// Dùng cho POST /auth/change-password (force change với temp token)
 /// </summary>
 public class ChangePasswordDto
 {

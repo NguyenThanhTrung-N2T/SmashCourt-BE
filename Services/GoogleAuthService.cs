@@ -37,6 +37,7 @@ namespace SmashCourt_BE.Services
         private readonly ILogger<GoogleAuthService> _logger;
         private readonly ICustomerLoyaltyRepository _customerLoyaltyRepo;
         private readonly ILoyaltyTierRepository _loyaltyTierRepo;
+        private readonly IHttpContextAccessor _httpContextAccessor;
 
         public GoogleAuthService(
             IOptions<GoogleSettings> googleSettings,
@@ -49,7 +50,8 @@ namespace SmashCourt_BE.Services
             IHttpClientFactory httpClientFactory,
             ILogger<GoogleAuthService> logger,
             ICustomerLoyaltyRepository customerLoyaltyRepo,
-            ILoyaltyTierRepository loyaltyTierRepo)
+            ILoyaltyTierRepository loyaltyTierRepo,
+            IHttpContextAccessor httpContextAccessor)
         {
             _googleSettings = googleSettings.Value;
             _cache = cache;
@@ -62,6 +64,7 @@ namespace SmashCourt_BE.Services
             _logger = logger;
             _customerLoyaltyRepo = customerLoyaltyRepo;
             _loyaltyTierRepo = loyaltyTierRepo;
+            _httpContextAccessor = httpContextAccessor;
 
             if (string.IsNullOrEmpty(_googleSettings.ClientId) ||
         string.IsNullOrEmpty(_googleSettings.ClientSecret) ||
@@ -241,12 +244,20 @@ namespace SmashCourt_BE.Services
             await _refreshTokenRepo.RevokeAllByUserIdAsync(user.Id);
 
             var rawRefreshToken = _tokenService.GenerateRefreshToken();
+            
+            // Capture session metadata
+            var (deviceName, ipAddress, userAgent) = CaptureSessionMetadata();
+            
             var refreshToken = new RefreshToken
             {
                 UserId = user.Id,
                 TokenHash = _otpService.HashRefreshToken(rawRefreshToken),
                 ExpiresAt = DateTime.UtcNow.AddDays(7),
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = DateTime.UtcNow,
+                DeviceName = deviceName,
+                IpAddress = ipAddress,
+                UserAgent = userAgent,
+                LastUsedAt = DateTime.UtcNow
             };
             await _refreshTokenRepo.CreateAsync(refreshToken);
 
@@ -313,6 +324,32 @@ namespace SmashCourt_BE.Services
                 _logger.LogError(ex, "Failed to get Google user info");
                 return null;
             }
+        }
+
+        // ===== HELPER METHOD: Capture Session Metadata =====
+        
+        /// <summary>
+        /// Capture session metadata từ HTTP request (UserAgent, IP Address, Device Name)
+        /// </summary>
+        private (string? DeviceName, string? IpAddress, string? UserAgent) CaptureSessionMetadata()
+        {
+            var httpContext = _httpContextAccessor.HttpContext;
+            if (httpContext == null)
+                return (null, null, null);
+
+            // Lấy User-Agent từ header
+            var userAgent = httpContext.Request.Headers["User-Agent"].ToString();
+            
+            // Truncate UserAgent nếu quá dài (max 500 chars)
+            var truncatedUserAgent = Helpers.UserAgentParser.TruncateUserAgent(userAgent);
+            
+            // Parse UserAgent thành DeviceName dễ đọc
+            var deviceName = Helpers.UserAgentParser.ParseToDeviceName(userAgent);
+            
+            // Lấy IP Address
+            var ipAddress = httpContext.Connection.RemoteIpAddress?.ToString();
+
+            return (deviceName, ipAddress, truncatedUserAgent);
         }
 
         // Map User entity sang UserInfo DTO để trả về FE
