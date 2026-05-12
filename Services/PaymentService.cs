@@ -1,8 +1,10 @@
+using SmashCourt_BE.Common;
 using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
 using SmashCourt_BE.Services.IService;
+using SmashCourt_BE.DTOs.Booking;
 using SmashCourt_BE.DTOs.Payment;
 using SmashCourt_BE.Factories;
 using System.Security.Cryptography;
@@ -43,6 +45,103 @@ namespace SmashCourt_BE.Services
             _emailService = emailService;
             _logger = logger;
             _config = config;
+        }
+
+        /// <summary>
+        /// Tạo lại URL thanh toán VNPay cho booking PENDING đã bị gián đoạn bởi lỗi mạng.
+        /// Flow: validate → void old payment → extend expiry → new VNPay URL → new Payment record
+        /// </summary>
+        public async Task<OnlineBookingResponse> RetryPaymentAsync(Guid bookingId, Guid customerId)
+        {
+            // 1. Load booking với đầy đủ relations
+            var booking = await _bookingRepo.GetByIdWithDetailsAsync(bookingId);
+            if (booking == null)
+                throw new AppException(404, "Không tìm thấy đơn đặt sân", ErrorCodes.NotFound);
+
+            // 2. Validate ownership — chỉ khách hàng sở hữu booking mới được retry
+            if (!booking.CustomerId.HasValue || booking.CustomerId.Value != customerId)
+                throw new AppException(403, "Bạn không có quyền thực hiện thao tác này", ErrorCodes.Forbidden);
+
+            // 3. Validate status — chỉ PENDING mới được retry
+            if (booking.Status != BookingStatus.PENDING)
+                throw new AppException(400,
+                    "Chỉ có thể thanh toán lại cho đơn đang chờ thanh toán",
+                    ErrorCodes.BadRequest);
+
+            // 4. Validate expiry — booking chưa hết hạn
+            if (!booking.ExpiresAt.HasValue || booking.ExpiresAt.Value <= DateTime.UtcNow)
+                throw new AppException(400,
+                    "Đơn đặt sân đã hết hạn thanh toán, vui lòng đặt lại",
+                    ErrorCodes.BadRequest);
+
+            // 5. Lấy invoice (đã được tạo lúc đặt sân lần đầu)
+            var invoice = booking.Invoice
+                ?? throw new AppException(500, "Không tìm thấy hóa đơn", ErrorCodes.InternalError);
+
+            var now = DateTime.UtcNow;
+            var newExpiresAt = now.AddMinutes(10);
+
+            // 6. Tạo VNPay URL mới TRƯỚC transaction (không cần DB)
+            var courtNames = string.Join(", ",
+                booking.BookingCourts.Select(bc => bc.Court?.Name).Where(n => n != null).Distinct());
+            if (string.IsNullOrEmpty(courtNames))
+                courtNames = "San the thao";
+            var courtNamesAscii = StringHelper.RemoveDiacritics(courtNames);
+            var paymentInfo = _vnPayService.CreatePaymentUrl(
+                booking.Id.ToString(),
+                invoice.FinalTotal,
+                $"Thanh toan lai {courtNamesAscii}");
+
+            // 7. Ghi DB trong TransactionScope
+            using var transaction = new System.Transactions.TransactionScope(
+                System.Transactions.TransactionScopeAsyncFlowOption.Enabled);
+
+            // 7A. Void tất cả PENDING payments cũ của invoice này
+            //     Tránh ghost record làm rối IPN lookup
+            var oldPendingPayments = invoice.Payments
+                .Where(p => p.Status == PaymentTxStatus.PENDING)
+                .ToList();
+            foreach (var old in oldPendingPayments)
+            {
+                old.Status = PaymentTxStatus.FAILED;
+                old.UpdatedAt = now;
+                await _paymentRepo.UpdateAsync(old);
+            }
+
+            // 7B. Tạo Payment record mới với TransactionRef mới
+            await _paymentRepo.CreateAsync(new Payment
+            {
+                InvoiceId = invoice.Id,
+                Method = PaymentTxMethod.VNPAY,
+                Amount = invoice.FinalTotal,
+                Status = PaymentTxStatus.PENDING,
+                TransactionRef = paymentInfo.TransactionRef,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+
+            // 7C. Gia hạn ExpiresAt của booking
+            booking.ExpiresAt = newExpiresAt;
+            booking.UpdatedAt = now;
+            await _bookingRepo.UpdateAsync(booking);
+
+            // 7D. Gia hạn ExpiresAt của SlotLocks để cleanup job không giải phóng slot sớm
+            await _slotLockRepo.UpdateExpiryByBookingIdAsync(bookingId, newExpiresAt);
+
+            transaction.Complete();
+
+            _logger.LogInformation(
+                "🔄 RETRY PAYMENT | BookingId={BookingId} | CustomerId={CustomerId} | " +
+                "NewTransactionRef={TransactionRef} | NewExpiresAt={ExpiresAt}",
+                bookingId, customerId, paymentInfo.TransactionRef, newExpiresAt);
+
+            return new OnlineBookingResponse
+            {
+                BookingId = booking.Id,
+                PaymentUrl = paymentInfo.Url,
+                ExpiresAt = newExpiresAt,
+                FinalTotal = invoice.FinalTotal
+            };
         }
 
         public async Task HandleVnPayIpnAsync(IQueryCollection query, HttpRequest request)
@@ -263,20 +362,30 @@ namespace SmashCourt_BE.Services
                 : 0;
 
             // 3. Tìm payment để lấy bookingId (READ-ONLY - không update)
-            var payment = await _paymentRepo.GetByTransactionRefAsync(transactionRef);
-            var booking = payment?.Invoice?.Booking;
-            var bookingId = booking?.Id.ToString();
+            //    Dùng AsNoTracking để tránh EF identity cache trả về entity cũ
+            var payment = await _paymentRepo.GetByTransactionRefAsync(transactionRef, asNoTracking: true);
+            var bookingId = payment?.Invoice?.Booking?.Id;
 
-            // 4. Trả về kết quả để FE hiển thị
+            // 4. Re-fetch booking status trực tiếp từ DB để tránh stale EF cache
+            //    HandleVnPayIpnAsync dùng raw ExecuteUpdateAsync — EF identity cache
+            //    vẫn giữ entity PENDING cũ nếu dùng navigation property
+            BookingStatus? freshStatus = null;
+            if (bookingId.HasValue)
+            {
+                try { freshStatus = await _bookingRepo.GetBookingStatusAsync(bookingId.Value); }
+                catch { /* không ném lỗi nếu booking không tồn tại */ }
+            }
+
+            // 5. Trả về kết quả để FE hiển thị
             return new VnPayReturnResult
             {
                 IsSuccess = isSuccess,
-                Message = isSuccess 
-                    ? (booking?.Status == BookingStatus.PAID_ONLINE 
-                        ? "Thanh toán thành công! Đặt sân của bạn đã được xác nhận." 
+                Message = isSuccess
+                    ? (freshStatus == BookingStatus.PAID_ONLINE
+                        ? "Thanh toán thành công! Đặt sân của bạn đã được xác nhận."
                         : "Thanh toán thành công! Vui lòng đợi hệ thống xác nhận.")
                     : GetVnPayErrorMessage(responseCode),
-                BookingId = bookingId,
+                BookingId = bookingId?.ToString(),
                 TransactionRef = transactionRef,
                 Amount = amount,
                 ResponseCode = responseCode
@@ -342,9 +451,12 @@ namespace SmashCourt_BE.Services
             var startTime = firstCourtSlot.StartTime;
 
             // Token expiry = min(booking start time, 24h from now)
+            // DateOnly.ToDateTime() returns Kind=Unspecified — must specify UTC for Npgsql/timestamptz
+            var bookingStartUtc = DateTime.SpecifyKind(
+                booking.BookingDate.ToDateTime(startTime), DateTimeKind.Utc);
             var tokenExpiry = new DateTime[]
             {
-                booking.BookingDate.ToDateTime(startTime),
+                bookingStartUtc,
                 DateTimeHelper.GetUtcNow().AddHours(24)
             }.Min();
 
@@ -415,5 +527,7 @@ namespace SmashCourt_BE.Services
             var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(rawToken));
             return Convert.ToHexString(bytes).ToLower();
         }
+
+        // RemoveDiacritics moved to StringHelper
     }
 }

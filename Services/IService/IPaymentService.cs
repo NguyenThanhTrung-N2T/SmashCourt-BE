@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http;
+using SmashCourt_BE.DTOs.Booking;
 using SmashCourt_BE.DTOs.Payment;
 
 namespace SmashCourt_BE.Services.IService
@@ -16,5 +17,11 @@ namespace SmashCourt_BE.Services.IService
         /// ⚠️ READ-ONLY - chỉ verify và trả về thông tin để FE hiển thị
         /// </summary>
         Task<VnPayReturnResult> HandleVnPayReturnAsync(IQueryCollection query);
+
+        /// <summary>
+        /// Tạo lại URL thanh toán VNPay cho booking PENDING đã bị gián đoạn
+        /// Validate: booking thuộc customer, status = PENDING, now &lt; ExpiresAt
+        /// </summary>
+        Task<OnlineBookingResponse> RetryPaymentAsync(Guid bookingId, Guid customerId);
     }
 }

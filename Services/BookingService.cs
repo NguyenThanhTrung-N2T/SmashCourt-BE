@@ -338,7 +338,7 @@ namespace SmashCourt_BE.Services
             // — library tự generate PaymentId riêng, paymentInfo.TransactionRef mới là giá trị lưu vào DB
             var courtNames = string.Join(", ",
                 courtEntities.Select(x => x.Court.Name).Distinct());
-            var courtNamesAscii = RemoveDiacritics(courtNames);
+            var courtNamesAscii = StringHelper.RemoveDiacritics(courtNames);
             var paymentInfo = _vnPayService.CreatePaymentUrl(
                 booking.Id.ToString(),   // chỉ dùng để log bên trong VnPayService
                 finalTotal,
@@ -2106,21 +2106,7 @@ namespace SmashCourt_BE.Services
         };
 
         // Bỏ dấu tiếng Việt để dùng trong vnp_OrderInfo (VNPay không chấp nhận Unicode)
-        private static string RemoveDiacritics(string text)
-        {
-            // Xử lý các ký tự đặc biệt không decompose được trong NFD
-            text = text.Replace("Đ", "D").Replace("đ", "d");
-
-            var normalized = text.Normalize(System.Text.NormalizationForm.FormD);
-            var sb = new System.Text.StringBuilder();
-            foreach (var c in normalized)
-            {
-                if (System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c)
-                    != System.Globalization.UnicodeCategory.NonSpacingMark)
-                    sb.Append(c);
-            }
-            return sb.ToString().Normalize(System.Text.NormalizationForm.FormC);
-        }
+        // RemoveDiacritics moved to StringHelper
 
         // Logic chung dùng để tạo chi tiết của một Booking
         private async Task<Invoice> CreateBookingDetailsAsync(

@@ -21,5 +21,8 @@ namespace SmashCourt_BE.Repositories.IRepository
 
         // Xóa tất cả slot lock liên quan đến một booking cụ thể
         Task DeleteByBookingIdAsync(Guid bookingId);
+
+        // Cập nhật ExpiresAt của tất cả SlotLocks thuộc booking (dùng khi retry payment)
+        Task UpdateExpiryByBookingIdAsync(Guid bookingId, DateTime newExpiresAt);
     }
 }

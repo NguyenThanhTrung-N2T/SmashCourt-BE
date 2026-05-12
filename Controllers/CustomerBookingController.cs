@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using SmashCourt_BE.Common;
@@ -16,10 +16,12 @@ namespace SmashCourt_BE.Controllers
     public class CustomerBookingController : ControllerBase
     {
         private readonly IBookingService _service;
+        private readonly IPaymentService _paymentService;
 
-        public CustomerBookingController(IBookingService service)
+        public CustomerBookingController(IBookingService service, IPaymentService paymentService)
         {
             _service = service;
+            _paymentService = paymentService;
         }
 
 
@@ -31,7 +33,7 @@ namespace SmashCourt_BE.Controllers
         {
             var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
             var result = await _service.GetMyBookingsAsync(userId, query);
-            return Ok(ApiResponse<PagedResult<BookingDto>>.Ok(result,"Lấy thành công lịch sử thành công của khách hàng"));
+            return Ok(ApiResponse<PagedResult<BookingDto>>.Ok(result, "Lấy thành công lịch sử thành công của khách hàng"));
         }
 
 
@@ -57,6 +59,19 @@ namespace SmashCourt_BE.Controllers
             var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
             await _service.CancelByCustomerAsync(id, userId);
             return Ok(ApiResponse.Ok(message: "Hủy đơn thành công"));
+        }
+
+
+        /// <summary>
+        /// Tạo lại URL thanh toán VNPay cho booking PENDING (retry sau khi bị gián đoạn mạng)
+        /// Điều kiện: booking thuộc customer, status = PENDING, now < ExpiresAt
+        /// </summary>
+        [HttpPost("{id:guid}/retry-payment")]
+        public async Task<IActionResult> RetryPayment(Guid id)
+        {
+            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var result = await _paymentService.RetryPaymentAsync(id, userId);
+            return Ok(ApiResponse<OnlineBookingResponse>.Ok(result, "Tạo lại URL thanh toán thành công"));
         }
     }
 }

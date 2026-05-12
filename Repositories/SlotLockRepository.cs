@@ -77,5 +77,14 @@ namespace SmashCourt_BE.Repositories
                 .Where(sl => sl.BookingId == bookingId)
                 .ExecuteDeleteAsync();
         }
+
+        // Cập nhật ExpiresAt của tất cả SlotLocks thuộc booking (dùng khi retry payment)
+        public async Task UpdateExpiryByBookingIdAsync(Guid bookingId, DateTime newExpiresAt)
+        {
+            await _context.SlotLocks
+                .Where(sl => sl.BookingId == bookingId)
+                .ExecuteUpdateAsync(setters =>
+                    setters.SetProperty(sl => sl.ExpiresAt, newExpiresAt));
+        }
     }
 }
