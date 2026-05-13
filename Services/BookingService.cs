@@ -276,8 +276,7 @@ namespace SmashCourt_BE.Services
                     throw new AppException(400,
                         "Khuyến mãi không áp dụng cho ngày đặt sân này", ErrorCodes.BadRequest);
 
-                promotionDiscountAmount = Math.Round(
-                    totalAfterLoyalty * promotion.DiscountRate / 100, 0);
+                promotionDiscountAmount = Promotions.PromotionHelper.CalculateDiscount(promotion, totalAfterLoyalty);
             }
 
             var finalTotal = totalAfterLoyalty - promotionDiscountAmount;
@@ -514,8 +513,7 @@ namespace SmashCourt_BE.Services
                             throw new AppException(400,
                                 "Khuyến mãi không áp dụng cho ngày đặt sân này", ErrorCodes.BadRequest);
 
-                        promotionDiscountAmount = Math.Round(
-                            totalAfterLoyalty * promotion.DiscountRate / 100, 0);
+                        promotionDiscountAmount = Promotions.PromotionHelper.CalculateDiscount(promotion, totalAfterLoyalty);
                     }
                 }
 
@@ -2169,10 +2167,16 @@ namespace SmashCourt_BE.Services
                     BookingId = booking.Id,
                     PromotionId = promotion.Id,
                     PromotionNameSnapshot = promotion.Name,
-                    DiscountRateSnapshot = promotion.DiscountRate,
+                    PromotionCodeSnapshot = promotion.Code,
+                    DiscountTypeSnapshot = promotion.DiscountType,
+                    DiscountValueSnapshot = promotion.DiscountValue,
                     DiscountAmount = promotionDiscountAmount,
                     CreatedAt = DateTime.UtcNow
                 });
+
+                // Increment promotion usage count
+                promotion.UsedCount++;
+                await _promotionRepo.UpdateAsync(promotion);
             }
 
             var invoice = await _invoiceRepo.CreateAsync(new Invoice

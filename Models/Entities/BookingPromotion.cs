@@ -1,4 +1,6 @@
-﻿namespace SmashCourt_BE.Models.Entities
+﻿using SmashCourt_BE.Models.Enums;
+
+namespace SmashCourt_BE.Models.Entities
 {
     public class BookingPromotion
     {
@@ -6,7 +8,9 @@
         public Guid BookingId { get; set; }
         public Guid PromotionId { get; set; }
         public string PromotionNameSnapshot { get; set; } = null!;
-        public decimal DiscountRateSnapshot { get; set; }
+        public string? PromotionCodeSnapshot { get; set; }
+        public DiscountTypeEnum DiscountTypeSnapshot { get; set; }
+        public decimal DiscountValueSnapshot { get; set; }
         public decimal DiscountAmount { get; set; }
         public DateTime CreatedAt { get; set; }
 

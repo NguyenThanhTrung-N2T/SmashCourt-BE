@@ -5,7 +5,7 @@ namespace SmashCourt_BE.Data
 {
     public class SmashCourtContext : DbContext
     {
-        public SmashCourtContext(DbContextOptions<SmashCourtContext> option) : base(option) {}
+        public SmashCourtContext(DbContextOptions<SmashCourtContext> option) : base(option) { }
 
         // ── Module 1 ──────────────────────────────
         public DbSet<User> Users => Set<User>();
@@ -37,6 +37,7 @@ namespace SmashCourt_BE.Data
 
         // ── Module 6 ──────────────────────────────
         public DbSet<Promotion> Promotions => Set<Promotion>();
+        public DbSet<PromotionCondition> PromotionConditions => Set<PromotionCondition>();
 
         // ── Module 7 ──────────────────────────────
         public DbSet<Booking> Bookings => Set<Booking>();
@@ -70,6 +71,7 @@ namespace SmashCourt_BE.Data
             modelBuilder.HasPostgresEnum<BranchServiceStatus>("branch_service_status");
             modelBuilder.HasPostgresEnum<LoyaltyTransactionType>("loyalty_transaction_type");
             modelBuilder.HasPostgresEnum<PromotionStatus>("promotion_status");
+            modelBuilder.HasPostgresEnum<DiscountTypeEnum>("discount_type_enum");
             modelBuilder.HasPostgresEnum<BookingStatus>("booking_status");
             modelBuilder.HasPostgresEnum<BookingSource>("booking_source");
             modelBuilder.HasPostgresEnum<CancelSourceEnum>("cancel_source_enum");
@@ -133,7 +135,7 @@ namespace SmashCourt_BE.Data
                 e.Property(x => x.ExpiresAt).HasColumnName("expires_at");
                 e.Property(x => x.RevokedAt).HasColumnName("revoked_at");
                 e.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()");
-                
+
                 // Session metadata columns
                 e.Property(x => x.DeviceName).HasColumnName("device_name").HasMaxLength(200);
                 e.Property(x => x.IpAddress).HasColumnName("ip_address").HasMaxLength(45);
@@ -399,12 +401,34 @@ namespace SmashCourt_BE.Data
                 e.HasKey(x => x.Id);
                 e.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
                 e.Property(x => x.Name).HasColumnName("name").HasMaxLength(255).IsRequired();
-                e.Property(x => x.DiscountRate).HasColumnName("discount_rate").HasPrecision(5, 2);
+                e.Property(x => x.Code).HasColumnName("code").HasMaxLength(50);
+                e.Property(x => x.PromoDisplayUrl).HasColumnName("promo_display_url");
+                e.Property(x => x.Description).HasColumnName("description");
+                e.Property(x => x.DiscountType).HasColumnName("discount_type");
+                e.Property(x => x.DiscountValue).HasColumnName("discount_value").HasPrecision(12, 2);
+                e.Property(x => x.MaxDiscountAmount).HasColumnName("max_discount_amount").HasPrecision(12, 2);
+                e.Property(x => x.UsageLimit).HasColumnName("usage_limit");
+                e.Property(x => x.UsagePerUserLimit).HasColumnName("usage_per_user_limit");
+                e.Property(x => x.UsedCount).HasColumnName("used_count").HasDefaultValue(0);
                 e.Property(x => x.StartDate).HasColumnName("start_date");
                 e.Property(x => x.EndDate).HasColumnName("end_date");
                 e.Property(x => x.Status).HasColumnName("status");
                 e.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()");
                 e.Property(x => x.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("now()");
+
+                e.HasIndex(x => x.Code).IsUnique();
+            });
+
+            modelBuilder.Entity<PromotionCondition>(e =>
+            {
+                e.ToTable("promotion_conditions");
+                e.HasKey(x => x.Id);
+                e.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
+                e.Property(x => x.PromotionId).HasColumnName("promotion_id");
+                e.Property(x => x.ConditionType).HasColumnName("condition_type").HasMaxLength(50).IsRequired();
+                e.Property(x => x.ConditionValue).HasColumnName("condition_value").IsRequired();
+
+                e.HasOne(x => x.Promotion).WithMany(x => x.Conditions).HasForeignKey(x => x.PromotionId).OnDelete(DeleteBehavior.Cascade);
             });
 
             // ── MODULE 7 ──────────────────────────
@@ -513,7 +537,9 @@ namespace SmashCourt_BE.Data
                 e.Property(x => x.BookingId).HasColumnName("booking_id");
                 e.Property(x => x.PromotionId).HasColumnName("promotion_id");
                 e.Property(x => x.PromotionNameSnapshot).HasColumnName("promotion_name_snapshot").HasMaxLength(255).IsRequired();
-                e.Property(x => x.DiscountRateSnapshot).HasColumnName("discount_rate_snapshot").HasPrecision(5, 2);
+                e.Property(x => x.PromotionCodeSnapshot).HasColumnName("promotion_code_snapshot").HasMaxLength(50);
+                e.Property(x => x.DiscountTypeSnapshot).HasColumnName("discount_type_snapshot");
+                e.Property(x => x.DiscountValueSnapshot).HasColumnName("discount_value_snapshot").HasPrecision(12, 2);
                 e.Property(x => x.DiscountAmount).HasColumnName("discount_amount").HasPrecision(12, 2);
                 e.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()");
 
@@ -533,7 +559,7 @@ namespace SmashCourt_BE.Data
                 e.Property(x => x.PromotionDiscountAmount).HasColumnName("promotion_discount_amount").HasPrecision(12, 2).HasDefaultValue(0m);
                 e.Property(x => x.FinalTotal).HasColumnName("final_total").HasPrecision(12, 2);
                 e.Property(x => x.PaymentStatus).HasColumnName("payment_status");
-                e.Property(x => x.PaymentTiming).HasColumnName("payment_timing");
+                e.Property(x => x.PaymentTiming).HasColumnName("payment_timing").HasConversion<int>();
                 e.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()");
                 e.Property(x => x.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("now()");
             });

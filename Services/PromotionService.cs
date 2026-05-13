@@ -11,7 +11,6 @@ namespace SmashCourt_BE.Services
     {
         private readonly IPromotionRepository _repo;
 
-
         public PromotionService(IPromotionRepository repo)
         {
             _repo = repo;
@@ -41,7 +40,8 @@ namespace SmashCourt_BE.Services
         // Lấy khuyến mãi theo id
         public async Task<PromotionDto> GetByIdAsync(Guid id)
         {
-            var promotion = await _repo.GetByIdAsync(id);
+            var promotion = await _repo.GetByIdWithConditionsAsync(id);
+
             if (promotion == null)
                 throw new AppException(404, "Không tìm thấy khuyến mãi", ErrorCodes.NotFound);
 
@@ -71,17 +71,55 @@ namespace SmashCourt_BE.Services
                     "Ngày bắt đầu phải nhỏ hơn hoặc bằng ngày kết thúc",
                     ErrorCodes.BadRequest);
 
-            // 3. Tự tính status theo ngày
+            // 3. Validate code uniqueness if provided
+            if (!string.IsNullOrWhiteSpace(dto.Code))
+            {
+                var codeExists = await _repo.CodeExistsAsync(dto.Code.Trim());
+                if (codeExists)
+                    throw new AppException(400, "Mã khuyến mãi đã tồn tại", ErrorCodes.BadRequest);
+            }
+
+            // 4. Validate discount type and value
+            if (dto.DiscountType == DiscountTypeEnum.PERCENT && dto.DiscountValue > 100)
+                throw new AppException(400, "Tỷ lệ giảm giá phần trăm không được vượt quá 100", ErrorCodes.BadRequest);
+
+            // Validate discount value doesn't exceed database precision (10,2) = max 99999999.99
+            if (dto.DiscountValue > 99999999.99m)
+                throw new AppException(400, "Giá trị giảm giá vượt quá giới hạn cho phép", ErrorCodes.BadRequest);
+
+            // Validate max discount amount if provided
+            if (dto.MaxDiscountAmount.HasValue && dto.MaxDiscountAmount.Value > 99999999.99m)
+                throw new AppException(400, "Giá trị giảm tối đa vượt quá giới hạn cho phép", ErrorCodes.BadRequest);
+
+            // 5. Tự tính status theo ngày
             var promotion = new Promotion
             {
                 Name = dto.Name.Trim(),
-                DiscountRate = dto.DiscountRate,
+                Code = string.IsNullOrWhiteSpace(dto.Code) ? null : dto.Code.Trim().ToUpper(),
+                PromoDisplayUrl = dto.PromoDisplayUrl,
+                Description = dto.Description,
+                DiscountType = dto.DiscountType,
+                DiscountValue = dto.DiscountValue,
+                MaxDiscountAmount = dto.MaxDiscountAmount,
+                UsageLimit = dto.UsageLimit,
+                UsagePerUserLimit = dto.UsagePerUserLimit,
+                UsedCount = 0,
                 StartDate = startDate,
                 EndDate = endDate,
                 Status = CalculateStatus(startDate, endDate),
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
+
+            // 6. Add conditions if provided
+            if (dto.Conditions != null && dto.Conditions.Any())
+            {
+                promotion.Conditions = dto.Conditions.Select(c => new PromotionCondition
+                {
+                    ConditionType = c.ConditionType.Trim(),
+                    ConditionValue = c.ConditionValue.Trim()
+                }).ToList();
+            }
 
             var created = await _repo.CreateAsync(promotion);
             return MapToDto(created);
@@ -90,8 +128,9 @@ namespace SmashCourt_BE.Services
         // Cập nhật khuyến mãi
         public async Task<PromotionDto> UpdateAsync(Guid id, UpdatePromotionDto dto)
         {
-            // 1. Tìm promotion
-            var promotion = await _repo.GetByIdAsync(id);
+            // 1. Tìm promotion with conditions
+            var promotion = await _repo.GetByIdWithConditionsAsync(id);
+
             if (promotion == null)
                 throw new AppException(404, "Không tìm thấy khuyến mãi", ErrorCodes.NotFound);
 
@@ -110,13 +149,53 @@ namespace SmashCourt_BE.Services
                     "Ngày bắt đầu phải nhỏ hơn hoặc bằng ngày kết thúc",
                     ErrorCodes.BadRequest);
 
-            // 5. Update + tính lại status
+            // 5. Validate code uniqueness if changed
+            if (!string.IsNullOrWhiteSpace(dto.Code))
+            {
+                var codeToCheck = dto.Code.Trim().ToUpper();
+                var codeExists = await _repo.CodeExistsAsync(codeToCheck, id);
+                if (codeExists)
+                    throw new AppException(400, "Mã khuyến mãi đã tồn tại", ErrorCodes.BadRequest);
+            }
+
+            // 6. Validate discount type and value
+            if (dto.DiscountType == DiscountTypeEnum.PERCENT && dto.DiscountValue > 100)
+                throw new AppException(400, "Tỷ lệ giảm giá phần trăm không được vượt quá 100", ErrorCodes.BadRequest);
+
+            // Validate discount value doesn't exceed database precision (12,2) = max 99999999.99
+            if (dto.DiscountValue > 99999999.99m)
+                throw new AppException(400, "Giá trị giảm giá vượt quá giới hạn cho phép", ErrorCodes.BadRequest);
+
+            // Validate max discount amount if provided
+            if (dto.MaxDiscountAmount.HasValue && dto.MaxDiscountAmount.Value > 99999999.99m)
+                throw new AppException(400, "Giá trị giảm tối đa vượt quá giới hạn cho phép", ErrorCodes.BadRequest);
+
+            // 7. Update + tính lại status
             promotion.Name = dto.Name.Trim();
-            promotion.DiscountRate = dto.DiscountRate;
+            promotion.Code = string.IsNullOrWhiteSpace(dto.Code) ? null : dto.Code.Trim().ToUpper();
+            promotion.PromoDisplayUrl = dto.PromoDisplayUrl;
+            promotion.Description = dto.Description;
+            promotion.DiscountType = dto.DiscountType;
+            promotion.DiscountValue = dto.DiscountValue;
+            promotion.MaxDiscountAmount = dto.MaxDiscountAmount;
+            promotion.UsageLimit = dto.UsageLimit;
+            promotion.UsagePerUserLimit = dto.UsagePerUserLimit;
             promotion.StartDate = startDate;
             promotion.EndDate = endDate;
             promotion.Status = CalculateStatus(startDate, endDate);
             promotion.UpdatedAt = DateTime.UtcNow;
+
+            // 8. Update conditions - remove old and add new
+            await _repo.RemoveConditionsAsync(promotion.Id);
+            if (dto.Conditions != null && dto.Conditions.Any())
+            {
+                promotion.Conditions = dto.Conditions.Select(c => new PromotionCondition
+                {
+                    PromotionId = promotion.Id,
+                    ConditionType = c.ConditionType.Trim(),
+                    ConditionValue = c.ConditionValue.Trim()
+                }).ToList();
+            }
 
             await _repo.UpdateAsync(promotion);
             return MapToDto(promotion);
@@ -141,18 +220,28 @@ namespace SmashCourt_BE.Services
             await _repo.UpdateAsync(promotion);
         }
 
-
         // map data entity → dto
         private static PromotionDto MapToDto(Promotion p) => new()
         {
             Id = p.Id,
             Name = p.Name,
-            DiscountRate = p.DiscountRate,
+            Code = p.Code,
+            PromoDisplayUrl = p.PromoDisplayUrl,
+            Description = p.Description,
+            DiscountType = p.DiscountType,
+            DiscountValue = p.DiscountValue,
+            MaxDiscountAmount = p.MaxDiscountAmount,
+            UsageLimit = p.UsageLimit,
+            UsagePerUserLimit = p.UsagePerUserLimit,
+            UsedCount = p.UsedCount,
             StartDate = p.StartDate.ToDateTime(TimeOnly.MinValue),
             EndDate = p.EndDate.ToDateTime(TimeOnly.MinValue),
             Status = p.Status,
-            CreatedAt = p.CreatedAt,
-            UpdatedAt = p.UpdatedAt
+            Conditions = p.Conditions?.Select(c => new PromotionConditionDto
+            {
+                ConditionType = c.ConditionType,
+                ConditionValue = c.ConditionValue
+            }).ToList()
         };
     }
 }
