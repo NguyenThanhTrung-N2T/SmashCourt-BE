@@ -12,16 +12,6 @@ namespace SmashCourt_BE.DTOs.Loyalty
         public string TierName { get; set; } = null!;
 
         /// <summary>
-        /// Màu sắc của hạng (hex color code) - để FE render badge đẹp
-        /// </summary>
-        public string TierColor { get; set; } = null!;
-
-        /// <summary>
-        /// Icon của hạng (emoji hoặc icon name) - để FE render badge
-        /// </summary>
-        public string TierIcon { get; set; } = null!;
-
-        /// <summary>
         /// Tỷ lệ giảm giá của hạng hiện tại (%)
         /// </summary>
         public decimal DiscountRate { get; set; }

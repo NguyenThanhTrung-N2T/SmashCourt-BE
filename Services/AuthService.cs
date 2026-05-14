@@ -759,8 +759,6 @@ public class AuthService : IAuthService
                     userInfo.Loyalty = new DTOs.Loyalty.LoyaltyInfo
                     {
                         TierName = loyalty.Tier.Name,
-                        TierColor = LoyaltyTierHelper.GetTierColor(loyalty.Tier.Name),
-                        TierIcon = LoyaltyTierHelper.GetTierIcon(loyalty.Tier.Name),
                         DiscountRate = loyalty.Tier.DiscountRate,
                         CurrentPoints = loyalty.TotalPoints,
                         NextTierPoints = nextTier?.MinPoints ?? loyalty.TotalPoints,

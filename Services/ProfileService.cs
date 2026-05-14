@@ -81,8 +81,6 @@ public class ProfileService : IProfileService
                     profile.Loyalty = new LoyaltyInfo
                     {
                         TierName = tier.Name,
-                        TierColor = "#808080", // Default color - can be enhanced later
-                        TierIcon = "🏆", // Default icon - can be enhanced later
                         DiscountRate = tier.DiscountRate,
                         CurrentPoints = loyalty.TotalPoints,
                         NextTierPoints = nextTier?.MinPoints ?? loyalty.TotalPoints,
