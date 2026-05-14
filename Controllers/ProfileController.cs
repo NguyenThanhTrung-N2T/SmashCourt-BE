@@ -64,7 +64,7 @@ public class ProfileController : ControllerBase
             var userId = GetCurrentUserId();
             await _profileService.UpdateMyProfileAsync(userId, dto);
 
-            return Ok(ApiResponse<object>.Ok(null, "Cập nhật profile thành công"));
+            return Ok(ApiResponse<object>.Ok(null!, "Cập nhật profile thành công"));
         }
         catch (AppException ex)
         {
@@ -90,7 +90,7 @@ public class ProfileController : ControllerBase
             var userId = GetCurrentUserId();
             await _profileService.ChangePasswordAsync(userId, dto);
 
-            return Ok(ApiResponse<object>.Ok(null, 
+            return Ok(ApiResponse<object>.Ok(null!, 
                 "Đổi mật khẩu thành công. " +
                 "Tất cả thiết bị khác sẽ bị đăng xuất trong vòng 15 phút. " +
                 "Vui lòng đăng nhập lại ngay để đảm bảo an toàn."));
@@ -145,7 +145,7 @@ public class ProfileController : ControllerBase
             var currentTokenHash = GetCurrentRefreshTokenHash();
             await _profileService.LogoutSessionAsync(userId, id, currentTokenHash);
 
-            return Ok(ApiResponse<object>.Ok(null, "Logout session thành công"));
+            return Ok(ApiResponse<object>.Ok(null!, "Logout session thành công"));
         }
         catch (AppException ex)
         {
@@ -171,7 +171,7 @@ public class ProfileController : ControllerBase
 
             await _profileService.LogoutAllSessionsAsync(userId, currentTokenHash);
 
-            return Ok(ApiResponse<object>.Ok(null, "Logout tất cả sessions khác thành công"));
+            return Ok(ApiResponse<object>.Ok(null!, "Logout tất cả sessions khác thành công"));
         }
         catch (AppException ex)
         {
