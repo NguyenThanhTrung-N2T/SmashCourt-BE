@@ -165,6 +165,10 @@ builder.Services.AddScoped<IProfileService, ProfileService>();
 builder.Services.AddScoped<ICustomerManagementRepository, CustomerManagementRepository>();
 builder.Services.AddScoped<ICustomerManagementService, CustomerManagementService>();
 
+// Report & Analytics
+builder.Services.AddScoped<IReportRepository, ReportRepository>();
+builder.Services.AddScoped<IReportService, ReportService>();
+
 builder.Services.AddScoped<EmailService>();
 builder.Services.AddScoped<OtpService>();
 builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("Jwt"));

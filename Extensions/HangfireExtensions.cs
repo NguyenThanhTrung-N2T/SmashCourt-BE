@@ -18,7 +18,14 @@ public static class HangfireExtensions
             .UseRecommendedSerializerSettings()
             .UsePostgreSqlStorage(options =>
                 options.UseNpgsqlConnection(
-                    config.GetConnectionString("DefaultConnection"))));
+                    config.GetConnectionString("DefaultConnection")),
+                new PostgreSqlStorageOptions
+                {
+                    // Tăng timeout cho distributed lock (default: 10 seconds)
+                    DistributedLockTimeout = TimeSpan.FromSeconds(30),
+                    // Tự động xóa lock sau 30 phút nếu process crash
+                    InvisibilityTimeout = TimeSpan.FromMinutes(30)
+                }));
 
         services.AddHangfireServer();
         services.AddScoped<IAuthCleanupJob, AuthCleanupJob>();
