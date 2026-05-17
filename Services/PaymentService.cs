@@ -22,6 +22,7 @@ namespace SmashCourt_BE.Services
         private readonly ICourtRepository _courtRepo;
         private readonly IVnPayService _vnPayService;
         private readonly EmailService _emailService;
+        private readonly PromotionEngineService _promotionEngine;
         private readonly ILogger<PaymentService> _logger;
         private readonly IConfiguration _config;
 
@@ -33,6 +34,7 @@ namespace SmashCourt_BE.Services
             ICourtRepository courtRepo,
             IVnPayService vnPayService,
             EmailService emailService,
+            PromotionEngineService promotionEngine,
             ILogger<PaymentService> logger,
             IConfiguration config)
         {
@@ -43,6 +45,7 @@ namespace SmashCourt_BE.Services
             _courtRepo = courtRepo;
             _vnPayService = vnPayService;
             _emailService = emailService;
+            _promotionEngine = promotionEngine;
             _logger = logger;
             _config = config;
         }
@@ -190,7 +193,7 @@ namespace SmashCourt_BE.Services
                     booking.Id, booking.Status, transactionRef);
                 return;
             }
-            
+
             _logger.LogInformation(
                 "✅ PROCESSING | IPN first time | BookingId={BookingId} | " +
                 "CurrentStatus={Status} | TransactionRef={TransactionRef}",
@@ -220,7 +223,7 @@ namespace SmashCourt_BE.Services
             if (isSuccess)
             {
                 // 5A. Xử lý thanh toán thành công
-                
+
                 // Generate cancel token TRƯỚC KHI update
                 var (cancelToken, cancelTokenHash, cancelTokenExpiry) = GenerateCancelTokenData(booking);
 
@@ -258,6 +261,16 @@ namespace SmashCourt_BE.Services
                 // Xóa slot locks vì booking đã được confirm
                 await _slotLockRepo.DeleteByBookingIdAsync(booking.Id);
 
+                // 🎯 Tăng usage count của promotion (nếu có)
+                // Đảm bảo usage limit được enforce đúng
+                if (booking.BookingPromotion != null)
+                {
+                    await _promotionEngine.IncrementUsageCountAsync(booking.BookingPromotion.PromotionId);
+                    _logger.LogInformation(
+                        "[PROMOTION_USAGE] Incremented usage for promotion {PromotionId} | BookingId={BookingId}",
+                        booking.BookingPromotion.PromotionId, booking.Id);
+                }
+
                 // Fetch court names TRƯỚC KHI complete transaction để gửi email sau
                 // NOTE: Court status sẽ được update bởi scheduled job khi đến StartTime
                 //       Không update court status ở đây để tránh conflict với job logic
@@ -269,7 +282,7 @@ namespace SmashCourt_BE.Services
                     "✅ SUCCESS | IPN processed successfully | BookingId={BookingId} | " +
                     "NewStatus={NewStatus} | TransactionRef={TransactionRef} | " +
                     "PaymentAmount={Amount} | InvoiceStatus={InvoiceStatus}",
-                    booking.Id, BookingStatus.PAID_ONLINE, transactionRef, 
+                    booking.Id, BookingStatus.PAID_ONLINE, transactionRef,
                     payment.Amount, InvoicePaymentStatus.PARTIALLY_PAID);
 
                 // Gửi email xác nhận NGOÀI transaction
@@ -325,7 +338,7 @@ namespace SmashCourt_BE.Services
                     "❌ FAILED | IPN processed (payment failed) | BookingId={BookingId} | " +
                     "NewStatus={NewStatus} | TransactionRef={TransactionRef} | " +
                     "ResponseCode={ResponseCode}",
-                    booking.Id, BookingStatus.CANCELLED, transactionRef, 
+                    booking.Id, BookingStatus.CANCELLED, transactionRef,
                     query["vnp_ResponseCode"].ToString());
 
                 // TODO: Broadcast SignalR notification
@@ -356,7 +369,7 @@ namespace SmashCourt_BE.Services
 
             // 2. Parse thông tin từ query params
             var responseCode = query["vnp_ResponseCode"].ToString();
-            var amount = query.TryGetValue("vnp_Amount", out var amountStr) && 
+            var amount = query.TryGetValue("vnp_Amount", out var amountStr) &&
                          long.TryParse(amountStr, out var rawAmount)
                 ? (decimal)(rawAmount / 100)
                 : 0;
@@ -418,16 +431,16 @@ namespace SmashCourt_BE.Services
         {
             var courts = booking.BookingCourts ?? [];
             var courtNamesBuilder = new List<string>();
-            
+
             foreach (var bc in courts)
             {
                 var court = await _courtRepo.GetByIdAsync(bc.CourtId, booking.BranchId);
-                if (court != null) 
+                if (court != null)
                 {
                     courtNamesBuilder.Add(court.Name);
                 }
             }
-            
+
             return string.Join(", ", courtNamesBuilder);
         }
 
@@ -439,7 +452,7 @@ namespace SmashCourt_BE.Services
         {
             var rawToken = GenerateCancelToken();
             var tokenHash = HashToken(rawToken);
-            
+
             // Lấy first court slot để tính token expiry
             // Safe vì booking luôn có ít nhất 1 court
             var firstCourtSlot = booking.BookingCourts?.FirstOrDefault();
@@ -447,7 +460,7 @@ namespace SmashCourt_BE.Services
             {
                 throw new InvalidOperationException("Booking must have at least one court");
             }
-            
+
             var startTime = firstCourtSlot.StartTime;
 
             // Token expiry = min(booking start time, 24h from now)
@@ -470,15 +483,15 @@ namespace SmashCourt_BE.Services
         {
             var email = booking.Customer?.Email ?? booking.GuestEmail;
             var name = booking.Customer?.FullName ?? booking.GuestName;
-            
+
             _logger.LogInformation("SendConfirmationEmailAsync - Email: {Email}, Name: {Name}", email, name);
-            
+
             if (string.IsNullOrEmpty(email))
             {
                 _logger.LogWarning("Cannot send email: email is null or empty for booking {BookingId}", booking.Id);
                 return;
             }
-            
+
             if (string.IsNullOrEmpty(name))
             {
                 _logger.LogWarning("Cannot send email: name is null or empty for booking {BookingId}", booking.Id);
@@ -493,16 +506,16 @@ namespace SmashCourt_BE.Services
             }
 
             _logger.LogInformation("Calling EmailService.SendBookingConfirmationAsync for {Email}", email);
-            
+
             // Lấy frontend base URL từ config
             var frontendBaseUrl = _config["FrontendBaseUrl"] ?? "http://localhost:3000";
-            
+
             // Build email model using Factory
             var emailModel = BookingEmailFactory.Build(booking, rawToken, frontendBaseUrl);
-            
+
             // Send email using new method
             await _emailService.SendBookingConfirmationAsync(emailModel);
-                
+
             _logger.LogInformation("EmailService.SendBookingConfirmationAsync completed for {Email}", email);
         }
 

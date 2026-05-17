@@ -22,6 +22,10 @@ namespace SmashCourt_BE.Services.IService
 
         // xóa khuyến mãi
         Task DeleteAsync(Guid id);
+
+        // lấy danh sách khuyến mãi áp dụng được cho booking context cụ thể
+        Task<List<ApplicablePromotionDto>> GetApplicablePromotionsAsync(
+            GetApplicablePromotionsDto dto, Guid customerId);
     }
 
 }

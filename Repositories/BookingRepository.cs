@@ -445,5 +445,12 @@ namespace SmashCourt_BE.Repositories
 
             return rowsAffected;
         }
+
+        public async Task<int> GetCompletedBookingCountAsync(Guid customerId)
+        {
+            return await _context.Bookings
+                .Where(b => b.CustomerId == customerId && b.Status == BookingStatus.COMPLETED)
+                .CountAsync();
+        }
     }
 }

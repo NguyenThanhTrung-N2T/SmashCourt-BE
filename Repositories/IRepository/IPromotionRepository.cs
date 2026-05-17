@@ -11,6 +11,9 @@ namespace SmashCourt_BE.Repositories.IRepository
         // lấy tất cả khuyến mãi đang ACTIVE (dùng khi đặt sân)
         Task<List<Promotion>> GetActiveAsync();
 
+        // lấy tất cả khuyến mãi đang ACTIVE với conditions (dùng cho applicable promotions)
+        Task<List<Promotion>> GetActiveWithConditionsAsync();
+
         // lấy khuyến mãi theo id
         Task<Promotion?> GetByIdAsync(Guid id);
 
@@ -25,6 +28,9 @@ namespace SmashCourt_BE.Repositories.IRepository
 
         // tăng UsedCount (atomic UPDATE, tránh race condition)
         Task IncrementUsageCountAsync(Guid promotionId);
+
+        // giảm UsedCount khi booking bị hủy (atomic UPDATE)
+        Task DecrementUsageCountAsync(Guid promotionId);
 
         // kiểm tra code đã tồn tại
         Task<bool> CodeExistsAsync(string code, Guid? excludeId = null);

@@ -89,5 +89,12 @@ namespace SmashCourt_BE.Repositories.IRepository
             string cancelTokenHash, 
             DateTime cancelTokenExpiry, 
             DateTime now);
+
+        /// <summary>
+        /// Lấy số lượng booking đã hoàn thành của khách hàng (dùng cho promotion condition)
+        /// </summary>
+        /// <param name="customerId">ID của khách hàng</param>
+        /// <returns>Số lượng booking đã hoàn thành</returns>
+        Task<int> GetCompletedBookingCountAsync(Guid customerId);
     }
 }

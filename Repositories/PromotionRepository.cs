@@ -49,6 +49,16 @@ namespace SmashCourt_BE.Repositories
                 .ToListAsync();
         }
 
+        // Lấy ACTIVE với conditions — dùng cho applicable promotions
+        public async Task<List<Promotion>> GetActiveWithConditionsAsync()
+        {
+            return await _context.Promotions
+                .Include(p => p.Conditions)
+                .Where(p => p.Status == PromotionStatus.ACTIVE)
+                .OrderByDescending(p => p.CreatedAt)
+                .ToListAsync();
+        }
+
         public async Task<Promotion?> GetByIdAsync(Guid id)
         {
             return await _context.Promotions
@@ -68,7 +78,7 @@ namespace SmashCourt_BE.Repositories
         public async Task<bool> CodeExistsAsync(string code, Guid? excludeId = null)
         {
             var query = _context.Promotions.Where(p => p.Code == code);
-            
+
             if (excludeId.HasValue)
             {
                 query = query.Where(p => p.Id != excludeId.Value);
@@ -95,7 +105,7 @@ namespace SmashCourt_BE.Repositories
             var conditions = await _context.PromotionConditions
                 .Where(c => c.PromotionId == promotionId)
                 .ToListAsync();
-            
+
             _context.PromotionConditions.RemoveRange(conditions);
             await _context.SaveChangesAsync();
         }
@@ -157,6 +167,17 @@ namespace SmashCourt_BE.Repositories
             await _context.Promotions
                 .Where(p => p.Id == promotionId)
                 .ExecuteUpdateAsync(s => s.SetProperty(p => p.UsedCount, p => p.UsedCount + 1));
+        }
+
+        /// <summary>
+        /// Giảm UsedCount khi booking bị hủy — giải phóng slot promotion cho customer khác.
+        /// Sử dụng atomic UPDATE để tránh UsedCount âm.
+        /// </summary>
+        public async Task DecrementUsageCountAsync(Guid promotionId)
+        {
+            await _context.Promotions
+                .Where(p => p.Id == promotionId && p.UsedCount > 0)
+                .ExecuteUpdateAsync(s => s.SetProperty(p => p.UsedCount, p => p.UsedCount - 1));
         }
     }
 }

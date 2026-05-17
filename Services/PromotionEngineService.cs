@@ -28,16 +28,27 @@ public class PromotionEngineService
         if (promotion == null)
             return Fail("Mã khuyến mãi không tồn tại hoặc đã hết hạn");
 
-        // 2. Kiểm tra ngày hiệu lực
+        // 2. Delegate to direct validation
+        return await ValidatePromotionDirectAsync(promotion, context);
+    }
+
+    /// <summary>
+    /// Validates a promotion object directly (without code lookup) và tính discount amount.
+    /// Used when you already have the promotion entity.
+    /// </summary>
+    public async Task<PromotionValidationResult> ValidatePromotionDirectAsync(
+        Models.Entities.Promotion promotion, PromotionContext context)
+    {
+        // 1. Kiểm tra ngày hiệu lực
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
         if (today < promotion.StartDate || today > promotion.EndDate)
             return Fail("Mã khuyến mãi chưa có hiệu lực hoặc đã hết hạn");
 
-        // 3. Kiểm tra tổng lượt sử dụng
+        // 2. Kiểm tra tổng lượt sử dụng
         if (promotion.UsageLimit.HasValue && promotion.UsedCount >= promotion.UsageLimit.Value)
             return Fail("Mã khuyến mãi đã hết lượt sử dụng");
 
-        // 4. Kiểm tra lượt sử dụng theo user
+        // 3. Kiểm tra lượt sử dụng theo user
         if (promotion.UsagePerUserLimit.HasValue)
         {
             var userUsageCount = await _promotionRepo.GetUserUsageCountAsync(promotion.Id, context.UserId);
@@ -45,21 +56,21 @@ public class PromotionEngineService
                 return Fail("Bạn đã sử dụng hết lượt áp dụng mã khuyến mãi này");
         }
 
-        // 5. Đánh giá các conditions
+        // 4. Đánh giá các conditions
         var conditionResult = EvaluateConditions(promotion, context);
         if (!conditionResult.IsValid)
             return conditionResult;
 
-        // 6. Tính discount — dùng PromotionHelper (single source of truth)
+        // 5. Tính discount — dùng PromotionHelper (single source of truth)
         var discountAmount = PromotionHelper.CalculateDiscount(promotion, context.BookingAmount);
-        var finalAmount    = Math.Max(0, context.BookingAmount - discountAmount);
+        var finalAmount = Math.Max(0, context.BookingAmount - discountAmount);
 
         return new PromotionValidationResult
         {
-            IsValid        = true,
-            Promotion      = promotion,
+            IsValid = true,
+            Promotion = promotion,
             DiscountAmount = discountAmount,
-            FinalAmount    = finalAmount
+            FinalAmount = finalAmount
         };
     }
 
@@ -69,6 +80,14 @@ public class PromotionEngineService
     public async Task IncrementUsageCountAsync(Guid promotionId)
     {
         await _promotionRepo.IncrementUsageCountAsync(promotionId);
+    }
+
+    /// <summary>
+    /// Giảm UsedCount khi booking bị hủy — delegate xuống Repository layer.
+    /// </summary>
+    public async Task DecrementUsageCountAsync(Guid promotionId)
+    {
+        await _promotionRepo.DecrementUsageCountAsync(promotionId);
     }
 
     // ─── Private helpers ──────────────────────────────────────────────────────

@@ -5,6 +5,7 @@ using SmashCourt_BE.Common;
 using SmashCourt_BE.Configurations;
 using SmashCourt_BE.DTOs.Promotion;
 using SmashCourt_BE.Services.IService;
+using System.Security.Claims;
 
 namespace SmashCourt_BE.Controllers
 {
@@ -41,6 +42,22 @@ namespace SmashCourt_BE.Controllers
         {
             var result = await _service.GetActiveAsync();
             return Ok(ApiResponse<List<PromotionDto>>.Ok(result, "Lấy danh sách khuyến mãi đang hoạt động thành công"));
+        }
+
+        /// <summary>
+        /// Lấy danh sách promotion áp dụng được cho booking context cụ thể
+        /// Trả về các promotion đã validate conditions và tính discount, sắp xếp theo discount giảm dần
+        /// </summary>
+        [HttpPost("applicable")]
+        [Authorize]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        public async Task<IActionResult> GetApplicable([FromBody] GetApplicablePromotionsDto dto)
+        {
+            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var result = await _service.GetApplicablePromotionsAsync(dto, userId);
+            return Ok(ApiResponse<List<ApplicablePromotionDto>>.Ok(result, 
+                "Lấy danh sách khuyến mãi áp dụng được thành công"));
         }
 
         /// <summary>
