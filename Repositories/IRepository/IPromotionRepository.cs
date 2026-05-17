@@ -1,4 +1,4 @@
-﻿using SmashCourt_BE.Common;
+using SmashCourt_BE.Common;
 using SmashCourt_BE.Models.Entities;
 
 namespace SmashCourt_BE.Repositories.IRepository
@@ -16,6 +16,15 @@ namespace SmashCourt_BE.Repositories.IRepository
 
         // lấy khuyến mãi theo id với conditions
         Task<Promotion?> GetByIdWithConditionsAsync(Guid id);
+
+        // lấy khuyến mãi ACTIVE theo code (kèm conditions) — dùng trong PromotionEngineService
+        Task<Promotion?> GetByCodeActiveAsync(string code);
+
+        // đếm số lần user đã dùng promotion — dùng kiểm tra UsagePerUserLimit
+        Task<int> GetUserUsageCountAsync(Guid promotionId, Guid userId);
+
+        // tăng UsedCount (atomic UPDATE, tránh race condition)
+        Task IncrementUsageCountAsync(Guid promotionId);
 
         // kiểm tra code đã tồn tại
         Task<bool> CodeExistsAsync(string code, Guid? excludeId = null);

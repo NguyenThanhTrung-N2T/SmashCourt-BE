@@ -276,7 +276,7 @@ namespace SmashCourt_BE.Services
                     throw new AppException(400,
                         "Khuyến mãi không áp dụng cho ngày đặt sân này", ErrorCodes.BadRequest);
 
-                promotionDiscountAmount = Promotions.PromotionHelper.CalculateDiscount(promotion, totalAfterLoyalty);
+                promotionDiscountAmount = PromotionHelper.CalculateDiscount(promotion, totalAfterLoyalty);
             }
 
             var finalTotal = totalAfterLoyalty - promotionDiscountAmount;
@@ -513,7 +513,7 @@ namespace SmashCourt_BE.Services
                             throw new AppException(400,
                                 "Khuyến mãi không áp dụng cho ngày đặt sân này", ErrorCodes.BadRequest);
 
-                        promotionDiscountAmount = Promotions.PromotionHelper.CalculateDiscount(promotion, totalAfterLoyalty);
+                        promotionDiscountAmount = PromotionHelper.CalculateDiscount(promotion, totalAfterLoyalty);
                     }
                 }
 

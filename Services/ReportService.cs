@@ -219,4 +219,96 @@ public class ReportService : IReportService
     }
 
     #endregion
+
+    #region Court Utilization Report
+
+    /// <summary>
+    /// Lấy báo cáo sử dụng sân
+    /// </summary>
+    public async Task<CourtUtilizationReportDto> GetCourtUtilizationReportAsync(
+        ReportFilterDto filter, Guid currentUserId, string currentUserRole)
+    {
+        var (fromDate, toDate) = ValidateDateRange(filter);
+        var managerBranchId = await GetManagerBranchIdAsync(currentUserId, currentUserRole);
+        var branchId = managerBranchId ?? filter.BranchId;
+
+        return await _reportRepo.GetCourtUtilizationReportAsync(fromDate, toDate, branchId, filter.GroupBy);
+    }
+
+    #endregion
+
+    #region Customer Statistics Report
+
+    /// <summary>
+    /// Lấy báo cáo thống kê khách hàng
+    /// </summary>
+    public async Task<CustomerStatisticsReportDto> GetCustomerStatisticsReportAsync(
+        ReportFilterDto filter, Guid currentUserId, string currentUserRole)
+    {
+        var (fromDate, toDate) = ValidateDateRange(filter);
+        var managerBranchId = await GetManagerBranchIdAsync(currentUserId, currentUserRole);
+        var branchId = managerBranchId ?? filter.BranchId;
+
+        return await _reportRepo.GetCustomerStatisticsReportAsync(fromDate, toDate, branchId, filter.GroupBy);
+    }
+
+    #endregion
+
+    #region Top Spenders Report
+
+    /// <summary>
+    /// Lấy báo cáo top khách hàng chi tiêu
+    /// </summary>
+    public async Task<TopSpendersReportDto> GetTopSpendersReportAsync(
+        ReportFilterDto filter, Guid currentUserId, string currentUserRole, int page, int pageSize)
+    {
+        var (fromDate, toDate) = ValidateDateRange(filter);
+        var managerBranchId = await GetManagerBranchIdAsync(currentUserId, currentUserRole);
+        var branchId = managerBranchId ?? filter.BranchId;
+
+        // Validate pagination
+        if (page < 1)
+            throw new AppException(400, "Page phải lớn hơn hoặc bằng 1", ErrorCodes.BadRequest);
+
+        if (pageSize < 1 || pageSize > 100)
+            throw new AppException(400, "PageSize phải từ 1 đến 100", ErrorCodes.BadRequest);
+
+        return await _reportRepo.GetTopSpendersReportAsync(fromDate, toDate, branchId, page, pageSize);
+    }
+
+    #endregion
+
+    #region Service Performance Report
+
+    /// <summary>
+    /// Lấy báo cáo hiệu suất dịch vụ
+    /// </summary>
+    public async Task<ServicePerformanceReportDto> GetServicePerformanceReportAsync(
+        ReportFilterDto filter, Guid currentUserId, string currentUserRole)
+    {
+        var (fromDate, toDate) = ValidateDateRange(filter);
+        var managerBranchId = await GetManagerBranchIdAsync(currentUserId, currentUserRole);
+        var branchId = managerBranchId ?? filter.BranchId;
+
+        return await _reportRepo.GetServicePerformanceReportAsync(fromDate, toDate, branchId, filter.GroupBy);
+    }
+
+    #endregion
+
+    #region Promotion Effectiveness Report
+
+    /// <summary>
+    /// Lấy báo cáo hiệu quả khuyến mãi
+    /// </summary>
+    public async Task<PromotionEffectivenessReportDto> GetPromotionEffectivenessReportAsync(
+        ReportFilterDto filter, Guid currentUserId, string currentUserRole)
+    {
+        var (fromDate, toDate) = ValidateDateRange(filter);
+        var managerBranchId = await GetManagerBranchIdAsync(currentUserId, currentUserRole);
+        var branchId = managerBranchId ?? filter.BranchId;
+
+        return await _reportRepo.GetPromotionEffectivenessReportAsync(fromDate, toDate, branchId, filter.GroupBy);
+    }
+
+    #endregion
 }

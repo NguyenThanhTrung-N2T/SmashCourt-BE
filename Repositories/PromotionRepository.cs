@@ -123,5 +123,40 @@ namespace SmashCourt_BE.Repositories
                     .SetProperty(p => p.Status, PromotionStatus.INACTIVE)
                     .SetProperty(p => p.UpdatedAt, DateTime.UtcNow));
         }
+
+        /// <summary>
+        /// Lấy promotion ACTIVE theo code kèm conditions — dùng trong PromotionEngineService.
+        /// </summary>
+        public async Task<Promotion?> GetByCodeActiveAsync(string code)
+        {
+            return await _context.Promotions
+                .Include(p => p.Conditions)
+                .FirstOrDefaultAsync(p => p.Code == code && p.Status == PromotionStatus.ACTIVE);
+        }
+
+        /// <summary>
+        /// Đếm số lần user đã sử dụng một promotion — dùng kiểm tra UsagePerUserLimit.
+        /// </summary>
+        public async Task<int> GetUserUsageCountAsync(Guid promotionId, Guid userId)
+        {
+            return await _context.BookingPromotions
+                .Where(bp => bp.PromotionId == promotionId)
+                .Join(_context.Bookings,
+                    bp => bp.BookingId,
+                    b => b.Id,
+                    (bp, b) => new { bp, b })
+                .Where(x => x.b.CustomerId == userId)
+                .CountAsync();
+        }
+
+        /// <summary>
+        /// Tăng UsedCount bằng atomic UPDATE — tránh race condition khi nhiều request đồng thời.
+        /// </summary>
+        public async Task IncrementUsageCountAsync(Guid promotionId)
+        {
+            await _context.Promotions
+                .Where(p => p.Id == promotionId)
+                .ExecuteUpdateAsync(s => s.SetProperty(p => p.UsedCount, p => p.UsedCount + 1));
+        }
     }
 }
