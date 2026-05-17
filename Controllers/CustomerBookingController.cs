@@ -29,7 +29,7 @@ namespace SmashCourt_BE.Controllers
         /// Lấy danh sách booking của khách hàng hiện tại
         /// </summary>
         [HttpGet]
-        public async Task<IActionResult> GetMyBookings([FromQuery] PaginationQuery query)
+        public async Task<IActionResult> GetMyBookings([FromQuery] BookingListQuery query)
         {
             var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
             var result = await _service.GetMyBookingsAsync(userId, query);

@@ -84,7 +84,7 @@ namespace SmashCourt_BE.Repositories
 
         // Customer chỉ thấy booking của chính mình
         public async Task<PagedResult<Booking>> GetByCustomerIdAsync(
-            Guid customerId, PaginationQuery query)
+            Guid customerId, BookingListQuery query)
         {
             var q = _context.Bookings
                 .Include(b => b.Branch)
@@ -92,8 +92,34 @@ namespace SmashCourt_BE.Repositories
                 .Include(b => b.BookingCourts)
                     .ThenInclude(bc => bc.Court)
                 .Include(b => b.Invoice)
-                .Where(b => b.CustomerId == customerId)
-                .OrderByDescending(b => b.CreatedAt);
+                .Where(b => b.CustomerId == customerId);
+
+            // Apply filters
+            if (query.BranchId.HasValue)
+                q = q.Where(b => b.BranchId == query.BranchId.Value);
+
+            if (query.Status.HasValue)
+                q = q.Where(b => b.Status == query.Status.Value);
+
+            if (query.Date.HasValue)
+            {
+                var date = DateOnly.FromDateTime(query.Date.Value);
+                q = q.Where(b => b.BookingDate == date);
+            }
+
+            if (!string.IsNullOrWhiteSpace(query.Search))
+            {
+                var search = query.Search.Trim().ToLower();
+                q = q.Where(b =>
+                    (b.Customer != null && b.Customer.FullName.ToLower().Contains(search)) ||
+                    (b.Customer != null && b.Customer.Phone != null && b.Customer.Phone.Contains(search)) ||
+                    (b.GuestName != null && b.GuestName.ToLower().Contains(search)) ||
+                    (b.GuestPhone != null && b.GuestPhone.Contains(search)) ||
+                    b.Id.ToString().Contains(search)
+                );
+            }
+
+            q = q.OrderByDescending(b => b.CreatedAt);
 
             var totalItems = await q.CountAsync();
             var items = await q

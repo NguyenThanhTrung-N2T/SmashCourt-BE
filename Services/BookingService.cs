@@ -99,7 +99,7 @@ namespace SmashCourt_BE.Services
 
         // Lấy danh sách booking của chính khách hàng (customer)
         public async Task<PagedResult<BookingDto>> GetMyBookingsAsync(
-            Guid customerId, PaginationQuery query)
+            Guid customerId, BookingListQuery query)
         {
             var pagedResult = await _bookingRepo.GetByCustomerIdAsync(customerId, query);
 
