@@ -49,12 +49,22 @@ namespace SmashCourt_BE.Repositories
                 .ToListAsync();
         }
 
-        // Lấy ACTIVE với conditions — dùng cho applicable promotions
         public async Task<List<Promotion>> GetActiveWithConditionsAsync()
         {
             return await _context.Promotions
                 .Include(p => p.Conditions)
                 .Where(p => p.Status == PromotionStatus.ACTIVE)
+                .OrderByDescending(p => p.CreatedAt)
+                .ToListAsync();
+        }
+
+        public async Task<List<Promotion>> GetApplicableByDateAsync(DateOnly usageDate)
+        {
+            return await _context.Promotions
+                .Include(p => p.Conditions)
+                .Where(p => p.Status != PromotionStatus.DELETED &&
+                            p.StartDate <= usageDate &&
+                            p.EndDate >= usageDate)
                 .OrderByDescending(p => p.CreatedAt)
                 .ToListAsync();
         }
@@ -135,13 +145,13 @@ namespace SmashCourt_BE.Repositories
         }
 
         /// <summary>
-        /// Lấy promotion ACTIVE theo code kèm conditions — dùng trong PromotionEngineService.
+        /// Lấy promotion theo code kèm conditions (không lấy promotion đã xóa) — dùng trong PromotionEngineService.
         /// </summary>
-        public async Task<Promotion?> GetByCodeActiveAsync(string code)
+        public async Task<Promotion?> GetByCodeNotDeletedAsync(string code)
         {
             return await _context.Promotions
                 .Include(p => p.Conditions)
-                .FirstOrDefaultAsync(p => p.Code == code && p.Status == PromotionStatus.ACTIVE);
+                .FirstOrDefaultAsync(p => p.Code == code && p.Status != PromotionStatus.DELETED);
         }
 
         /// <summary>

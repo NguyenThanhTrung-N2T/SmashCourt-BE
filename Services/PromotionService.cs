@@ -236,8 +236,9 @@ namespace SmashCourt_BE.Services
         public async Task<List<ApplicablePromotionDto>> GetApplicablePromotionsAsync(
             GetApplicablePromotionsDto dto, Guid customerId)
         {
-            // 1. Lấy tất cả promotion ACTIVE
-            var activePromotions = await _repo.GetActiveWithConditionsAsync();
+            // 1. Lấy tất cả promotion áp dụng được cho ngày đặt sân (usage date)
+            var usageDate = DateOnly.FromDateTime(dto.BookingDate);
+            var activePromotions = await _repo.GetApplicableByDateAsync(usageDate);
 
             // 2. Lấy thông tin court để có CourtType (Sport)
             var court = await _courtRepo.GetByIdAsync(dto.CourtId);
@@ -265,7 +266,7 @@ namespace SmashCourt_BE.Services
             foreach (var promotion in activePromotions)
             {
                 // Validate promotion trực tiếp với promotion object (không cần lookup lại)
-                var validationResult = await ValidatePromotionDirectAsync(promotion, context);
+                var validationResult = await _promotionEngine.ValidatePromotionDirectAsync(promotion, context);
 
                 if (validationResult.IsValid)
                 {
@@ -310,173 +311,6 @@ namespace SmashCourt_BE.Services
                 .ToList();
         }
 
-        // Validate promotion trực tiếp từ object (không cần lookup lại bằng code)
-        private async Task<PromotionValidationResult> ValidatePromotionDirectAsync(
-            Models.Entities.Promotion promotion, PromotionContext context)
-        {
-            // 1. Kiểm tra ngày hiệu lực
-            var today = DateOnly.FromDateTime(DateTime.UtcNow);
-            if (today < promotion.StartDate || today > promotion.EndDate)
-                return new PromotionValidationResult
-                {
-                    IsValid = false,
-                    ErrorMessage = "Mã khuyến mãi chưa có hiệu lực hoặc đã hết hạn"
-                };
-
-            // 2. Kiểm tra tổng lượt sử dụng
-            if (promotion.UsageLimit.HasValue && promotion.UsedCount >= promotion.UsageLimit.Value)
-                return new PromotionValidationResult
-                {
-                    IsValid = false,
-                    ErrorMessage = "Mã khuyến mãi đã hết lượt sử dụng"
-                };
-
-            // 3. Kiểm tra lượt sử dụng theo user
-            if (promotion.UsagePerUserLimit.HasValue)
-            {
-                var userUsageCount = await _repo.GetUserUsageCountAsync(promotion.Id, context.UserId);
-                if (userUsageCount >= promotion.UsagePerUserLimit.Value)
-                    return new PromotionValidationResult
-                    {
-                        IsValid = false,
-                        ErrorMessage = "Bạn đã sử dụng hết lượt áp dụng mã khuyến mãi này"
-                    };
-            }
-
-            // 4. Đánh giá các conditions dùng PromotionEngineService logic
-            var conditionResult = EvaluatePromotionConditions(promotion, context);
-            if (!conditionResult.IsValid)
-                return conditionResult;
-
-            // 5. Tính discount
-            var discountAmount = PromotionHelper.CalculateDiscount(promotion, context.BookingAmount);
-            var finalAmount = Math.Max(0, context.BookingAmount - discountAmount);
-
-            return new PromotionValidationResult
-            {
-                IsValid = true,
-                Promotion = promotion,
-                DiscountAmount = discountAmount,
-                FinalAmount = finalAmount
-            };
-        }
-
-        // Evaluate promotion conditions - copy logic từ PromotionEngineService
-        private static PromotionValidationResult EvaluatePromotionConditions(
-            Models.Entities.Promotion promotion, PromotionContext context)
-        {
-            if (promotion.Conditions == null || !promotion.Conditions.Any())
-                return new PromotionValidationResult { IsValid = true };
-
-            foreach (var condition in promotion.Conditions)
-            {
-                switch (condition.ConditionType)
-                {
-                    case "MIN_BOOKING_AMOUNT":
-                        if (!decimal.TryParse(condition.ConditionValue, out var minAmount)
-                            || context.BookingAmount < minAmount)
-                            return new PromotionValidationResult
-                            {
-                                IsValid = false,
-                                ErrorMessage = $"Giá trị đơn hàng tối thiểu phải từ {minAmount:N0} VNĐ"
-                            };
-                        break;
-
-                    case "MAX_PREVIOUS_BOOKINGS":
-                        if (!int.TryParse(condition.ConditionValue, out var maxBookings)
-                            || context.PreviousBookingCount > maxBookings)
-                            return new PromotionValidationResult
-                            {
-                                IsValid = false,
-                                ErrorMessage = "Khuyến mãi này chỉ dành cho khách hàng mới"
-                            };
-                        break;
-
-                    case "BRANCH_ID":
-                        if (context.BranchId.ToString() != condition.ConditionValue)
-                            return new PromotionValidationResult
-                            {
-                                IsValid = false,
-                                ErrorMessage = "Mã khuyến mãi không áp dụng cho chi nhánh này"
-                            };
-                        break;
-
-                    case "COURT_ID":
-                        if (context.CourtId.ToString() != condition.ConditionValue)
-                            return new PromotionValidationResult
-                            {
-                                IsValid = false,
-                                ErrorMessage = "Mã khuyến mãi không áp dụng cho sân này"
-                            };
-                        break;
-
-                    case "SPORT":
-                        if (context.Sport != condition.ConditionValue)
-                            return new PromotionValidationResult
-                            {
-                                IsValid = false,
-                                ErrorMessage = $"Mã khuyến mãi chỉ áp dụng cho môn {condition.ConditionValue}"
-                            };
-                        break;
-
-                    case "DAY_OF_WEEK":
-                        var dayOfWeek = context.BookingDate.DayOfWeek.ToString().ToUpper();
-                        if (dayOfWeek != condition.ConditionValue.ToUpper())
-                            return new PromotionValidationResult
-                            {
-                                IsValid = false,
-                                ErrorMessage = $"Mã khuyến mãi chỉ áp dụng vào {condition.ConditionValue}"
-                            };
-                        break;
-
-                    case "START_HOUR":
-                        if (!int.TryParse(condition.ConditionValue, out var startHour)
-                            || context.BookingDate.Hour < startHour)
-                            return new PromotionValidationResult
-                            {
-                                IsValid = false,
-                                ErrorMessage = $"Mã khuyến mãi chỉ áp dụng từ {startHour}h trở đi"
-                            };
-                        break;
-
-                    case "END_HOUR":
-                        if (!int.TryParse(condition.ConditionValue, out var endHour)
-                            || context.BookingDate.Hour >= endHour)
-                            return new PromotionValidationResult
-                            {
-                                IsValid = false,
-                                ErrorMessage = $"Mã khuyến mãi chỉ áp dụng trước {endHour}h"
-                            };
-                        break;
-
-                    case "MONTH":
-                        if (!int.TryParse(condition.ConditionValue, out var month)
-                            || context.BookingDate.Month != month)
-                            return new PromotionValidationResult
-                            {
-                                IsValid = false,
-                                ErrorMessage = $"Mã khuyến mãi chỉ áp dụng trong tháng {month}"
-                            };
-                        break;
-
-                    case "DAYS_OF_MONTH":
-                        if (!int.TryParse(condition.ConditionValue, out var dayOfMonth)
-                            || context.BookingDate.Day != dayOfMonth)
-                            return new PromotionValidationResult
-                            {
-                                IsValid = false,
-                                ErrorMessage = $"Mã khuyến mãi chỉ áp dụng vào ngày {dayOfMonth} trong tháng"
-                            };
-                        break;
-
-                    default:
-                        // Unknown condition — skip (forward-compatible)
-                        break;
-                }
-            }
-
-            return new PromotionValidationResult { IsValid = true };
-        }
 
         // map data entity → dto
         private static PromotionDto MapToDto(Promotion p) => new()

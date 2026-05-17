@@ -22,8 +22,8 @@ public class PromotionEngineService
     /// </summary>
     public async Task<PromotionValidationResult> ValidatePromotionAsync(string code, PromotionContext context)
     {
-        // 1. Tìm promotion theo code + status ACTIVE (kèm conditions)
-        var promotion = await _promotionRepo.GetByCodeActiveAsync(code);
+        // 1. Tìm promotion theo code + không bị xóa (kèm conditions)
+        var promotion = await _promotionRepo.GetByCodeNotDeletedAsync(code);
 
         if (promotion == null)
             return Fail("Mã khuyến mãi không tồn tại hoặc đã hết hạn");
@@ -39,10 +39,10 @@ public class PromotionEngineService
     public async Task<PromotionValidationResult> ValidatePromotionDirectAsync(
         Models.Entities.Promotion promotion, PromotionContext context)
     {
-        // 1. Kiểm tra ngày hiệu lực
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        if (today < promotion.StartDate || today > promotion.EndDate)
-            return Fail("Mã khuyến mãi chưa có hiệu lực hoặc đã hết hạn");
+        // 1. Kiểm tra ngày hiệu lực theo ngày sử dụng (usage date / booking date)
+        var usageDate = DateOnly.FromDateTime(context.BookingDate);
+        if (usageDate < promotion.StartDate || usageDate > promotion.EndDate)
+            return Fail("Mã khuyến mãi chưa có hiệu lực hoặc đã hết hạn cho ngày đặt sân này");
 
         // 2. Kiểm tra tổng lượt sử dụng
         if (promotion.UsageLimit.HasValue && promotion.UsedCount >= promotion.UsageLimit.Value)
@@ -154,6 +154,13 @@ public class PromotionEngineService
                     if (!int.TryParse(condition.ConditionValue, out var dayOfMonth)
                         || context.BookingDate.Day != dayOfMonth)
                         return Fail($"Mã khuyến mãi chỉ áp dụng vào ngày {dayOfMonth} trong tháng");
+                    break;
+
+                case "SPECIFIC_DATES":
+                    var allowedDates = condition.ConditionValue.Split(',').Select(d => d.Trim()).ToList();
+                    var currentBookingDate = context.BookingDate.ToString("dd'/'MM", System.Globalization.CultureInfo.InvariantCulture);
+                    if (!allowedDates.Contains(currentBookingDate))
+                        return Fail($"Mã khuyến mãi chỉ áp dụng vào các ngày: {condition.ConditionValue}");
                     break;
 
                 default:

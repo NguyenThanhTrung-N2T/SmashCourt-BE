@@ -14,14 +14,17 @@ namespace SmashCourt_BE.Repositories.IRepository
         // lấy tất cả khuyến mãi đang ACTIVE với conditions (dùng cho applicable promotions)
         Task<List<Promotion>> GetActiveWithConditionsAsync();
 
+        // lấy tất cả khuyến mãi không bị xóa và áp dụng được cho ngày cụ thể (dùng khi check applicable promotions theo usage date)
+        Task<List<Promotion>> GetApplicableByDateAsync(DateOnly usageDate);
+
         // lấy khuyến mãi theo id
         Task<Promotion?> GetByIdAsync(Guid id);
 
         // lấy khuyến mãi theo id với conditions
         Task<Promotion?> GetByIdWithConditionsAsync(Guid id);
 
-        // lấy khuyến mãi ACTIVE theo code (kèm conditions) — dùng trong PromotionEngineService
-        Task<Promotion?> GetByCodeActiveAsync(string code);
+        // lấy khuyến mãi theo code (không bị xóa, kèm conditions) — dùng trong PromotionEngineService
+        Task<Promotion?> GetByCodeNotDeletedAsync(string code);
 
         // đếm số lần user đã dùng promotion — dùng kiểm tra UsagePerUserLimit
         Task<int> GetUserUsageCountAsync(Guid promotionId, Guid userId);
