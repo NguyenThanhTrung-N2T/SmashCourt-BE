@@ -37,6 +37,48 @@ namespace SmashCourt_BE.Controllers
 
 
         /// <summary>
+        /// Lấy lịch booking theo sân trong một ngày
+        /// </summary>
+        [HttpGet("schedule")]
+        [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
+        public async Task<IActionResult> GetSchedule([FromQuery] BookingScheduleQuery query)
+        {
+            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var role = User.FindFirstValue(ClaimTypes.Role)!;
+            var result = await _service.GetScheduleAsync(query, userId, role);
+            return Ok(ApiResponse<List<BookingScheduleCourtDto>>.Ok(result, "Lấy lịch đặt sân thành công"));
+        }
+
+
+        /// <summary>
+        /// Lấy thống kê nhanh cho dashboard booking
+        /// </summary>
+        [HttpGet("dashboard-summary")]
+        [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
+        public async Task<IActionResult> GetDashboardSummary([FromQuery] BookingDashboardSummaryQuery query)
+        {
+            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var role = User.FindFirstValue(ClaimTypes.Role)!;
+            var result = await _service.GetDashboardSummaryAsync(query, userId, role);
+            return Ok(ApiResponse<BookingDashboardSummaryDto>.Ok(result, "Lấy thống kê booking thành công"));
+        }
+
+
+        /// <summary>
+        /// Lấy dữ liệu heatmap booking theo tháng
+        /// </summary>
+        [HttpGet("calendar-heatmap")]
+        [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
+        public async Task<IActionResult> GetCalendarHeatmap([FromQuery] BookingCalendarHeatmapQuery query)
+        {
+            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var role = User.FindFirstValue(ClaimTypes.Role)!;
+            var result = await _service.GetCalendarHeatmapAsync(query, userId, role);
+            return Ok(ApiResponse<List<BookingCalendarHeatmapDto>>.Ok(result, "Lấy dữ liệu heatmap thành công"));
+        }
+
+
+        /// <summary>
         /// Lấy thông tin booking theo id
         /// </summary>
         [HttpGet("{id:guid}")]

@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using SmashCourt_BE.Common;
 using SmashCourt_BE.Data;
 using SmashCourt_BE.DTOs.BranchManagement;
@@ -82,6 +82,8 @@ namespace SmashCourt_BE.Repositories
             var usersQuery = _context.Users
                 .Include(u => u.UserBranches.Where(ub => ub.IsActive))
                     .ThenInclude(ub => ub.Branch)
+                // Loại trừ CUSTOMER — endpoint này chỉ dùng để gán vào chi nhánh (manager/staff)
+                .Where(u => u.Role != UserRole.CUSTOMER)
                 .AsQueryable();
 
             // Áp dụng filter tìm kiếm theo tên, email, phone

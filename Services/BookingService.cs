@@ -101,6 +101,30 @@ namespace SmashCourt_BE.Services
         }
 
         // Lấy danh sách booking của chính khách hàng (customer)
+        public async Task<List<BookingScheduleCourtDto>> GetScheduleAsync(
+            BookingScheduleQuery query, Guid currentUserId, string currentUserRole)
+        {
+            return await _bookingRepo.GetScheduleAsync(query, currentUserRole, currentUserId);
+        }
+
+        public async Task<BookingDashboardSummaryDto> GetDashboardSummaryAsync(
+            BookingDashboardSummaryQuery query, Guid currentUserId, string currentUserRole)
+        {
+            return await _bookingRepo.GetDashboardSummaryAsync(query, currentUserRole, currentUserId);
+        }
+
+        public async Task<List<BookingCalendarHeatmapDto>> GetCalendarHeatmapAsync(
+            BookingCalendarHeatmapQuery query, Guid currentUserId, string currentUserRole)
+        {
+            if (query.Year == 0)
+                query.Year = DateTimeHelper.GetTodayInVietnam().Year;
+
+            if (query.Month == 0)
+                query.Month = DateTimeHelper.GetTodayInVietnam().Month;
+
+            return await _bookingRepo.GetCalendarHeatmapAsync(query, currentUserRole, currentUserId);
+        }
+
         public async Task<PagedResult<BookingDto>> GetMyBookingsAsync(
             Guid customerId, BookingListQuery query)
         {

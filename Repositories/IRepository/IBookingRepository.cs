@@ -10,6 +10,12 @@ namespace SmashCourt_BE.Repositories.IRepository
         // Lấy danh sách booking để hiển thị cho staff (có filter, phân trang)
         Task<PagedResult<Booking>> GetAllAsync(BookingListQuery query, string userRole, Guid userId);
 
+        Task<List<BookingScheduleCourtDto>> GetScheduleAsync(BookingScheduleQuery query, string userRole, Guid userId);
+
+        Task<BookingDashboardSummaryDto> GetDashboardSummaryAsync(BookingDashboardSummaryQuery query, string userRole, Guid userId);
+
+        Task<List<BookingCalendarHeatmapDto>> GetCalendarHeatmapAsync(BookingCalendarHeatmapQuery query, string userRole, Guid userId);
+
         // Lấy danh sách booking của khách hàng (có phân trang và filter)
         Task<PagedResult<Booking>> GetByCustomerIdAsync(Guid customerId, BookingListQuery query);
 
