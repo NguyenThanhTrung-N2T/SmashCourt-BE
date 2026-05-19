@@ -100,22 +100,58 @@ namespace SmashCourt_BE.Services
             };
         }
 
-        // Lấy danh sách booking của chính khách hàng (customer)
+        /// <summary>
+        /// Lấy lịch booking theo sân trong một ngày.
+        /// Delegate xuống Repository layer để query database.
+        /// </summary>
+        /// <param name="query">Query parameters từ client</param>
+        /// <param name="currentUserId">User ID hiện tại (từ JWT token)</param>
+        /// <param name="currentUserRole">Role hiện tại (OWNER, BRANCH_MANAGER, STAFF)</param>
+        /// <returns>Danh sách sân kèm lịch booking trong ngày</returns>
+        /// <remarks>
+        /// Service layer chỉ delegate xuống Repository, không có business logic phức tạp.
+        /// Branch scoping được xử lý ở Repository layer.
+        /// </remarks>
         public async Task<List<BookingScheduleCourtDto>> GetScheduleAsync(
             BookingScheduleQuery query, Guid currentUserId, string currentUserRole)
         {
             return await _bookingRepo.GetScheduleAsync(query, currentUserRole, currentUserId);
         }
 
+        /// <summary>
+        /// Lấy thống kê nhanh cho dashboard booking.
+        /// Delegate xuống Repository layer để query database.
+        /// </summary>
+        /// <param name="query">Query parameters từ client</param>
+        /// <param name="currentUserId">User ID hiện tại (từ JWT token)</param>
+        /// <param name="currentUserRole">Role hiện tại (OWNER, BRANCH_MANAGER, STAFF)</param>
+        /// <returns>Thống kê tổng quan booking hôm nay</returns>
+        /// <remarks>
+        /// Service layer chỉ delegate xuống Repository, không có business logic phức tạp.
+        /// Branch scoping được xử lý ở Repository layer.
+        /// </remarks>
         public async Task<BookingDashboardSummaryDto> GetDashboardSummaryAsync(
             BookingDashboardSummaryQuery query, Guid currentUserId, string currentUserRole)
         {
             return await _bookingRepo.GetDashboardSummaryAsync(query, currentUserRole, currentUserId);
         }
 
+        /// <summary>
+        /// Lấy dữ liệu heatmap booking theo tháng.
+        /// Validate input và delegate xuống Repository layer.
+        /// </summary>
+        /// <param name="query">Query parameters từ client</param>
+        /// <param name="currentUserId">User ID hiện tại (từ JWT token)</param>
+        /// <param name="currentUserRole">Role hiện tại (OWNER, BRANCH_MANAGER, STAFF)</param>
+        /// <returns>Danh sách dữ liệu booking theo từng ngày trong tháng</returns>
+        /// <remarks>
+        /// Service layer xử lý default values cho Year và Month nếu client không truyền.
+        /// Branch scoping được xử lý ở Repository layer.
+        /// </remarks>
         public async Task<List<BookingCalendarHeatmapDto>> GetCalendarHeatmapAsync(
             BookingCalendarHeatmapQuery query, Guid currentUserId, string currentUserRole)
         {
+            // Default Year và Month nếu không truyền
             if (query.Year == 0)
                 query.Year = DateTimeHelper.GetTodayInVietnam().Year;
 

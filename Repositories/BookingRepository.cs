@@ -121,17 +121,47 @@ namespace SmashCourt_BE.Repositories
             };
         }
 
-        // Customer chỉ thấy booking của chính mình
+        /// <summary>
+        /// Lấy lịch booking theo sân trong một ngày.
+        /// Query tất cả sân trong branch và booking tương ứng, sau đó group theo sân.
+        /// </summary>
+        /// <param name="query">Query parameters: BranchId, Date</param>
+        /// <param name="userRole">Role của user (OWNER, BRANCH_MANAGER, STAFF)</param>
+        /// <param name="userId">User ID (dùng để resolve branch scoping)</param>
+        /// <returns>Danh sách sân kèm lịch booking trong ngày</returns>
+        /// <exception cref="AppException">Throw 400 nếu không có BranchId (sau khi resolve scoping)</exception>
+        /// <remarks>
+        /// **Query strategy:**
+        /// 1. Resolve branch scoping (OWNER vs MANAGER/STAFF)
+        /// 2. Load tất cả sân trong branch (không bao gồm sân INACTIVE)
+        /// 3. Load tất cả booking_courts trong ngày (chỉ booking có status ACTIVE)
+        /// 4. Group booking_courts theo CourtId in-memory
+        /// 5. Map vào DTO
+        /// 
+        /// **Performance:**
+        /// - 2 queries: 1 cho courts, 1 cho booking_courts
+        /// - AsNoTracking (read-only)
+        /// - GroupBy in-memory (sau khi load data)
+        /// 
+        /// **Business logic:**
+        /// - Chỉ hiển thị booking có status ACTIVE (PENDING, CONFIRMED, PAID_ONLINE, IN_PROGRESS, PENDING_PAYMENT)
+        /// - Không hiển thị booking đã hủy hoặc NO_SHOW
+        /// - Sắp xếp sân theo tên, booking theo thời gian bắt đầu
+        /// </remarks>
         public async Task<List<BookingScheduleCourtDto>> GetScheduleAsync(
             BookingScheduleQuery query, string userRole, Guid userId)
         {
+            // 1. Resolve branch scoping (OWNER có thể xem tất cả, MANAGER/STAFF chỉ xem branch mình)
             var branchId = await ResolveScopedBranchIdAsync(query.BranchId, userRole, userId);
             if (!branchId.HasValue)
                 throw new AppException(400, "Vui lòng chọn chi nhánh", ErrorCodes.BadRequest);
 
             var date = DateOnly.FromDateTime(query.Date);
+            
+            // Lấy danh sách status active từ helper (single source of truth)
             var activeStatuses = BookingStatusTransition.GetActiveStatuses();
 
+            // 2. Load tất cả sân trong branch (không bao gồm sân INACTIVE)
             var courts = await _context.Courts
                 .AsNoTracking()
                 .Where(c => c.BranchId == branchId.Value && c.Status != CourtStatus.INACTIVE)
@@ -139,6 +169,7 @@ namespace SmashCourt_BE.Repositories
                 .Select(c => new { c.Id, c.Name })
                 .ToListAsync();
 
+            // 3. Load tất cả booking_courts trong ngày (chỉ booking có status ACTIVE)
             var bookingCourts = await _context.BookingCourts
                 .AsNoTracking()
                 .Where(bc => bc.Court.BranchId == branchId.Value &&
@@ -156,6 +187,7 @@ namespace SmashCourt_BE.Repositories
                 .OrderBy(bc => bc.StartTime)
                 .ToListAsync();
 
+            // 4. Group booking_courts theo CourtId in-memory
             var bookingsByCourt = bookingCourts
                 .GroupBy(bc => bc.CourtId)
                 .ToDictionary(g => g.Key, g => g.Select(bc => new BookingScheduleItemDto
@@ -166,6 +198,7 @@ namespace SmashCourt_BE.Repositories
                     Status = bc.Status.ToString()
                 }).ToList());
 
+            // 5. Map vào DTO (sân không có booking sẽ có Bookings = [])
             return courts.Select(c => new BookingScheduleCourtDto
             {
                 CourtId = c.Id,
@@ -174,12 +207,43 @@ namespace SmashCourt_BE.Repositories
             }).ToList();
         }
 
+        /// <summary>
+        /// Lấy thống kê nhanh cho dashboard booking hôm nay.
+        /// Aggregate dữ liệu từ bookings, invoices, và refunds.
+        /// </summary>
+        /// <param name="query">Query parameters: BranchId (optional)</param>
+        /// <param name="userRole">Role của user (OWNER, BRANCH_MANAGER, STAFF)</param>
+        /// <param name="userId">User ID (dùng để resolve branch scoping)</param>
+        /// <returns>Thống kê tổng quan booking hôm nay</returns>
+        /// <remarks>
+        /// **Query strategy:**
+        /// 1. Resolve branch scoping (OWNER vs MANAGER/STAFF)
+        /// 2. Query bookings hôm nay, group theo status
+        /// 3. Query revenue hôm nay (chỉ tính booking đã thanh toán)
+        /// 4. Query pending refunds (tất cả đơn chờ hoàn tiền, không chỉ hôm nay)
+        /// 5. Aggregate kết quả
+        /// 
+        /// **Performance:**
+        /// - 3 queries: bookings, invoices, refunds
+        /// - AsNoTracking (read-only)
+        /// - GroupBy và SUM ở database level
+        /// 
+        /// **Business logic:**
+        /// - TodayBookings: Tổng số booking hôm nay (tất cả status)
+        /// - ActiveBookings: Chỉ tính booking có status IN_PROGRESS
+        /// - CompletedBookings: Chỉ tính booking có status COMPLETED
+        /// - CancelledBookings: Tính tất cả booking đã hủy (CANCELLED, CANCELLED_PENDING_REFUND, CANCELLED_REFUNDED)
+        /// - TodayRevenue: Chỉ tính invoice có PaymentStatus = PAID và booking không bị hủy
+        /// - PendingRefunds: Tổng số refund có status PENDING (không chỉ hôm nay)
+        /// </remarks>
         public async Task<BookingDashboardSummaryDto> GetDashboardSummaryAsync(
             BookingDashboardSummaryQuery query, string userRole, Guid userId)
         {
+            // 1. Resolve branch scoping
             var branchId = await ResolveScopedBranchIdAsync(query.BranchId, userRole, userId);
             var today = DateTimeHelper.GetTodayInVietnam();
 
+            // 2. Query bookings hôm nay, group theo status (aggregate ở DB level)
             var bookings = _context.Bookings
                 .AsNoTracking()
                 .Where(b => b.BookingDate == today);
@@ -192,11 +256,13 @@ namespace SmashCourt_BE.Repositories
                 .Select(g => new { Status = g.Key, Count = g.Count() })
                 .ToListAsync();
 
+            // 3. Tính active bookings (chỉ IN_PROGRESS)
             var activeStatuses = new[]
             {
                 BookingStatus.IN_PROGRESS,
             };
 
+            // 4. Query revenue hôm nay (chỉ tính invoice đã thanh toán và booking không bị hủy)
             var todayRevenue = await _context.Invoices
                 .AsNoTracking()
                 .Where(i => i.Booking.BookingDate == today &&
@@ -208,12 +274,14 @@ namespace SmashCourt_BE.Repositories
                             (!branchId.HasValue || i.Booking.BranchId == branchId.Value))
                 .SumAsync(i => i.FinalTotal);
 
+            // 5. Query pending refunds (tất cả đơn chờ hoàn tiền, không chỉ hôm nay)
             var pendingRefunds = await _context.Refunds
                 .AsNoTracking()
                 .Where(r => r.Status == RefundStatus.PENDING &&
                             (!branchId.HasValue || r.Payment.Invoice.Booking.BranchId == branchId.Value))
                 .CountAsync();
 
+            // 6. Aggregate kết quả
             return new BookingDashboardSummaryDto
             {
                 TodayBookings = statusCounts.Sum(s => s.Count),
@@ -229,13 +297,50 @@ namespace SmashCourt_BE.Repositories
             };
         }
 
+        /// <summary>
+        /// Lấy dữ liệu heatmap booking theo tháng.
+        /// Tính toán occupancy rate, booking count, và revenue cho từng ngày trong tháng.
+        /// </summary>
+        /// <param name="query">Query parameters: Year, Month, BranchId (optional)</param>
+        /// <param name="userRole">Role của user (OWNER, BRANCH_MANAGER, STAFF)</param>
+        /// <param name="userId">User ID (dùng để resolve branch scoping)</param>
+        /// <returns>Danh sách dữ liệu booking theo từng ngày trong tháng (31 items max)</returns>
+        /// <remarks>
+        /// **Query strategy:**
+        /// 1. Resolve branch scoping (OWNER vs MANAGER/STAFF)
+        /// 2. Tính dailyAvailableHours = (closeTime - openTime) × số sân
+        /// 3. Query booking counts theo ngày (group by BookingDate)
+        /// 4. Query booked hours theo ngày (sum duration của booking_courts)
+        /// 5. Query revenue theo ngày (sum FinalTotal của invoices)
+        /// 6. Loop qua từng ngày trong tháng, tính occupancy rate
+        /// 
+        /// **Performance:**
+        /// - 5 queries: branches, courts, bookings, booking_courts, invoices
+        /// - AsNoTracking (read-only)
+        /// - GroupBy và SUM ở database level
+        /// - ToDictionary để lookup nhanh
+        /// 
+        /// **Business logic:**
+        /// - Chỉ tính booking có status hợp lệ (PENDING, CONFIRMED, PAID_ONLINE, IN_PROGRESS, PENDING_PAYMENT, COMPLETED)
+        /// - Không tính booking đã hủy hoặc NO_SHOW
+        /// - OccupancyRate = bookedHours / dailyAvailableHours
+        /// - Nếu không có sân nào → occupancyRate = 0
+        /// 
+        /// **Cách tính OccupancyRate:**
+        /// - Ví dụ: Branch có 5 sân, mở cửa 8h-22h (14 giờ/ngày)
+        /// - dailyAvailableHours = 14 × 5 = 70 giờ
+        /// - Ngày 1/1: có 45 giờ đã đặt → occupancyRate = 45/70 = 0.64 (64%)
+        /// - Ngày 2/1: có 60 giờ đã đặt → occupancyRate = 60/70 = 0.86 (86%)
+        /// </remarks>
         public async Task<List<BookingCalendarHeatmapDto>> GetCalendarHeatmapAsync(
             BookingCalendarHeatmapQuery query, string userRole, Guid userId)
         {
+            // 1. Resolve branch scoping
             var branchId = await ResolveScopedBranchIdAsync(query.BranchId, userRole, userId);
             var startDate = new DateOnly(query.Year, query.Month, 1);
             var endDate = startDate.AddMonths(1).AddDays(-1);
 
+            // 2. Load branches (để lấy OpenTime, CloseTime)
             var branchesQuery = _context.Branches.AsNoTracking().AsQueryable();
             if (branchId.HasValue)
                 branchesQuery = branchesQuery.Where(b => b.Id == branchId.Value);
@@ -246,6 +351,7 @@ namespace SmashCourt_BE.Repositories
 
             var branchIds = branches.Select(b => b.Id).ToList();
 
+            // 3. Đếm số sân của mỗi branch (không tính sân INACTIVE hoặc SUSPENDED)
             var courtCounts = await _context.Courts
                 .AsNoTracking()
                 .Where(c => branchIds.Contains(c.BranchId) &&
@@ -255,9 +361,11 @@ namespace SmashCourt_BE.Repositories
                 .Select(g => new { BranchId = g.Key, Count = g.Count() })
                 .ToDictionaryAsync(x => x.BranchId, x => x.Count);
 
+            // 4. Tính dailyAvailableHours = tổng (closeTime - openTime) × số sân
             var dailyAvailableHours = branches.Sum(b =>
                 (decimal)((b.CloseTime - b.OpenTime).TotalHours * courtCounts.GetValueOrDefault(b.Id, 0)));
 
+            // 5. Danh sách status hợp lệ (không tính booking đã hủy hoặc NO_SHOW)
             var countedStatuses = new[]
             {
                 BookingStatus.PENDING,
@@ -268,6 +376,7 @@ namespace SmashCourt_BE.Repositories
                 BookingStatus.COMPLETED
             };
 
+            // 6. Query booking counts theo ngày (group by BookingDate)
             var bookingCounts = await _context.Bookings
                 .AsNoTracking()
                 .Where(b => b.BookingDate >= startDate &&
@@ -278,6 +387,7 @@ namespace SmashCourt_BE.Repositories
                 .Select(g => new { Date = g.Key, Count = g.Count() })
                 .ToDictionaryAsync(x => x.Date, x => x.Count);
 
+            // 7. Query booked hours theo ngày (sum duration của booking_courts)
             var bookedHours = await _context.BookingCourts
                 .AsNoTracking()
                 .Where(bc => bc.Date >= startDate &&
@@ -292,6 +402,7 @@ namespace SmashCourt_BE.Repositories
                 })
                 .ToDictionaryAsync(x => x.Date, x => x.Hours);
 
+            // 8. Query revenue theo ngày (sum FinalTotal của invoices đã thanh toán)
             var revenue = await _context.Invoices
                 .AsNoTracking()
                 .Where(i => i.Booking.BookingDate >= startDate &&
@@ -302,9 +413,11 @@ namespace SmashCourt_BE.Repositories
                 .Select(g => new { Date = g.Key, Revenue = g.Sum(i => i.FinalTotal) })
                 .ToDictionaryAsync(x => x.Date, x => x.Revenue);
 
+            // 9. Loop qua từng ngày trong tháng, tính occupancy rate
             var result = new List<BookingCalendarHeatmapDto>();
             for (var date = startDate; date <= endDate; date = date.AddDays(1))
             {
+                // Tính occupancy rate = bookedHours / dailyAvailableHours
                 var occupancyRate = dailyAvailableHours > 0
                     ? Math.Round(bookedHours.GetValueOrDefault(date, 0) / dailyAvailableHours, 2)
                     : 0;

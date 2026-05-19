@@ -39,6 +39,29 @@ namespace SmashCourt_BE.Controllers
         /// <summary>
         /// Lấy lịch booking theo sân trong một ngày
         /// </summary>
+        /// <param name="query">Query parameters: BranchId (optional), Date (required)</param>
+        /// <returns>Danh sách sân kèm lịch booking trong ngày</returns>
+        /// <remarks>
+        /// Endpoint này dùng để hiển thị lịch đặt sân của tất cả các sân trong 1 ngày cụ thể.
+        /// 
+        /// **Use case:**
+        /// - Staff/Manager mở app vào buổi sáng → xem lịch hôm nay có bao nhiêu booking
+        /// - Biết sân nào đang trống, sân nào đang có người chơi
+        /// - Click vào booking → xem chi tiết khách hàng
+        /// 
+        /// **Phân quyền:**
+        /// - OWNER: Xem tất cả branches (nếu không truyền BranchId)
+        /// - MANAGER/STAFF: Chỉ xem branch của mình (BranchId bị override)
+        /// 
+        /// **Response:**
+        /// - Trả về danh sách sân, mỗi sân có danh sách booking trong ngày
+        /// - Chỉ hiển thị booking có status ACTIVE (PENDING, CONFIRMED, PAID_ONLINE, IN_PROGRESS, PENDING_PAYMENT)
+        /// - Sắp xếp theo tên sân và thời gian bắt đầu
+        /// </remarks>
+        /// <response code="200">Lấy lịch đặt sân thành công</response>
+        /// <response code="400">BranchId không hợp lệ hoặc thiếu Date</response>
+        /// <response code="401">Chưa đăng nhập</response>
+        /// <response code="403">Không có quyền truy cập</response>
         [HttpGet("schedule")]
         [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
         public async Task<IActionResult> GetSchedule([FromQuery] BookingScheduleQuery query)
@@ -53,6 +76,35 @@ namespace SmashCourt_BE.Controllers
         /// <summary>
         /// Lấy thống kê nhanh cho dashboard booking
         /// </summary>
+        /// <param name="query">Query parameters: BranchId (optional)</param>
+        /// <returns>Thống kê tổng quan booking hôm nay</returns>
+        /// <remarks>
+        /// Endpoint này dùng để hiển thị dashboard tổng quan cho Staff/Manager.
+        /// 
+        /// **Use case:**
+        /// - Manager mở app → nhìn 1 cái biết ngay tình hình kinh doanh hôm nay
+        /// - Hiển thị trên màn hình "Dashboard Booking" hoặc "Trang chủ Staff"
+        /// 
+        /// **Dữ liệu trả về:**
+        /// - TodayBookings: Tổng số booking hôm nay
+        /// - ActiveBookings: Số booking đang chơi (IN_PROGRESS)
+        /// - CompletedBookings: Số booking đã hoàn thành
+        /// - CancelledBookings: Số booking đã hủy
+        /// - TodayRevenue: Doanh thu hôm nay (chỉ tính booking đã thanh toán)
+        /// - PendingRefunds: Số đơn chờ hoàn tiền (cần xử lý)
+        /// 
+        /// **Phân quyền:**
+        /// - OWNER: Xem tất cả branches (nếu không truyền BranchId)
+        /// - MANAGER/STAFF: Chỉ xem branch của mình (BranchId bị override)
+        /// 
+        /// **Lưu ý:**
+        /// - Chỉ tính revenue từ booking có PaymentStatus = PAID
+        /// - Không tính booking đã hủy vào revenue
+        /// - PendingRefunds là tổng số đơn chờ hoàn tiền (không chỉ hôm nay)
+        /// </remarks>
+        /// <response code="200">Lấy thống kê booking thành công</response>
+        /// <response code="401">Chưa đăng nhập</response>
+        /// <response code="403">Không có quyền truy cập</response>
         [HttpGet("dashboard-summary")]
         [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
         public async Task<IActionResult> GetDashboardSummary([FromQuery] BookingDashboardSummaryQuery query)
@@ -67,6 +119,40 @@ namespace SmashCourt_BE.Controllers
         /// <summary>
         /// Lấy dữ liệu heatmap booking theo tháng
         /// </summary>
+        /// <param name="query">Query parameters: Year (required), Month (required), BranchId (optional)</param>
+        /// <returns>Danh sách dữ liệu booking theo từng ngày trong tháng</returns>
+        /// <remarks>
+        /// Endpoint này dùng để hiển thị calendar heatmap (giống GitHub contribution graph).
+        /// 
+        /// **Use case:**
+        /// - Manager xem report tháng → biết ngày nào đông khách, ngày nào vắng
+        /// - Phân tích xu hướng booking trong tháng
+        /// - Hiển thị trên màn hình "Phân tích Booking" hoặc "Report"
+        /// 
+        /// **Dữ liệu trả về (cho mỗi ngày):**
+        /// - Date: Ngày (format: yyyy-MM-dd)
+        /// - BookingCount: Số lượng booking trong ngày
+        /// - OccupancyRate: Tỷ lệ sử dụng sân (0.0 - 1.0)
+        /// - Revenue: Doanh thu trong ngày
+        /// 
+        /// **Cách tính OccupancyRate:**
+        /// - dailyAvailableHours = (closeTime - openTime) × số sân
+        /// - bookedHours = tổng giờ đã đặt trong ngày
+        /// - occupancyRate = bookedHours / dailyAvailableHours
+        /// 
+        /// **Phân quyền:**
+        /// - OWNER: Xem tất cả branches (nếu không truyền BranchId)
+        /// - MANAGER/STAFF: Chỉ xem branch của mình (BranchId bị override)
+        /// 
+        /// **Lưu ý:**
+        /// - Chỉ tính booking có status hợp lệ (PENDING, CONFIRMED, PAID_ONLINE, IN_PROGRESS, PENDING_PAYMENT, COMPLETED)
+        /// - Không tính booking đã hủy hoặc NO_SHOW
+        /// - Nếu không truyền Month, mặc định lấy tháng hiện tại
+        /// </remarks>
+        /// <response code="200">Lấy dữ liệu heatmap thành công</response>
+        /// <response code="400">Year hoặc Month không hợp lệ</response>
+        /// <response code="401">Chưa đăng nhập</response>
+        /// <response code="403">Không có quyền truy cập</response>
         [HttpGet("calendar-heatmap")]
         [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
         public async Task<IActionResult> GetCalendarHeatmap([FromQuery] BookingCalendarHeatmapQuery query)
