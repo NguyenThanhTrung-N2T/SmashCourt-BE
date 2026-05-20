@@ -21,6 +21,8 @@ public class CreateUserDto
     [MaxLength(20, ErrorMessage = "Số điện thoại không được vượt quá 20 ký tự")]
     public string? Phone { get; set; }
 
+    public string? AvatarUrl { get; set; }
+
     /// <summary>
     /// Role được yêu cầu (STAFF hoặc BRANCH_MANAGER)
     /// QUAN TRỌNG: Backend sẽ FORCE role dựa trên currentUserRole, KHÔNG trust input này

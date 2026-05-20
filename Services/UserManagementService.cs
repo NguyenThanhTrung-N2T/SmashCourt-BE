@@ -287,6 +287,7 @@ public class UserManagementService : IUserManagementService
             Status = UserStatus.ACTIVE,
             IsEmailVerified = true, // User được tạo bởi admin → tự động verify
             MustChangePassword = true, // Bắt buộc đổi password lần đầu đăng nhập
+            AvatarUrl = dto.AvatarUrl,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
