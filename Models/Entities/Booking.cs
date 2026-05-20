@@ -1,10 +1,11 @@
-﻿using SmashCourt_BE.Models.Enums;
+using SmashCourt_BE.Models.Enums;
 
 namespace SmashCourt_BE.Models.Entities
 {
     public class Booking
     {
         public Guid Id { get; set; }
+        public string BookingCode { get; set; } = null!;
         public Guid BranchId { get; set; }
         public Guid? CustomerId { get; set; }
         public string? GuestName { get; set; }

@@ -35,6 +35,7 @@ namespace SmashCourt_BE.Services
         private readonly ITimeSlotRepository _timeSlotRepo;
         private readonly IVnPayService _vnPayService;
         private readonly EmailService _emailService;
+        private readonly ICodeGeneratorService _codeGeneratorService;
         private readonly ILogger<BookingService> _logger;
         private readonly IConfiguration _configuration;
 
@@ -58,6 +59,7 @@ namespace SmashCourt_BE.Services
             ITimeSlotRepository timeSlotRepo,
             IVnPayService vnPayService,
             EmailService emailService,
+            ICodeGeneratorService codeGeneratorService,
             ILogger<BookingService> logger,
             IConfiguration configuration)
         {
@@ -80,6 +82,7 @@ namespace SmashCourt_BE.Services
             _timeSlotRepo = timeSlotRepo;
             _vnPayService = vnPayService;
             _emailService = emailService;
+            _codeGeneratorService = codeGeneratorService;
             _logger = logger;
             _configuration = configuration;
         }
@@ -331,8 +334,10 @@ namespace SmashCourt_BE.Services
             // 7. Tạo booking PENDING — 1 booking cho tất cả courts
             // Dùng UTC để Npgsql lưu timestamptz đúng (Kind=Utc). Frontend tự convert sang VN time.
             var expiresAt = DateTime.UtcNow.AddMinutes(10);
+            var bookingCode = await _codeGeneratorService.GenerateBookingCodeAsync();
             var booking = new Booking
             {
+                BookingCode = bookingCode,
                 BranchId = branchId,
                 CustomerId = customerId,
                 GuestName = dto.GuestName?.Trim(),
@@ -470,11 +475,18 @@ namespace SmashCourt_BE.Services
 
             var branchId = courtEntities.First().Court.BranchId;
 
-            // Staff chỉ được đặt sân tại chi nhánh mình
-            var isInBranch = await _userBranchRepo.IsUserInBranchAsync(createdBy, branchId);
-            if (!isInBranch)
-                throw new AppException(403,
-                    "Bạn không có quyền đặt sân tại chi nhánh này", ErrorCodes.Forbidden);
+            var user = await _userRepo.GetUserByIdAsync(createdBy);
+            if (user == null)
+                throw new AppException(404, "Không tìm thấy người dùng", ErrorCodes.NotFound);
+
+            if (user.Role != UserRole.OWNER)
+            {
+                // Staff chỉ được đặt sân tại chi nhánh mình
+                var isInBranch = await _userBranchRepo.IsUserInBranchAsync(createdBy, branchId);
+                if (!isInBranch)
+                    throw new AppException(403,
+                        "Bạn không có quyền đặt sân tại chi nhánh này", ErrorCodes.Forbidden);
+            }
 
             Guid bookingId;
 
@@ -559,8 +571,10 @@ namespace SmashCourt_BE.Services
                 var paymentStatus = dto.PayNow ? InvoicePaymentStatus.PAID : InvoicePaymentStatus.UNPAID;
 
                 // 6. Tạo booking CONFIRMED
+                var bookingCode = await _codeGeneratorService.GenerateBookingCodeAsync();
                 var booking = new Booking
                 {
+                    BookingCode = bookingCode,
                     BranchId = branchId,
                     CustomerId = dto.CustomerId,
                     GuestName = dto.GuestName?.Trim(),
@@ -1259,6 +1273,25 @@ namespace SmashCourt_BE.Services
                 throw new AppException(404, "Không tìm thấy đơn đặt sân", ErrorCodes.NotFound);
 
             await ValidateBranchAccessAsync(booking.BranchId, currentUserId, currentUserRole);
+            var bookingCourt = booking.BookingCourts.FirstOrDefault();
+            if (bookingCourt == null)
+                throw new AppException(500, "Không tìm thấy sân và khung giờ đã đặt", ErrorCodes.InternalError);
+
+            var date = booking.BookingDate;
+
+            var startLocal = date.ToDateTime(bookingCourt.StartTime);
+            var endLocal = date.ToDateTime(bookingCourt.EndTime);
+
+            var startDateTime = TimeZoneInfo.ConvertTimeToUtc(startLocal, DateTimeHelper.VNTimezone);
+            var endDateTime = TimeZoneInfo.ConvertTimeToUtc(endLocal, DateTimeHelper.VNTimezone);
+
+            var now = DateTimeHelper.GetUtcNow();
+
+            if (now < startDateTime.AddMinutes(-15))
+                throw new AppException(400, "Quá sớm để check-in", ErrorCodes.BadRequest);
+
+            if (now > endDateTime)
+                throw new AppException(400, "Đã quá thời gian check-in", ErrorCodes.BadRequest);
 
             if (booking.Status != BookingStatus.CONFIRMED &&
                 booking.Status != BookingStatus.PAID_ONLINE)
@@ -1266,34 +1299,35 @@ namespace SmashCourt_BE.Services
                     "Chỉ có thể check-in đơn đang xác nhận hoặc đã thanh toán trực tuyến",
                     ErrorCodes.BadRequest);
 
-            // Validate chuyển trạng thái sử dụng BookingStatusTransition helper
-            BookingStatusTransition.ValidateTransition(booking.Status, BookingStatus.IN_PROGRESS);
-
-            var now = DateTime.UtcNow;
-
-            booking.Status = BookingStatus.IN_PROGRESS;
-            booking.CheckedInAt = now;
-
-            // Vô hiệu hóa cancel token khi check-in để khách không thể hủy khi đang chơi
-            if (!string.IsNullOrEmpty(booking.CancelTokenHash))
+            using (var transaction = new System.Transactions.TransactionScope(
+                System.Transactions.TransactionScopeAsyncFlowOption.Enabled))
             {
-                booking.CancelTokenUsedAt = now;
-            }
+                // Validate chuyển trạng thái sử dụng BookingStatusTransition helper
+                BookingStatusTransition.ValidateTransition(booking.Status, BookingStatus.IN_PROGRESS);
 
-            booking.UpdatedAt = now;
-            await _bookingRepo.UpdateAsync(booking);
+                booking.Status = BookingStatus.IN_PROGRESS;
+                booking.CheckedInAt = now;
+                booking.UpdatedAt = now;
 
-            // Cập nhật court → IN_USE
-            // bc.Court đã được load sẵn qua GetByIdWithDetailsAsync().ThenInclude
-            foreach (var bc in booking.BookingCourts)
-            {
-                var court = bc.Court;
-                if (court != null)
+                // Vô hiệu hóa cancel token khi check-in để khách không thể hủy khi đang chơi
+                if (!string.IsNullOrEmpty(booking.CancelTokenHash))
                 {
-                    court.Status = CourtStatus.IN_USE;
-                    court.UpdatedAt = now;
-                    await _courtRepo.UpdateAsync(court);
+                    booking.CancelTokenUsedAt = now;
                 }
+
+                await _bookingRepo.UpdateAsync(booking);
+
+                // Cập nhật court → IN_USE
+                // bc.Court đã được load sẵn qua GetByIdWithDetailsAsync().ThenInclude
+                foreach (var bc in booking.BookingCourts)
+                {
+                    if (bc.Court == null) continue;
+                    bc.Court.Status = CourtStatus.IN_USE;
+                    bc.Court.UpdatedAt = now;
+                    await _courtRepo.UpdateAsync(bc.Court);
+                }
+
+                transaction.Complete();
             }
 
             // TODO: Broadcast SignalR
@@ -2116,6 +2150,8 @@ namespace SmashCourt_BE.Services
         private static BookingDto MapToDto(Booking b) => new()
         {
             Id = b.Id,
+            BookingCode = b.BookingCode,
+            InvoiceCode = b.Invoice?.InvoiceCode,
             BranchId = b.BranchId,
             BranchName = b.Branch?.Name ?? "",
             CustomerId = b.CustomerId,
@@ -2244,8 +2280,10 @@ namespace SmashCourt_BE.Services
                 await _promotionRepo.UpdateAsync(promotion);
             }
 
+            var invoiceCode = await _codeGeneratorService.GenerateInvoiceCodeAsync();
             var invoice = await _invoiceRepo.CreateAsync(new Invoice
             {
+                InvoiceCode = invoiceCode,
                 BookingId = booking.Id,
                 CourtFee = totalCourtFee,
                 ServiceFee = 0,

@@ -72,6 +72,12 @@ namespace SmashCourt_BE.Repositories
             if (query.ToDate.HasValue)
                 q = q.Where(b => b.BookingDate <= DateOnly.FromDateTime(query.ToDate.Value));
 
+            if (!string.IsNullOrWhiteSpace(query.BookingCode))
+            {
+                var code = query.BookingCode.Trim().ToLower();
+                q = q.Where(b => b.BookingCode.ToLower().Contains(code));
+            }
+
             var keyword = query.CustomerKeyword;
 
             if (!string.IsNullOrWhiteSpace(keyword))
@@ -82,7 +88,8 @@ namespace SmashCourt_BE.Repositories
                     (b.Customer != null && b.Customer.Phone != null && b.Customer.Phone.Contains(search)) ||
                     (b.GuestName != null && b.GuestName.ToLower().Contains(search)) ||
                     (b.GuestPhone != null && b.GuestPhone.Contains(search)) ||
-                    b.Id.ToString().Contains(search));
+                    b.BookingCode.ToLower().Contains(search) ||
+                    (b.Invoice != null && b.Invoice.InvoiceCode.ToLower().Contains(search)));
             }
 
             var sortBy = query.SortBy?.Trim().ToLowerInvariant();
@@ -458,6 +465,12 @@ namespace SmashCourt_BE.Repositories
                 q = q.Where(b => b.BookingDate == date);
             }
 
+            if (!string.IsNullOrWhiteSpace(query.BookingCode))
+            {
+                var code = query.BookingCode.Trim().ToLower();
+                q = q.Where(b => b.BookingCode.ToLower().Contains(code));
+            }
+
             if (!string.IsNullOrWhiteSpace(query.CustomerKeyword))
             {
                 var search = query.CustomerKeyword.Trim().ToLower();
@@ -466,7 +479,8 @@ namespace SmashCourt_BE.Repositories
                     (b.Customer != null && b.Customer.Phone != null && b.Customer.Phone.Contains(search)) ||
                     (b.GuestName != null && b.GuestName.ToLower().Contains(search)) ||
                     (b.GuestPhone != null && b.GuestPhone.Contains(search)) ||
-                    b.Id.ToString().Contains(search)
+                    b.BookingCode.ToLower().Contains(search) ||
+                    (b.Invoice != null && b.Invoice.InvoiceCode.ToLower().Contains(search))
                 );
             }
 

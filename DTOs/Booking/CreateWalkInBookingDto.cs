@@ -67,10 +67,13 @@ namespace SmashCourt_BE.DTOs.Booking
 
             // Phải có CustomerId hoặc thông tin khách vãng lai
             if (CustomerId == null &&
-                (string.IsNullOrEmpty(GuestName) || string.IsNullOrEmpty(GuestPhone)))
+                string.IsNullOrWhiteSpace(GuestName) &&
+                string.IsNullOrWhiteSpace(GuestPhone))
+            {
                 yield return new ValidationResult(
-                    "Vui lòng nhập thông tin khách hoặc chọn tài khoản khách hàng",
-                    new[] { nameof(GuestName) });
+                    "Vui lòng nhập tên, số điện thoại hoặc chọn tài khoản khách hàng",
+                    new[] { nameof(GuestName), nameof(GuestPhone) });
+            }
 
             // Promotion chỉ dùng được khi có tài khoản
             if (PromotionId.HasValue && CustomerId == null)

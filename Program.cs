@@ -165,7 +165,7 @@ builder.Services.AddScoped<IUserManagementService, UserManagementService>();
 builder.Services.AddScoped<IProfileService, ProfileService>();
 builder.Services.AddScoped<ICustomerManagementRepository, CustomerManagementRepository>();
 builder.Services.AddScoped<ICustomerManagementService, CustomerManagementService>();
-
+builder.Services.AddScoped<ICodeGeneratorService, CodeGeneratorService>();
 // Report & Analytics
 builder.Services.AddScoped<IReportRepository, ReportRepository>();
 builder.Services.AddScoped<IReportService, ReportService>();

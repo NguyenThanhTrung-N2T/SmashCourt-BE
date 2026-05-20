@@ -1,8 +1,10 @@
-﻿namespace SmashCourt_BE.DTOs.Booking
+namespace SmashCourt_BE.DTOs.Booking
 {
     public class BookingDto
     {
         public Guid Id { get; set; }
+        public string BookingCode { get; set; } = null!;
+        public string? InvoiceCode { get; set; }
         public Guid BranchId { get; set; }
         public string BranchName { get; set; } = null!;
         public Guid? CustomerId { get; set; }

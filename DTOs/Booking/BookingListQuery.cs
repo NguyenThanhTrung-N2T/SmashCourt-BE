@@ -1,4 +1,4 @@
-﻿using SmashCourt_BE.Common;
+using SmashCourt_BE.Common;
 using SmashCourt_BE.Models.Enums;
 
 namespace SmashCourt_BE.DTOs.Booking
@@ -13,6 +13,7 @@ namespace SmashCourt_BE.DTOs.Booking
         public DateTime? FromDate { get; set; }
         public DateTime? ToDate { get; set; }
         public string? CustomerKeyword { get; set; }
+        public string? BookingCode { get; set; }
         public string? SortBy { get; set; } = "createdAt";
         public string? SortOrder { get; set; } = "desc";
     }

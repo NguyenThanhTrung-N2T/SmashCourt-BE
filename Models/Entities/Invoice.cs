@@ -1,10 +1,11 @@
-﻿using SmashCourt_BE.Models.Enums;
+using SmashCourt_BE.Models.Enums;
 
 namespace SmashCourt_BE.Models.Entities
 {
     public class Invoice
     {
         public Guid Id { get; set; }
+        public string InvoiceCode { get; set; } = null!;
         public Guid BookingId { get; set; }
         public decimal CourtFee { get; set; }
         public decimal ServiceFee { get; set; } = 0;

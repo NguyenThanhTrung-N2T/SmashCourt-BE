@@ -72,8 +72,10 @@ public static class BookingEmailFactory
         var baseUrl = frontendBaseUrl ?? "https://smashcourt.vn";
         var cancelUrl = $"{baseUrl}/booking/cancel?token={Uri.EscapeDataString(cancelToken)}";
 
-        // Build booking code (8 ký tự đầu của GUID)
-        var bookingCode = booking.Id.ToString()[..8].ToUpper();
+        // Build booking code (sử dụng BookingCode từ DB, fallback 8 ký tự đầu của GUID)
+        var bookingCode = string.IsNullOrEmpty(booking.BookingCode)
+            ? booking.Id.ToString()[..8].ToUpper()
+            : booking.BookingCode;
 
         return new BookingEmailModel
         {

@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 namespace SmashCourt_BE.Data
@@ -84,7 +84,6 @@ namespace SmashCourt_BE.Data
 
             // Apply configurations từng entity
             modelBuilder.ApplyConfigurationsFromAssembly(typeof(SmashCourtContext).Assembly);
-
 
             // ── MODULE 1 ──────────────────────────
             modelBuilder.Entity<User>(e =>
@@ -437,6 +436,8 @@ namespace SmashCourt_BE.Data
                 e.ToTable("bookings");
                 e.HasKey(x => x.Id);
                 e.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
+                e.Property(x => x.BookingCode).HasColumnName("booking_code").HasMaxLength(20).IsRequired();
+                e.HasIndex(x => x.BookingCode).IsUnique();
                 e.Property(x => x.BranchId).HasColumnName("branch_id");
                 e.Property(x => x.CustomerId).HasColumnName("customer_id");
                 e.Property(x => x.GuestName).HasColumnName("guest_name").HasMaxLength(255);
@@ -552,6 +553,8 @@ namespace SmashCourt_BE.Data
                 e.ToTable("invoices");
                 e.HasKey(x => x.Id);
                 e.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
+                e.Property(x => x.InvoiceCode).HasColumnName("invoice_code").HasMaxLength(20).IsRequired();
+                e.HasIndex(x => x.InvoiceCode).IsUnique();
                 e.Property(x => x.BookingId).HasColumnName("booking_id");
                 e.Property(x => x.CourtFee).HasColumnName("court_fee").HasPrecision(12, 2);
                 e.Property(x => x.ServiceFee).HasColumnName("service_fee").HasPrecision(12, 2).HasDefaultValue(0m);
