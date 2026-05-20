@@ -26,6 +26,17 @@ namespace SmashCourt_BE.Jobs
             _logger = logger;
         }
 
+        // Helper: Convert ngày + giờ Việt Nam sang UTC
+        // BookingCourt.Date và StartTime/EndTime đều được lưu theo giờ VN
+        // → phải ConvertTimeToUtc thay vì SpecifyKind(Utc) để tránh lệch 7 tiếng
+        private static DateTime ToUtcFromVietnam(DateOnly date, TimeOnly time)
+        {
+            var vnDateTime = date.ToDateTime(time);
+            return TimeZoneInfo.ConvertTimeToUtc(
+                DateTime.SpecifyKind(vnDateTime, DateTimeKind.Unspecified),
+                DateTimeHelper.VNTimezone);
+        }
+
         // Job-01: Hủy booking PENDING hết hạn (mỗi 1 phút)
         public async Task CancelExpiredPendingBookingsAsync()
         {
@@ -153,14 +164,17 @@ namespace SmashCourt_BE.Jobs
                 {
                     if (!booking.BookingCourts.Any()) continue;
 
-                    // Lấy max EndTime từ booking courts
-                    var maxEndTime = booking.BookingCourts.Max(bc => bc.EndTime);
-                    // BookingDate lưu DateOnly, EndTime lưu TimeOnly
-                    // Tạo DateTime từ BookingDate + EndTime (Kind=Unspecified)
-                    var bookingEndDateTime = booking.BookingDate.ToDateTime(maxEndTime);
-                    // Specify Kind=Utc vì database lưu UTC
-                    var utcEndDateTime = DateTime.SpecifyKind(bookingEndDateTime, DateTimeKind.Utc);
-                    
+                    // Lấy court kết thúc muộn nhất (ưu tiên Date trước, rồi EndTime)
+                    // Dùng BookingCourt.Date thay vì Booking.BookingDate vì slot thật nằm ở BookingCourt
+                    var lastCourt = booking.BookingCourts
+                        .OrderByDescending(bc => bc.Date)
+                        .ThenByDescending(bc => bc.EndTime)
+                        .First();
+
+                    // Convert VN time → UTC đúng cách (BookingCourt lưu giờ VN)
+                    // SpecifyKind(Utc) sẽ gây lệch 7 tiếng so với DateTime.UtcNow
+                    var utcEndDateTime = ToUtcFromVietnam(lastCourt.Date, lastCourt.EndTime);
+
                     if (utcEndDateTime > now) continue;
 
                     var invoice = booking.Invoice;
@@ -337,16 +351,19 @@ namespace SmashCourt_BE.Jobs
                 {
                     if (!booking.BookingCourts.Any()) continue;
 
-                    // Lấy StartTime sớm nhất của booking
-                    var minStartTime = booking.BookingCourts.Min(bc => bc.StartTime);
-                    
-                    // Tạo Booking_DateTime với DateTimeKind.Utc
-                    var bookingDateTime = DateTime.SpecifyKind(
-                        booking.BookingDate.ToDateTime(minStartTime),
-                        DateTimeKind.Utc);
+                    // Lấy court bắt đầu sớm nhất (ưu tiên Date trước, rồi StartTime)
+                    // Dùng BookingCourt.Date thay vì Booking.BookingDate vì slot thật nằm ở BookingCourt
+                    var firstCourt = booking.BookingCourts
+                        .OrderBy(bc => bc.Date)
+                        .ThenBy(bc => bc.StartTime)
+                        .First();
+
+                    // Convert VN time → UTC đúng cách (BookingCourt lưu giờ VN)
+                    // SpecifyKind(Utc) sẽ gây lệch 7 tiếng so với DateTime.UtcNow
+                    var utcStartDateTime = ToUtcFromVietnam(firstCourt.Date, firstCourt.StartTime);
 
                     // Kiểm tra đã quá 15 phút sau StartTime chưa
-                    if (bookingDateTime.AddMinutes(15) < now)
+                    if (utcStartDateTime.AddMinutes(15) < now)
                     {
                         noShowBookings.Add(booking);
                     }
@@ -411,7 +428,11 @@ namespace SmashCourt_BE.Jobs
                         markedCount++;
                         
                         // Log chi tiết cho NO_SHOW
-                        var minStartTime = booking.BookingCourts.Min(bc => bc.StartTime);
+                        var firstCourt = booking.BookingCourts
+                            .OrderBy(bc => bc.Date)
+                            .ThenBy(bc => bc.StartTime)
+                            .First();
+                        var minStartTime = firstCourt.StartTime;
                         _logger.LogWarning(
                             "[NO_SHOW] Booking {BookingId} marked as NO_SHOW. " +
                             "Customer: {CustomerId}, Courts: [{CourtIds}], " +

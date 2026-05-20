@@ -97,11 +97,13 @@ public static class HangfireExtensions
             "* * * * *",
             new RecurringJobOptions { TimeZone = vnTimezone });
 
-        // Mỗi 30 giây — xóa slot_locks hết hạn
+        // Mỗi 1 phút — xóa slot_locks hết hạn
+        // Lưu ý: Hangfire chỉ hỗ trợ cron 5-field tiêu chuẩn (không có seconds field)
+        // "*/30 * * * * *" (6-field) sẽ bị parse lỗi → phải dùng "* * * * *" (mỗi phút)
         RecurringJob.AddOrUpdate<IBookingJob>(
             "cleanup-slot-locks",
             job => job.CleanupExpiredSlotLocksAsync(),
-            "*/30 * * * * *",
+            "* * * * *",
             new RecurringJobOptions { TimeZone = vnTimezone });
 
         // Mỗi 5 phút — phát hiện NO_SHOW
