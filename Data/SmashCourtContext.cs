@@ -46,6 +46,7 @@ namespace SmashCourt_BE.Data
         public DbSet<BookingService> BookingServices => Set<BookingService>();
         public DbSet<SlotLock> SlotLocks => Set<SlotLock>();
         public DbSet<BookingPromotion> BookingPromotions => Set<BookingPromotion>();
+        public DbSet<SlotInterest> SlotInterests => Set<SlotInterest>();
 
         // ── Module 8 ──────────────────────────────
         public DbSet<Invoice> Invoices => Set<Invoice>();
@@ -546,6 +547,33 @@ namespace SmashCourt_BE.Data
                 e.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()");
 
                 e.HasOne(x => x.Promotion).WithMany(x => x.BookingPromotions).HasForeignKey(x => x.PromotionId).OnDelete(DeleteBehavior.Restrict);
+            });
+
+            modelBuilder.Entity<SlotInterest>(e =>
+            {
+                e.ToTable("slot_interests");
+                e.HasKey(x => x.Id);
+                e.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
+                e.Property(x => x.CourtId).HasColumnName("court_id");
+                e.Property(x => x.Date).HasColumnName("date");
+                e.Property(x => x.StartTime).HasColumnName("start_time");
+                e.Property(x => x.EndTime).HasColumnName("end_time");
+                e.Property(x => x.Email).HasColumnName("email").HasMaxLength(255).IsRequired();
+                e.Property(x => x.CustomerId).HasColumnName("customer_id");
+                e.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()");
+                e.Property(x => x.ExpiresAt).HasColumnName("expires_at");
+
+                // Index để query nhanh khi có slot được giải phóng
+                e.HasIndex(x => new { x.CourtId, x.Date, x.StartTime, x.EndTime })
+                    .HasDatabaseName("idx_slot_interests_court_date_slot");
+                // Cleanup job dùng index này
+                e.HasIndex(x => x.ExpiresAt)
+                    .HasDatabaseName("idx_slot_interests_expires");
+
+                e.HasOne(x => x.Court).WithMany()
+                    .HasForeignKey(x => x.CourtId).OnDelete(DeleteBehavior.Cascade);
+                e.HasOne(x => x.Customer).WithMany()
+                    .HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.SetNull);
             });
 
             // ── MODULE 8 ──────────────────────────

@@ -27,6 +27,8 @@ public static class ErrorCodes
     public const string EmailNotVerified = "EMAIL_NOT_VERIFIED";
     public const string NameDuplicate    = "NAME_DUPLICATE";
     public const string AccountLocked    = "ACCOUNT_LOCKED";
+    public const string SlotUnavailable  = "SLOT_UNAVAILABLE";
+    public const string SlotUnavailableNotifyRegistered = "SLOT_UNAVAILABLE_NOTIFY_REGISTERED";
 
     // ─── Branch Management ───────────────────────────────────────────────
     public const string BranchNotFound         = "BRANCH_NOT_FOUND";

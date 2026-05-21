@@ -3,6 +3,7 @@ using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Jobs.Interfaces;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
+using SmashCourt_BE.Repositories.IRepository;
 using Microsoft.EntityFrameworkCore;
 
 namespace SmashCourt_BE.Jobs
@@ -10,6 +11,7 @@ namespace SmashCourt_BE.Jobs
     public class BookingJob : IBookingJob
     {
         private readonly SmashCourtContext _db;
+        private readonly ISlotInterestRepository _slotInterestRepo;
         private readonly ILogger<BookingJob> _logger;
 
         // Các status được coi là "booking đang chiếm sân"
@@ -20,9 +22,10 @@ namespace SmashCourt_BE.Jobs
             BookingStatus.IN_PROGRESS
         ];
 
-        public BookingJob(SmashCourtContext db, ILogger<BookingJob> logger)
+        public BookingJob(SmashCourtContext db, ISlotInterestRepository slotInterestRepo, ILogger<BookingJob> logger)
         {
             _db = db;
+            _slotInterestRepo = slotInterestRepo;
             _logger = logger;
         }
 
@@ -463,6 +466,22 @@ namespace SmashCourt_BE.Jobs
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error in NO_SHOW detection job");
+            }
+        }
+
+        // Job-05: Xóa slot_interest hết hạn (mỗi 1 giờ)
+        public async Task CleanupExpiredSlotInterestsAsync()
+        {
+            try
+            {
+                var deleted = await _slotInterestRepo.DeleteExpiredAsync();
+                if (deleted > 0)
+                    _logger.LogInformation(
+                        "[SLOT_INTEREST] Cleaned up {Count} expired slot interests", deleted);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in CleanupExpiredSlotInterests job");
             }
         }
     }

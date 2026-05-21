@@ -1,4 +1,4 @@
-﻿namespace SmashCourt_BE.Jobs.Interfaces
+namespace SmashCourt_BE.Jobs.Interfaces
 {
     public interface IBookingJob
     {
@@ -13,5 +13,8 @@
 
         // Phát hiện và đánh dấu NO_SHOW
         Task DetectNoShowBookingsAsync();
+
+        // Xóa slot_interest hết hạn (không còn có ý nghĩa sau ngày đặt sân)
+        Task CleanupExpiredSlotInterestsAsync();
     }
 }

@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Mail;
 using SmashCourt_BE.DTOs.Email;
 
@@ -542,7 +542,96 @@ public class EmailService
         await SendAsync(toEmail, subject, body);
     }
 
+    /// <summary>
+    /// Gửi email thông báo slot sân vừa được giải phóng cho người đã đăng ký quan tâm.
+    /// Được gọi sau khi booking bị hủy thành công (sau commit transaction).
+    /// </summary>
+    /// <param name="toEmail">Email người nhận</param>
+    /// <param name="courtName">Tên sân vừa trống</param>
+    /// <param name="branchName">Tên chi nhánh</param>
+    /// <param name="date">Ngày slot</param>
+    /// <param name="startTime">Giờ bắt đầu</param>
+    /// <param name="endTime">Giờ kết thúc</param>
+    /// <param name="bookingUrl">Link đặt sân ngay</param>
+    public async Task SendSlotAvailableNotificationAsync(
+        string toEmail,
+        string courtName,
+        string branchName,
+        DateOnly date,
+        TimeOnly startTime,
+        TimeOnly endTime,
+        string bookingUrl)
+    {
+        var subject = "🎾 Slot sân bạn quan tâm vừa trống — SmashCourt";
+        var dateStr = date.ToString("dd/MM/yyyy");
+        var timeStr = $"{startTime:HH:mm} – {endTime:HH:mm}";
+
+        var body = $"""
+    <!DOCTYPE html>
+    <html lang="vi">
+    <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+    <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f4f7f6; margin: 0; padding: 0;">
+        <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f4f7f6; padding: 40px 0;">
+            <tr><td align="center">
+                <table width="100%" cellpadding="0" cellspacing="0" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; margin: 0 auto;">
+                    <tr><td style="background-color: #1e3a8a; padding: 35px 30px; text-align: center;">
+                        <h1 style="color: #ffffff; margin: 0; font-size: 32px; font-weight: 800; letter-spacing: 2px;">SMASHCOURT</h1>
+                        <p style="color: #bfdbfe; margin: 8px 0 0 0; font-size: 15px;">Nền Tảng Đặt Sân Thể Thao Hàng Đầu</p>
+                    </td></tr>
+                    <tr><td style="padding: 45px 35px;">
+                        <div style="text-align: center; margin-bottom: 20px; font-size: 56px;">🎾</div>
+                        <h2 style="color: #16a34a; margin: 0 0 20px 0; font-size: 22px; font-weight: 700; text-align: center;">Slot sân bạn quan tâm vừa trống!</h2>
+                        <p style="color: #475569; font-size: 16px; line-height: 1.6; margin: 0 0 25px 0; text-align: center;">
+                            Có người vừa hủy đặt sân. Đặt ngay trước khi người khác nhanh tay hơn!
+                        </p>
+                        <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f0fdf4; border-radius: 12px; margin-bottom: 30px; border: 2px solid #16a34a;">
+                            <tr><td style="padding: 25px;">
+                                <p style="margin: 0 0 15px 0; color: #166534; font-size: 13px; text-transform: uppercase; font-weight: 700; letter-spacing: 1px;">🏟️ Thông tin slot trống</p>
+                                <table width="100%">
+                                    <tr>
+                                        <td style="color: #64748b; font-size: 14px; padding: 7px 0;">🏢 Chi nhánh:</td>
+                                        <td style="color: #0f172a; font-size: 14px; font-weight: 600; text-align: right;">{branchName}</td>
+                                    </tr><tr>
+                                        <td style="color: #64748b; font-size: 14px; padding: 7px 0;">🏸 Sân:</td>
+                                        <td style="color: #0f172a; font-size: 14px; font-weight: 600; text-align: right;">{courtName}</td>
+                                    </tr><tr>
+                                        <td style="color: #64748b; font-size: 14px; padding: 7px 0;">📅 Ngày:</td>
+                                        <td style="color: #0f172a; font-size: 14px; font-weight: 600; text-align: right;">{dateStr}</td>
+                                    </tr><tr>
+                                        <td style="color: #64748b; font-size: 14px; padding: 7px 0;">⏰ Khung giờ:</td>
+                                        <td style="color: #16a34a; font-size: 15px; font-weight: 700; text-align: right;">{timeStr}</td>
+                                    </tr>
+                                </table>
+                            </td></tr>
+                        </table>
+                        <table width="100%" cellpadding="0" cellspacing="0">
+                            <tr><td align="center">
+                                <a href="{bookingUrl}" style="display: inline-block; background-color: #16a34a; color: #ffffff; text-decoration: none; padding: 16px 40px; border-radius: 10px; font-size: 16px; font-weight: 700; letter-spacing: 0.5px;">
+                                    🎾 Đặt sân ngay
+                                </a>
+                            </td></tr>
+                        </table>
+                        <p style="color: #94a3b8; font-size: 13px; text-align: center; margin: 20px 0 0 0; line-height: 1.5;">
+                            ⚡ Slot có thể bị đặt bởi người khác bất kỳ lúc nào.<br/>
+                            Nếu đặt thất bại, bạn có thể đăng ký quan tâm lại để nhận thông báo tiếp theo.
+                        </p>
+                    </td></tr>
+                    <tr><td style="background-color: #f8fafc; padding: 25px 30px; text-align: center; border-top: 1px solid #e2e8f0;">
+                        <p style="margin: 0 0 5px 0; color: #64748b; font-size: 13px;">Trân trọng,</p>
+                        <p style="margin: 0; color: #0f172a; font-size: 15px; font-weight: 600;">Đội ngũ phát triển SmashCourt</p>
+                        <p style="margin: 12px 0 0 0; color: #94a3b8; font-size: 12px;">&copy; {DateTime.UtcNow.Year} SmashCourt. Tất cả các quyền được bảo lưu.</p>
+                    </td></tr>
+                </table>
+            </td></tr>
+        </table>
+    </body></html>
+    """;
+
+        await SendAsync(toEmail, subject, body);
+    }
+
     private string BuildEmailTemplate(string title, string fullName, string message, string otpCode, string extraNote)
+
     {
         return $"""
     <!DOCTYPE html>

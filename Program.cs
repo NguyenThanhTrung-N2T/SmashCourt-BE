@@ -1,3 +1,4 @@
+using AspNetCoreRateLimit;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -13,6 +14,7 @@ using SmashCourt_BE.DTOs.Auth;
 using SmashCourt_BE.Extensions;
 using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Infrastructure.CodeGeneration;
+using SmashCourt_BE.Integrations.AI;
 using SmashCourt_BE.Jobs;
 using SmashCourt_BE.Jobs.Interfaces;
 using SmashCourt_BE.Middlewares;
@@ -151,6 +153,7 @@ builder.Services.AddScoped<IBranchPriceRepository, BranchPriceRepository>();
 builder.Services.AddScoped<IBookingService, BookingService>();
 builder.Services.AddScoped<IBookingRepository, BookingRepository>();
 builder.Services.AddScoped<ISlotLockRepository, SlotLockRepository>();
+builder.Services.AddScoped<ISlotInterestRepository, SlotInterestRepository>();
 builder.Services.AddScoped<IInvoiceRepository, InvoiceRepository>();
 builder.Services.AddScoped<IPaymentRepository, PaymentRepository>();
 builder.Services.AddScoped<IRefundRepository, RefundRepository>();
@@ -171,6 +174,21 @@ builder.Services.AddScoped<ICodeGeneratorService, PostgresCodeGeneratorService>(
 builder.Services.AddScoped<IReportRepository, ReportRepository>();
 builder.Services.AddScoped<IReportService, ReportService>();
 
+// Đăng ký các service AI
+builder.Services.AddScoped<AIDataPreparationService>();
+builder.Services.AddScoped<IAIResponseFormatterService, AIResponseFormatterService>();
+builder.Services.AddScoped<IAIService, AIService>();
+builder.Services.AddHttpClient<IFastApiClient, FastApiClient>((serviceProvider, client) =>
+{
+    var configuration = serviceProvider.GetRequiredService<IConfiguration>();
+    var aiServiceSection = configuration.GetSection("AIService");
+    var baseUrl = aiServiceSection["BaseUrl"] ?? "http://localhost:8000";
+    var timeoutSeconds = aiServiceSection.GetValue<int?>("Timeout") ?? 10;
+
+    client.BaseAddress = new Uri(baseUrl);
+    client.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
+});
+
 builder.Services.AddScoped<EmailService>();
 builder.Services.AddScoped<OtpService>();
 builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("Jwt"));
@@ -185,6 +203,13 @@ builder.Services.AddScoped<ICloudinaryService, CloudinaryService>();
 builder.Services.AddMemoryCache();
 builder.Services.AddHttpClient();
 builder.Services.AddHttpContextAccessor();
+
+// Cấu hình rate limit cho các endpoint AI
+builder.Services.Configure<IpRateLimitOptions>(builder.Configuration.GetSection("IpRateLimiting"));
+builder.Services.Configure<IpRateLimitPolicies>(builder.Configuration.GetSection("IpRateLimitPolicies"));
+builder.Services.AddInMemoryRateLimiting();
+builder.Services.AddSingleton<IRateLimitConfiguration, RateLimitConfiguration>();
+
 var vnPayConfig = builder.Configuration.GetSection("VnPay");
 builder.Services.AddVnpayClient(config =>
 {
@@ -416,6 +441,10 @@ app.UseHttpsRedirection();
 
 // Sử dụng CORS policy đã định nghĩa
 app.UseCors("AllowFrontend");
+
+// IP Rate Limiting middleware for AI endpoints
+app.UseIpRateLimiting();
+
 // Thêm middleware rate limiting toàn cục — có thể override bằng attribute ở controller/action
 app.UseRateLimiter();
 // Middleware xử lý lỗi toàn cục — trả về JSON chuẩn

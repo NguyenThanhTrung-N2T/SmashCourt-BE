@@ -23,6 +23,11 @@ namespace SmashCourt_BE.DTOs.Booking
         // Ghi chú từ khách hàng (yêu cầu đặc biệt, ghi chú bổ sung)
         public string? Note { get; set; }
 
+        /// <summary>
+        /// Nếu slot bị người khác đặt hoặc đang bị khóa thanh toán, hệ thống sẽ tự đăng ký nhận thông báo khi slot trống lại.
+        /// </summary>
+        public bool NotifyIfUnavailable { get; set; } = false;
+
         public IEnumerable<ValidationResult> Validate(ValidationContext context)
         {
             var today = DateTimeHelper.GetTodayInVietnam();

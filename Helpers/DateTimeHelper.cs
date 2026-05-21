@@ -43,5 +43,26 @@ namespace SmashCourt_BE.Helpers
             
             return TimeZoneInfo.ConvertTime(utcTime, VNTimezone);
         }
+
+        /// <summary>
+        /// Lấy thời gian hiện tại theo giờ Việt Nam (DateTime với Kind=Unspecified, giờ VN)
+        /// Dùng để so sánh với ngày tháng VN (không phải UTC)
+        /// </summary>
+        public static DateTime GetVietnamNow()
+        {
+            return TimeZoneInfo.ConvertTime(DateTime.UtcNow, VNTimezone);
+        }
+
+        /// <summary>
+        /// Convert ngày + giờ Việt Nam sang UTC.
+        /// Dùng khi lưu timestamp từ dữ liệu VN vào DB (tránh lỗi SpecifyKind Utc gây lệch 7 tiếng).
+        /// </summary>
+        public static DateTime ToUtcFromVietnam(DateOnly date, TimeOnly time)
+        {
+            var vnDateTime = date.ToDateTime(time);
+            return TimeZoneInfo.ConvertTimeToUtc(
+                DateTime.SpecifyKind(vnDateTime, DateTimeKind.Unspecified),
+                VNTimezone);
+        }
     }
 }

@@ -312,5 +312,6 @@ namespace SmashCourt_BE.Controllers
             var result = await _service.RemoveServiceAsync(id, serviceId, userId, role);
             return Ok(ApiResponse<BookingDto>.Ok(result, "Xóa dịch vụ thành công"));
         }
+
     }
 }

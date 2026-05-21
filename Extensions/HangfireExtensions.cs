@@ -113,6 +113,13 @@ public static class HangfireExtensions
             "*/5 * * * *",
             new RecurringJobOptions { TimeZone = vnTimezone });
 
+        // Mỗi 1 giờ — xóa slot_interest hết hạn (interest hết hạn sau ngày đặt sân)
+        RecurringJob.AddOrUpdate<IBookingJob>(
+            "cleanup-slot-interests",
+            job => job.CleanupExpiredSlotInterestsAsync(),
+            "0 * * * *",
+            new RecurringJobOptions { TimeZone = vnTimezone });
+
         return app;
     }
 }
