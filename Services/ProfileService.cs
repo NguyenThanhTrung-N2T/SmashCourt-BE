@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using SmashCourt_BE.Common;
 using SmashCourt_BE.DTOs.Loyalty;
 using SmashCourt_BE.DTOs.Profile;
+using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
 using SmashCourt_BE.Services.IService;
@@ -122,6 +123,7 @@ public class ProfileService : IProfileService
 
         // Chỉ cập nhật các trường được phép
         user.FullName = dto.FullName;
+        user.FullNameNormalized = StringHelper.NormalizeVietnamese(dto.FullName);
         user.Phone = dto.Phone;
         user.AvatarUrl = dto.AvatarUrl;
         user.UpdatedAt = DateTime.UtcNow;

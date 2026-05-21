@@ -23,6 +23,7 @@ namespace SmashCourt_BE.Models.Entities
         public DateTime? LastFailedLoginAt { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
+        public string? FullNameNormalized { get; set; }
 
 
         // Navigation

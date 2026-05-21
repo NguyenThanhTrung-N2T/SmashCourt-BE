@@ -246,7 +246,26 @@ public class CustomerManagementService : ICustomerManagementService
             TotalItems = result.TotalItems
         };
     }
+    /// <summary>
+    /// Tìm kiếm khách hàng
+    /// </summary>
+    public async Task<List<CustomerSearchDto>> SearchCustomersAsync(
+        CustomerSearchQuery query,
+        Guid currentUserId,
+        string currentUserRole)
+    {
+        var managerBranchId = await GetManagerBranchIdAsync(currentUserId, currentUserRole);
 
+        if (string.IsNullOrWhiteSpace(query.SearchTerm))
+            return new List<CustomerSearchDto>();
+
+        var result = await _customerRepo.SearchCustomersAsync(
+            query.SearchTerm,
+            managerBranchId,
+            query.Limit);
+
+        return result;
+    }
     /// <summary>
     /// Lấy thông tin chi tiết khách hàng
     /// </summary>

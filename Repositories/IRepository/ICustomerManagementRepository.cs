@@ -49,4 +49,5 @@ public interface ICustomerManagementRepository
     /// Lấy số lượng booking COMPLETED của nhiều customers (batch query - tránh N+1)
     /// </summary>
     Task<Dictionary<Guid, int>> GetCompletedBookingCountBatchAsync(List<Guid> customerIds, Guid? managerBranchId);
+    Task<List<CustomerSearchDto>> SearchCustomersAsync(string query, Guid? managerBranchId, int limit);
 }

@@ -3,6 +3,7 @@ using SmashCourt_BE.Common;
 using SmashCourt_BE.Data;
 using SmashCourt_BE.DTOs.BranchManagement;
 using SmashCourt_BE.DTOs.UserManagement;
+using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
@@ -90,8 +91,9 @@ namespace SmashCourt_BE.Repositories
             if (!string.IsNullOrWhiteSpace(query.SearchTerm))
             {
                 var searchTerm = query.SearchTerm.Trim().ToLower();
+                var normalizedSearchTerm = StringHelper.NormalizeVietnamese(query.SearchTerm.Trim());
                 usersQuery = usersQuery.Where(u =>
-                    u.FullName.ToLower().Contains(searchTerm) ||
+                    (u.FullNameNormalized != null && u.FullNameNormalized.Contains(normalizedSearchTerm)) ||
                     u.Email.ToLower().Contains(searchTerm) ||
                     (u.Phone != null && u.Phone.ToLower().Contains(searchTerm)));
             }
@@ -163,8 +165,9 @@ namespace SmashCourt_BE.Repositories
             if (!string.IsNullOrWhiteSpace(query.SearchTerm))
             {
                 var searchTerm = query.SearchTerm.Trim().ToLower();
+                var normalizedSearchTerm = StringHelper.NormalizeVietnamese(query.SearchTerm.Trim());
                 usersQuery = usersQuery.Where(u =>
-                    u.FullName.ToLower().Contains(searchTerm) ||
+                    (u.FullNameNormalized != null && u.FullNameNormalized.Contains(normalizedSearchTerm)) ||
                     u.Email.ToLower().Contains(searchTerm) ||
                     (u.Phone != null && u.Phone.ToLower().Contains(searchTerm)));
             }

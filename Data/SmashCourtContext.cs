@@ -109,7 +109,8 @@ namespace SmashCourt_BE.Data
                 e.Property(x => x.LastFailedLoginAt).HasColumnName("last_failed_login_at");
                 e.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()");
                 e.Property(x => x.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("now()");
-
+                e.Property(x => x.FullNameNormalized).HasColumnName("full_name_normalized").HasMaxLength(255);
+                
                 // Relationships
                 e.HasMany(x => x.RefreshTokens).WithOne(x => x.User).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
                 e.HasMany(x => x.OAuthAccounts).WithOne(x => x.User).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);

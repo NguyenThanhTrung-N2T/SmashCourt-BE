@@ -83,8 +83,9 @@ namespace SmashCourt_BE.Repositories
             if (!string.IsNullOrWhiteSpace(keyword))
             {
                 var search = keyword.Trim().ToLower();
+                var normalizedSearch = StringHelper.NormalizeVietnamese(keyword.Trim());
                 q = q.Where(b =>
-                    (b.Customer != null && b.Customer.FullName.ToLower().Contains(search)) ||
+                    (b.Customer != null && b.Customer.FullNameNormalized != null && b.Customer.FullNameNormalized.Contains(normalizedSearch)) ||
                     (b.Customer != null && b.Customer.Phone != null && b.Customer.Phone.Contains(search)) ||
                     (b.GuestName != null && b.GuestName.ToLower().Contains(search)) ||
                     (b.GuestPhone != null && b.GuestPhone.Contains(search)) ||
@@ -474,8 +475,9 @@ namespace SmashCourt_BE.Repositories
             if (!string.IsNullOrWhiteSpace(query.CustomerKeyword))
             {
                 var search = query.CustomerKeyword.Trim().ToLower();
+                var normalizedSearch = StringHelper.NormalizeVietnamese(query.CustomerKeyword.Trim());
                 q = q.Where(b =>
-                    (b.Customer != null && b.Customer.FullName.ToLower().Contains(search)) ||
+                    (b.Customer != null && b.Customer.FullNameNormalized != null && b.Customer.FullNameNormalized.Contains(normalizedSearch)) ||
                     (b.Customer != null && b.Customer.Phone != null && b.Customer.Phone.Contains(search)) ||
                     (b.GuestName != null && b.GuestName.ToLower().Contains(search)) ||
                     (b.GuestPhone != null && b.GuestPhone.Contains(search)) ||

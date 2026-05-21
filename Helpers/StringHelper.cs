@@ -18,5 +18,34 @@ namespace SmashCourt_BE.Helpers
             }
             return sb.ToString().Normalize(System.Text.NormalizationForm.FormC);
         }
+        /// <summary>
+        /// Remove Vietnamese diacritics and normalize for searching
+        /// </summary>
+        public static string NormalizeVietnamese(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return string.Empty;
+
+            text = text.Trim().ToLowerInvariant();
+
+            text = text.Replace("Đ", "D")
+                       .Replace("đ", "d");
+
+            var normalized = text.Normalize(System.Text.NormalizationForm.FormD);
+
+            var sb = new System.Text.StringBuilder();
+
+            foreach (var c in normalized)
+            {
+                if (System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c)
+                    != System.Globalization.UnicodeCategory.NonSpacingMark)
+                {
+                    sb.Append(c);
+                }
+            }
+
+            return sb.ToString()
+                     .Normalize(System.Text.NormalizationForm.FormC);
+        }
     }
 }

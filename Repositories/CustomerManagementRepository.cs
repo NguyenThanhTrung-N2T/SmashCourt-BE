@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using SmashCourt_BE.Common;
 using SmashCourt_BE.Data;
 using SmashCourt_BE.DTOs.CustomerManagement;
+using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
@@ -41,8 +42,9 @@ public class CustomerManagementRepository : ICustomerManagementRepository
         if (!string.IsNullOrWhiteSpace(query.SearchTerm))
         {
             var searchTerm = query.SearchTerm.Trim().ToLower();
+            var normalizedSearchTerm = StringHelper.NormalizeVietnamese(query.SearchTerm.Trim());
             customersQuery = customersQuery.Where(u =>
-                u.FullName.ToLower().Contains(searchTerm) ||
+                (u.FullNameNormalized != null && u.FullNameNormalized.Contains(normalizedSearchTerm)) ||
                 u.Email.ToLower().Contains(searchTerm) ||
                 (u.Phone != null && u.Phone.ToLower().Contains(searchTerm)));
         }
@@ -99,6 +101,46 @@ public class CustomerManagementRepository : ICustomerManagementRepository
             PageSize = query.PageSize,
             TotalItems = totalItems
         };
+    }
+    /// <summary>
+    /// Tìm kiếm khách hàng
+    /// </summary>
+    public async Task<List<CustomerSearchDto>> SearchCustomersAsync(
+        string? searchTerm,
+        Guid? managerBranchId,
+        int limit)
+    {
+        var search = searchTerm?.Trim().ToLower();
+        var normalizedSearch = StringHelper.NormalizeVietnamese(searchTerm?.Trim() ?? string.Empty);
+
+        var customersQuery = _context.Users
+            .AsNoTracking()
+            .Where(u => u.Role == UserRole.CUSTOMER);
+
+        if (managerBranchId.HasValue)
+        {
+            customersQuery = customersQuery.Where(u =>
+                _context.Bookings.Any(b =>
+                    b.CustomerId == u.Id &&
+                    b.BranchId == managerBranchId.Value));
+        }
+
+        customersQuery = customersQuery.Where(u =>
+            (u.FullNameNormalized != null && u.FullNameNormalized.Contains(normalizedSearch)) ||
+            (u.Phone != null && u.Phone.Contains(search)) ||
+            (u.Email != null && u.Email.ToLower().Contains(search)));
+
+        return await customersQuery
+            .OrderBy(u => u.FullName)
+            .Take(limit <= 0 ? 10 : limit)
+            .Select(u => new CustomerSearchDto
+            {
+                Id = u.Id,
+                FullName = u.FullName,
+                Email = u.Email,
+                Phone = u.Phone
+            })
+            .ToListAsync();
     }
 
     /// <summary>
@@ -312,8 +354,8 @@ public class CustomerManagementRepository : ICustomerManagementRepository
     {
         var query = _context.Bookings
             .AsNoTracking()
-            .Where(b => b.CustomerId.HasValue && 
-                        customerIds.Contains(b.CustomerId.Value) && 
+            .Where(b => b.CustomerId.HasValue &&
+                        customerIds.Contains(b.CustomerId.Value) &&
                         b.Status == BookingStatus.COMPLETED);
 
         // BRANCH_MANAGER: Chỉ đếm chi nhánh mình

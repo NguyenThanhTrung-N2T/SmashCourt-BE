@@ -1,6 +1,7 @@
 using SmashCourt_BE.Common;
 using SmashCourt_BE.Data;
 using SmashCourt_BE.DTOs.BranchManagement;
+using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Repositories.IRepository;
 using Microsoft.EntityFrameworkCore;
@@ -108,8 +109,9 @@ namespace SmashCourt_BE.Repositories
             if (!string.IsNullOrWhiteSpace(query.SearchTerm))
             {
                 var searchTerm = query.SearchTerm.ToLower();
+                var normalizedSearchTerm = StringHelper.NormalizeVietnamese(query.SearchTerm.Trim());
                 staffQuery = staffQuery.Where(ub =>
-                    ub.User.FullName.ToLower().Contains(searchTerm) ||
+                    (ub.User.FullNameNormalized != null && ub.User.FullNameNormalized.Contains(normalizedSearchTerm)) ||
                     ub.User.Email.ToLower().Contains(searchTerm) ||
                     (ub.User.Phone != null && ub.User.Phone.Contains(searchTerm)));
             }

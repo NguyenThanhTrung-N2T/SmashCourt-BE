@@ -125,6 +125,7 @@ public class AuthService : IAuthService
             // VERIFY_MAIL = FALSE 
             existingUser.PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password, 12);
             existingUser.FullName = dto.FullName.Trim();
+            existingUser.FullNameNormalized = StringHelper.NormalizeVietnamese(dto.FullName.Trim());
             existingUser.Phone = dto.Phone?.Trim();
             existingUser.UpdatedAt = DateTime.UtcNow;
             await _userRepo.UpdateUserAsync(existingUser);
@@ -140,6 +141,7 @@ public class AuthService : IAuthService
             Email = email,
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password,12),
             FullName = dto.FullName.Trim(),
+            FullNameNormalized = StringHelper.NormalizeVietnamese(dto.FullName.Trim()),
             Phone = dto.Phone?.Trim(),
             Role = UserRole.CUSTOMER,
             Status = UserStatus.ACTIVE,

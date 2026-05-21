@@ -50,4 +50,6 @@ public interface ICustomerManagementService
     /// Mở khóa tài khoản khách hàng (chỉ OWNER)
     /// </summary>
     Task UnlockCustomerAsync(Guid customerId, Guid currentUserId, string currentUserRole);
+
+    Task<List<CustomerSearchDto>> SearchCustomersAsync(CustomerSearchQuery query, Guid currentUserId, string currentUserRole);
 }

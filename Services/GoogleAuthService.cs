@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using SmashCourt_BE.Common;
 using SmashCourt_BE.Configurations;
 using SmashCourt_BE.DTOs.Auth;
+using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
@@ -136,6 +137,7 @@ namespace SmashCourt_BE.Services
                 {
                     Email = email,
                     FullName = googleUser.Name,
+                    FullNameNormalized = StringHelper.NormalizeVietnamese(googleUser.Name),
                     AvatarUrl = googleUser.Picture,
                     Role = UserRole.CUSTOMER,
                     Status = UserStatus.ACTIVE,

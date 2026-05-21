@@ -282,6 +282,7 @@ public class UserManagementService : IUserManagementService
             Email = normalizedEmail,
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(password, 12),
             FullName = dto.FullName.Trim(),
+            FullNameNormalized = StringHelper.NormalizeVietnamese(dto.FullName.Trim()),
             Phone = dto.Phone?.Trim(),
             Role = actualRole,
             Status = UserStatus.ACTIVE,
@@ -348,6 +349,7 @@ public class UserManagementService : IUserManagementService
 
         // Cập nhật thông tin
         user.FullName = dto.FullName.Trim();
+        user.FullNameNormalized = StringHelper.NormalizeVietnamese(dto.FullName.Trim());
         user.Phone = dto.Phone?.Trim();
         user.AvatarUrl = dto.AvatarUrl;
         user.UpdatedAt = DateTime.UtcNow;
