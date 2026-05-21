@@ -106,12 +106,12 @@ public class CustomerManagementRepository : ICustomerManagementRepository
     /// Tìm kiếm khách hàng
     /// </summary>
     public async Task<List<CustomerSearchDto>> SearchCustomersAsync(
-        string? searchTerm,
+        string searchTerm,
         Guid? managerBranchId,
         int limit)
     {
-        var search = searchTerm?.Trim().ToLower();
-        var normalizedSearch = StringHelper.NormalizeVietnamese(searchTerm?.Trim() ?? string.Empty);
+        var search = searchTerm.Trim().ToLower();
+        var normalizedSearch = StringHelper.NormalizeVietnamese(searchTerm.Trim());
 
         var customersQuery = _context.Users
             .AsNoTracking()
@@ -130,9 +130,11 @@ public class CustomerManagementRepository : ICustomerManagementRepository
             (u.Phone != null && u.Phone.Contains(search)) ||
             (u.Email != null && u.Email.ToLower().Contains(search)));
 
+        var take = Math.Clamp(limit, 1, 50);
+
         return await customersQuery
             .OrderBy(u => u.FullName)
-            .Take(limit <= 0 ? 10 : limit)
+            .Take(take)
             .Select(u => new CustomerSearchDto
             {
                 Id = u.Id,

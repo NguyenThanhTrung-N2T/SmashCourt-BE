@@ -12,6 +12,7 @@ using SmashCourt_BE.Data;
 using SmashCourt_BE.DTOs.Auth;
 using SmashCourt_BE.Extensions;
 using SmashCourt_BE.Helpers;
+using SmashCourt_BE.Infrastructure.CodeGeneration;
 using SmashCourt_BE.Jobs;
 using SmashCourt_BE.Jobs.Interfaces;
 using SmashCourt_BE.Middlewares;
@@ -165,7 +166,7 @@ builder.Services.AddScoped<IUserManagementService, UserManagementService>();
 builder.Services.AddScoped<IProfileService, ProfileService>();
 builder.Services.AddScoped<ICustomerManagementRepository, CustomerManagementRepository>();
 builder.Services.AddScoped<ICustomerManagementService, CustomerManagementService>();
-builder.Services.AddScoped<ICodeGeneratorService, CodeGeneratorService>();
+builder.Services.AddScoped<ICodeGeneratorService, PostgresCodeGeneratorService>();
 // Report & Analytics
 builder.Services.AddScoped<IReportRepository, ReportRepository>();
 builder.Services.AddScoped<IReportService, ReportService>();

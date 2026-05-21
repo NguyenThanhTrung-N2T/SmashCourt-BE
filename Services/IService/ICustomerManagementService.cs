@@ -51,5 +51,10 @@ public interface ICustomerManagementService
     /// </summary>
     Task UnlockCustomerAsync(Guid customerId, Guid currentUserId, string currentUserRole);
 
+    /// <summary>
+    /// Tìm nhanh khách hàng theo tên, email hoặc số điện thoại.
+    /// OWNER được tìm toàn hệ thống; BRANCH_MANAGER và STAFF chỉ tìm khách từng đặt sân tại chi nhánh của mình.
+    /// Trả về danh sách rỗng nếu từ khóa rỗng hoặc ngắn hơn 2 ký tự.
+    /// </summary>
     Task<List<CustomerSearchDto>> SearchCustomersAsync(CustomerSearchQuery query, Guid currentUserId, string currentUserRole);
 }

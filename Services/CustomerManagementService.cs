@@ -39,7 +39,8 @@ public class CustomerManagementService : ICustomerManagementService
         if (currentUserRole == UserRole.OWNER.ToString())
             return null;
 
-        if (currentUserRole == UserRole.BRANCH_MANAGER.ToString())
+        if (currentUserRole == UserRole.BRANCH_MANAGER.ToString() ||
+            currentUserRole == UserRole.STAFF.ToString())
         {
             var managerBranch = await _userBranchRepo.GetActiveByUserIdAsync(currentUserId);
             if (managerBranch == null)
@@ -249,18 +250,24 @@ public class CustomerManagementService : ICustomerManagementService
     /// <summary>
     /// Tìm kiếm khách hàng
     /// </summary>
+    /// <summary>
+    /// Tìm nhanh khách hàng theo tên, email hoặc số điện thoại.
+    /// OWNER được tìm toàn hệ thống; BRANCH_MANAGER và STAFF chỉ tìm trong chi nhánh được gán.
+    /// Trả về danh sách rỗng nếu từ khóa rỗng hoặc ngắn hơn 2 ký tự.
+    /// </summary>
     public async Task<List<CustomerSearchDto>> SearchCustomersAsync(
         CustomerSearchQuery query,
         Guid currentUserId,
         string currentUserRole)
     {
         var managerBranchId = await GetManagerBranchIdAsync(currentUserId, currentUserRole);
+        var searchTerm = query.SearchTerm?.Trim();
 
-        if (string.IsNullOrWhiteSpace(query.SearchTerm))
-            return new List<CustomerSearchDto>();
+        if (string.IsNullOrWhiteSpace(searchTerm) || searchTerm.Length < 2)
+            return [];
 
         var result = await _customerRepo.SearchCustomersAsync(
-            query.SearchTerm,
+            searchTerm,
             managerBranchId,
             query.Limit);
 

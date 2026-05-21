@@ -49,5 +49,14 @@ public interface ICustomerManagementRepository
     /// Lấy số lượng booking COMPLETED của nhiều customers (batch query - tránh N+1)
     /// </summary>
     Task<Dictionary<Guid, int>> GetCompletedBookingCountBatchAsync(List<Guid> customerIds, Guid? managerBranchId);
+
+    /// <summary>
+    /// Tìm nhanh khách hàng theo từ khóa đã được validate ở service layer.
+    /// Nếu có managerBranchId thì chỉ lấy khách từng đặt sân tại chi nhánh đó.
+    /// </summary>
+    /// <param name="query">Từ khóa tìm kiếm đã trim, tối thiểu 2 ký tự.</param>
+    /// <param name="managerBranchId">Chi nhánh cần giới hạn dữ liệu; null nghĩa là OWNER tìm toàn hệ thống.</param>
+    /// <param name="limit">Số lượng kết quả tối đa trả về.</param>
+    /// <returns>Danh sách khách hàng khớp từ khóa và phạm vi chi nhánh.</returns>
     Task<List<CustomerSearchDto>> SearchCustomersAsync(string query, Guid? managerBranchId, int limit);
 }
