@@ -4,11 +4,11 @@ namespace SmashCourt_BE.Repositories.IRepository
 {
     public interface ISlotInterestRepository
     {
-        /// <summary>Táº¡o má»›i má»™t slot interest record</summary>
+        /// <summary>Tạo mới một slot interest record</summary>
         Task CreateAsync(SlotInterest interest);
 
         /// <summary>
-        /// Kiá»ƒm tra email Ä‘Ã£ Ä‘Äƒng kÃ½ interest cho slot nÃ y chÆ°a (dedup).
+        /// Kiểm tra email đã đăng ký interest cho slot này chưa (dedup).
         /// Match theo courtId + date + overlap startTime/endTime + email.
         /// </summary>
         Task<bool> ExistsAsync(Guid courtId, DateOnly date, TimeOnly startTime, TimeOnly endTime, string email);
@@ -24,8 +24,8 @@ namespace SmashCourt_BE.Repositories.IRepository
         Task DeleteOverlappingSlotInterestsAsync(Guid courtId, DateOnly date, TimeOnly startTime, TimeOnly endTime);
 
         /// <summary>
-        /// XÃ³a táº¥t cáº£ records Ä‘Ã£ háº¿t háº¡n â€” dÃ¹ng cho Hangfire cleanup job.
-        /// Tráº£ vá» sá»‘ record Ä‘Ã£ xÃ³a.
+        /// Xóa tất cả records đã hết hạn — dùng cho Hangfire cleanup job.
+        /// Trả về số record đã xóa.
         /// </summary>
         Task<int> DeleteExpiredAsync();
     }

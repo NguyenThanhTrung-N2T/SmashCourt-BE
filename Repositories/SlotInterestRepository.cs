@@ -22,8 +22,8 @@ namespace SmashCourt_BE.Repositories
         }
 
         /// <summary>
-        /// Kiá»ƒm tra duplicate: cÃ¹ng email + court + date + slot trÃ¹ng giá» (overlap).
-        /// DÃ¹ng overlap logic giá»‘ng SlotLock Ä‘á»ƒ báº¯t cÃ¡c trÆ°á»ng há»£p Ä‘áº·t nhiá»u khung giá» liÃªn tiáº¿p.
+        /// Kiểm tra duplicate: cùng email + court + date + slot trùng giờ (overlap).
+        /// Dùng overlap logic giống SlotLock để bắt các trường hợp đặt nhiều khung giờ liên tiếp.
         /// </summary>
         public async Task<bool> ExistsAsync(
             Guid courtId, DateOnly date, TimeOnly startTime, TimeOnly endTime, string email)
@@ -69,7 +69,7 @@ namespace SmashCourt_BE.Repositories
                 .ExecuteDeleteAsync();
         }
 
-        /// <summary>Cleanup job: xÃ³a records Ä‘Ã£ háº¿t háº¡n. Tráº£ vá» sá»‘ lÆ°á»£ng Ä‘Ã£ xÃ³a.</summary>
+        /// <summary>Cleanup job: xóa records đã hết hạn. Trả về số lượng đã xóa.</summary>
         public async Task<int> DeleteExpiredAsync()
         {
             return await _context.SlotInterests
