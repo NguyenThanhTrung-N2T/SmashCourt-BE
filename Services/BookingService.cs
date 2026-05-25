@@ -2453,17 +2453,29 @@ namespace SmashCourt_BE.Services
                     continue;
                 }
 
-                await _slotInterestRepo.CreateAsync(new SlotInterest
+                try
                 {
-                    CourtId = slot.CourtId,
-                    Date = date,
-                    StartTime = startTime,
-                    EndTime = endTime,
-                    Email = email,
-                    CustomerId = customerId,
-                    CreatedAt = DateTimeHelper.GetUtcNow(),
-                    ExpiresAt = DateTimeHelper.ToUtcFromVietnam(date, new TimeOnly(23, 59, 59))
-                });
+                    await _slotInterestRepo.CreateAsync(new SlotInterest
+                    {
+                        CourtId = slot.CourtId,
+                        Date = date,
+                        StartTime = startTime,
+                        EndTime = endTime,
+                        Email = email.Trim().ToLower(),
+                        CustomerId = customerId,
+                        CreatedAt = DateTimeHelper.GetUtcNow(),
+                        ExpiresAt = DateTimeHelper.ToUtcFromVietnam(date, new TimeOnly(23, 59, 59))
+                    });
+                }
+                catch (DbUpdateException ex)
+                    when (ex.InnerException is Npgsql.PostgresException pgEx &&
+                          pgEx.SqlState == "23505" &&
+                          pgEx.ConstraintName == "ux_slot_interests_unique")
+                {
+                    _logger.LogInformation(
+                        "[SLOT_INTEREST] Duplicate interest ignored for Email={Email}, CourtId={CourtId}, Date={Date}, Start={Start}, End={End}",
+                        email, slot.CourtId, date, startTime, endTime);
+                }
 
                 registeredAny = true;
                 _logger.LogInformation(
@@ -2550,8 +2562,12 @@ namespace SmashCourt_BE.Services
                 }
 
                 // Xóa tất cả interests của slot này sau khi đã notify (one-shot)
-                await _slotInterestRepo.DeleteOverlappingSlotInterestsAsync(
+                var deletedCount = await _slotInterestRepo.DeleteOverlappingSlotInterestsAsync(
                     bc.CourtId, bc.Date, bc.StartTime, bc.EndTime);
+
+                _logger.LogInformation(
+                    "[SLOT_INTEREST] Deleted {DeletedCount} slot interests after notification | Court={CourtId} | Date={Date} | Slot={Start}-{End}",
+                    deletedCount, bc.CourtId, bc.Date, bc.StartTime, bc.EndTime);
             }
         }
     }

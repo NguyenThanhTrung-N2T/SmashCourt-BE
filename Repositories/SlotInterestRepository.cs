@@ -1,4 +1,4 @@
-﻿using SmashCourt_BE.Data;
+using SmashCourt_BE.Data;
 using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Repositories.IRepository;
@@ -56,11 +56,12 @@ namespace SmashCourt_BE.Repositories
 
         /// <summary>
         /// Xóa tất cả interest records overlap với slot sau khi đã notify (one-shot).
+        /// Trả về số rows đã xóa.
         /// </summary>
-        public async Task DeleteOverlappingSlotInterestsAsync(
+        public async Task<int> DeleteOverlappingSlotInterestsAsync(
             Guid courtId, DateOnly date, TimeOnly startTime, TimeOnly endTime)
         {
-            await _context.SlotInterests
+            return await _context.SlotInterests
                 .Where(si =>
                     si.CourtId == courtId &&
                     si.Date == date &&

@@ -1,4 +1,4 @@
-﻿using SmashCourt_BE.Models.Entities;
+using SmashCourt_BE.Models.Entities;
 
 namespace SmashCourt_BE.Repositories.IRepository
 {
@@ -20,8 +20,9 @@ namespace SmashCourt_BE.Repositories.IRepository
 
         /// <summary>
         /// Xóa tất cả interest records overlap với slot vừa notify (one-shot).
+        /// Trả về số rows đã xóa để dùng cho logging.
         /// </summary>
-        Task DeleteOverlappingSlotInterestsAsync(Guid courtId, DateOnly date, TimeOnly startTime, TimeOnly endTime);
+        Task<int> DeleteOverlappingSlotInterestsAsync(Guid courtId, DateOnly date, TimeOnly startTime, TimeOnly endTime);
 
         /// <summary>
         /// Xóa tất cả records đã hết hạn — dùng cho Hangfire cleanup job.
