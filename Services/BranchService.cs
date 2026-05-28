@@ -65,6 +65,20 @@ namespace SmashCourt_BE.Services
 
 
         // Lấy chi nhánh theo ID, có thể bao gồm cả chi nhánh bị đình chỉ hoạt động
+        public async Task<PagedResult<BranchBasicDto>> GetAllBasicAsync(PaginationQuery query)
+        {
+            var pagedResult = await _repo.GetAllAsync(
+                query.Page, query.PageSize, false);
+
+            return new PagedResult<BranchBasicDto>
+            {
+                Items = pagedResult.Items.Select(MapToBasicDto),
+                TotalItems = pagedResult.TotalItems,
+                Page = pagedResult.Page,
+                PageSize = pagedResult.PageSize
+            };
+        }
+
         public async Task<BranchDto> GetByIdAsync(Guid id, bool includeSuspended)
         {
             var result = await _repo.GetWithManagerAsync(id);
@@ -80,6 +94,15 @@ namespace SmashCourt_BE.Services
         }
 
         // Tạo chi nhánh mới, đồng thời gán manager cho chi nhánh đó
+        public async Task<BranchBasicDto> GetBasicByIdAsync(Guid id)
+        {
+            var branch = await _repo.GetByIdAsync(id);
+            if (branch == null || branch.Status != BranchStatus.ACTIVE)
+                throw new AppException(404, "Không tìm thấy chi nhánh", ErrorCodes.NotFound);
+
+            return MapToBasicDto(branch);
+        }
+
         public async Task<BranchDto> CreateAsync(CreateBranchDto dto)
         {
             // 1. Convert TimeSpan → TimeOnly
@@ -87,7 +110,7 @@ namespace SmashCourt_BE.Services
             var closeTime = TimeOnly.FromTimeSpan(dto.CloseTime);
 
             // 2. Validate open_time < close_time
-            if (openTime >= closeTime) 
+            if (openTime >= closeTime)
                 throw new AppException(400, "Giờ mở cửa phải nhỏ hơn giờ đóng cửa", ErrorCodes.BadRequest);
 
             // 3. Check tên unique
@@ -277,14 +300,14 @@ namespace SmashCourt_BE.Services
         }
 
         // Thêm loại sân vào chi nhánh (bật loại sân)
-        public async Task<BranchCourtTypeDto> AddCourtTypeAsync(Guid branchId,AddCourtTypeToBranchDto dto, Guid currentUserId,string currentUserRole)
+        public async Task<BranchCourtTypeDto> AddCourtTypeAsync(Guid branchId, AddCourtTypeToBranchDto dto, Guid currentUserId, string currentUserRole)
         {
             // 1. Tìm branch
             var branch = await _repo.GetByIdAsync(branchId);
             if (branch == null)
                 throw new AppException(404, "Không tìm thấy chi nhánh", ErrorCodes.NotFound);
             // Check chi nhánh đang hoạt động
-            if (branch.Status != BranchStatus.ACTIVE) 
+            if (branch.Status != BranchStatus.ACTIVE)
                 throw new AppException(400,
                     "Chi nhánh không đang hoạt động, không thể thêm loại sân",
                     ErrorCodes.BadRequest);
@@ -318,11 +341,11 @@ namespace SmashCourt_BE.Services
                 {
                     existing.IsActive = true;
                     await _repo.UpdateBranchCourtTypeAsync(existing);
-                    
+
                     // Đếm số sân active của court type này trong chi nhánh
                     var courtCount = await _courtRepo.GetAllByBranchAsync(branchId, true)
                         .ContinueWith(t => t.Result.Count(c => c.CourtTypeId == dto.CourtTypeId && c.Status != CourtStatus.INACTIVE));
-                    
+
                     return MapToCourtTypeDto(existing, courtCount);
                 }
                 // Đang bật rồi → conflict
@@ -352,7 +375,7 @@ namespace SmashCourt_BE.Services
         }
 
         // Xóa loại sân khỏi chi nhánh (tắt loại sân)
-        public async Task RemoveCourtTypeAsync(Guid branchId,Guid courtTypeId,Guid currentUserId,string currentUserRole)
+        public async Task RemoveCourtTypeAsync(Guid branchId, Guid courtTypeId, Guid currentUserId, string currentUserRole)
         {
             // 1. Tìm branch
             var branch = await _repo.GetByIdAsync(branchId);
@@ -404,14 +427,14 @@ namespace SmashCourt_BE.Services
         }
 
         // Thêm dịch vụ vào chi nhánh (bật dịch vụ), có thể kèm giá override
-        public async Task<BranchServiceDto> AddServiceAsync(Guid branchId,AddServiceToBranchDto dto,Guid currentUserId,string currentUserRole)
+        public async Task<BranchServiceDto> AddServiceAsync(Guid branchId, AddServiceToBranchDto dto, Guid currentUserId, string currentUserRole)
         {
             // 1. Tìm branch
             var branch = await _repo.GetByIdAsync(branchId);
             if (branch == null)
                 throw new AppException(404, "Không tìm thấy chi nhánh", ErrorCodes.NotFound);
             // Check chi nhánh đang hoạt động
-            if (branch.Status != BranchStatus.ACTIVE) 
+            if (branch.Status != BranchStatus.ACTIVE)
                 throw new AppException(400,
                     "Chi nhánh không đang hoạt động, không thể thêm dịch vụ",
                     ErrorCodes.BadRequest);
@@ -479,7 +502,7 @@ namespace SmashCourt_BE.Services
         }
 
         // Cập nhật giá dịch vụ của chi nhánh, chỉ update giá và bật lại nếu đang tắt
-        public async Task<BranchServiceDto> UpdateServicePriceAsync(Guid branchId, Guid serviceId,UpdateBranchServiceDto dto,Guid currentUserId,string currentUserRole)
+        public async Task<BranchServiceDto> UpdateServicePriceAsync(Guid branchId, Guid serviceId, UpdateBranchServiceDto dto, Guid currentUserId, string currentUserRole)
         {
             // 1. Validate branch + quyền
             await ValidateBranchAccessAsync(branchId, currentUserId, currentUserRole);
@@ -509,7 +532,7 @@ namespace SmashCourt_BE.Services
         }
 
         // Tắt dịch vụ tại chi nhánh, không xóa hẳn để giữ lịch sử booking
-        public async Task DisableServiceAsync(Guid branchId,Guid serviceId,Guid currentUserId, string currentUserRole)
+        public async Task DisableServiceAsync(Guid branchId, Guid serviceId, Guid currentUserId, string currentUserRole)
         {
             // 1. Validate branch + quyền
             await ValidateBranchAccessAsync(branchId, currentUserId, currentUserRole);
@@ -563,6 +586,19 @@ namespace SmashCourt_BE.Services
             UpdatedAt = b.UpdatedAt,
             ManagerId = manager?.UserId,
             ManagerName = manager?.User?.FullName
+        };
+
+        private static BranchBasicDto MapToBasicDto(Branch b) => new()
+        {
+            Id = b.Id,
+            Name = b.Name,
+            Address = b.Address,
+            Latitude = b.Latitude,
+            Longitude = b.Longitude,
+            Phone = b.Phone,
+            AvatarUrl = b.AvatarUrl,
+            OpenTime = b.OpenTime.ToTimeSpan(),
+            CloseTime = b.CloseTime.ToTimeSpan()
         };
 
         // map data sang court type dto

@@ -29,39 +29,51 @@ namespace SmashCourt_BE.Controllers
         }
 
         /// <summary>
-        /// Lấy danh sách chi nhánh
-        /// CUSTOMER / chưa đăng nhập → chỉ thấy ACTIVE
-        /// OWNER / MANAGER / STAFF   → thấy cả ACTIVE + SUSPENDED
+        /// Lấy danh sách thông tin cơ bản của chi nhánh đang hoạt động
+        /// </summary>
+        [HttpGet("basic")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        public async Task<IActionResult> GetAllBasic([FromQuery] PaginationQuery query)
+        {
+            var result = await _service.GetAllBasicAsync(query);
+            return Ok(ApiResponse<PagedResult<BranchBasicDto>>.Ok(result, "Lấy danh sách chi nhánh thành công"));
+        }
+
+        /// <summary>
+        /// Lấy danh sách chi nhánh đầy đủ — chỉ OWNER
         /// </summary>
         [HttpGet]
+        [Authorize(Policy = AuthorizationPolicies.OwnerOnly)]
         [ProducesResponseType(StatusCodes.Status200OK)]
         public async Task<IActionResult> GetAll([FromQuery] PaginationQuery query)
         {
-            var includeSuspended = User.Identity?.IsAuthenticated == true &&
-            (User.IsInRole(UserRole.OWNER.ToString()) ||
-             User.IsInRole(UserRole.BRANCH_MANAGER.ToString()) ||
-             User.IsInRole(UserRole.STAFF.ToString()));
-
-            var result = await _service.GetAllAsync(query, includeSuspended);
+            var result = await _service.GetAllAsync(query, includeSuspended: true);
             return Ok(ApiResponse<PagedResult<BranchDto>>.Ok(result, "Lấy danh sách chi nhánh thành công"));
         }
 
 
         /// <summary>
-        /// Xem chi tiết chi nhánh
-        /// CUSTOMER / chưa đăng nhập → không thấy branch SUSPENDED
+        /// Xem thông tin cơ bản của chi nhánh đang hoạt động
+        /// </summary>
+        [HttpGet("basic/{id:guid}")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> GetBasicById(Guid id)
+        {
+            var result = await _service.GetBasicByIdAsync(id);
+            return Ok(ApiResponse<BranchBasicDto>.Ok(result, "Lấy chi tiết chi nhánh thành công"));
+        }
+
+        /// <summary>
+        /// Xem chi tiết chi nhánh đầy đủ — chỉ OWNER
         /// </summary>
         [HttpGet("{id:guid}")]
+        [Authorize(Policy = AuthorizationPolicies.OwnerOnly)]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         public async Task<IActionResult> GetById(Guid id)
         {
-            var includeSuspended = User.Identity?.IsAuthenticated == true &&
-            (User.IsInRole(UserRole.OWNER.ToString()) ||
-             User.IsInRole(UserRole.BRANCH_MANAGER.ToString()) ||
-             User.IsInRole(UserRole.STAFF.ToString()));
-
-            var result = await _service.GetByIdAsync(id, includeSuspended);
+            var result = await _service.GetByIdAsync(id, includeSuspended: true);
             return Ok(ApiResponse<BranchDto>.Ok(result, "Lấy chi tiết chi nhánh thành công"));
         }
 

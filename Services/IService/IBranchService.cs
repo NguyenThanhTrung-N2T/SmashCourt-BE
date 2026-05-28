@@ -8,8 +8,14 @@ namespace SmashCourt_BE.Services.IService
         // Lấy danh sách chi nhánh có phân trang, có thể bao gồm cả chi nhánh bị đình chỉ hoạt động
         Task<PagedResult<BranchDto>> GetAllAsync(PaginationQuery query, bool includeSuspended);
 
+        // Lấy danh sách thông tin cơ bản của chi nhánh đang hoạt động cho public
+        Task<PagedResult<BranchBasicDto>> GetAllBasicAsync(PaginationQuery query);
+
         // Lấy thông tin chi nhánh theo ID, có thể bao gồm cả chi nhánh bị đình chỉ hoạt động
         Task<BranchDto> GetByIdAsync(Guid id, bool includeSuspended);
+
+        // Lấy thông tin cơ bản của chi nhánh đang hoạt động theo ID cho public
+        Task<BranchBasicDto> GetBasicByIdAsync(Guid id);
 
         // Tạo mới chi nhánh
         Task<BranchDto> CreateAsync(CreateBranchDto dto);
