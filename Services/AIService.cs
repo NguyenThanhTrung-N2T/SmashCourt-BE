@@ -1,3 +1,4 @@
+using SmashCourt_BE.Common;
 using SmashCourt_BE.Integrations.AI;
 using SmashCourt_BE.Integrations.AI.DTOs;
 using SmashCourt_BE.Models.Enums;
@@ -35,11 +36,16 @@ public class AIService : IAIService
         _logger = logger;
     }
 
-    public async Task<ChatResponseDto> ProcessChatAsync(ChatRequestDto request, Guid userId, string userRole)
+    /// <summary>
+    /// Public chat - không cần authentication, chỉ dùng public context.
+    /// Context bao gồm: thông tin hệ thống, cách đặt sân, chính sách hủy/thanh toán, FAQ.
+    /// KHÔNG dùng booking history, loyalty, customer info.
+    /// </summary>
+    public async Task<ChatResponseDto> ProcessChatAsync(ChatRequestDto request)
     {
         try
         {
-            var context = await _dataPreparationService.BuildChatContextAsync(userId, userRole);
+            var context = await _dataPreparationService.BuildPublicChatContextAsync();
             var aiRequest = new ChatRequestForAiDto
             {
                 Message = request.Message,
@@ -57,7 +63,7 @@ public class AIService : IAIService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to process AI chat for user {UserId}", userId);
+            _logger.LogError(ex, "Failed to process public AI chat");
             return _formatter.GetFallbackChatResponse();
         }
     }
@@ -72,7 +78,7 @@ public class AIService : IAIService
                 {
                     Question = item.Question,
                     Category = item.Category,
-                    Answer = string.Empty
+                    Answer = item.Answer ?? string.Empty  // Map answer if FastAPI provides it
                 })
                 .ToList() ?? [];
         }
@@ -210,7 +216,11 @@ public class AIService : IAIService
         if (userRole == UserRole.BRANCH_MANAGER.ToString())
         {
             var assignment = await _userBranchRepository.GetActiveByUserIdAsync(userId);
-            return assignment?.BranchId;
+            if (assignment == null)
+            {
+                throw new AppException(403, "Tài khoản quản lý chưa được gán chi nhánh", ErrorCodes.Forbidden);
+            }
+            return assignment.BranchId;
         }
 
         return requestedBranchId;
@@ -235,6 +245,8 @@ public class AIService : IAIService
         public string Question { get; set; } = string.Empty;
 
         public string Category { get; set; } = string.Empty;
+
+        public string? Answer { get; set; }
     }
 
     private sealed class FastApiBookingSuggestionRequest

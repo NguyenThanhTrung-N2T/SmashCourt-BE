@@ -4,7 +4,10 @@ namespace SmashCourt_BE.Services.IService;
 
 public interface IAIService
 {
-    Task<ChatResponseDto> ProcessChatAsync(ChatRequestDto request, Guid userId, string userRole);
+    /// <summary>
+    /// Public chat - không cần authentication, chỉ dùng public context
+    /// </summary>
+    Task<ChatResponseDto> ProcessChatAsync(ChatRequestDto request);
 
     Task<List<FaqItemDto>> GetFaqListAsync();
 
