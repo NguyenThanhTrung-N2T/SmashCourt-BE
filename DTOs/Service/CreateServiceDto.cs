@@ -17,5 +17,8 @@ namespace SmashCourt_BE.DTOs.Service
         [Required(ErrorMessage = "Giá mặc định không được để trống")]
         [Range(1, double.MaxValue, ErrorMessage = "Giá mặc định phải lớn hơn 0")]
         public decimal DefaultPrice { get; set; }
+
+        // Optional display URL for the service (e.g., image)
+        public string? ServiceDisplayUrl { get; set; }
     }
 }

@@ -111,7 +111,7 @@ namespace SmashCourt_BE.Data
                 e.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()");
                 e.Property(x => x.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("now()");
                 e.Property(x => x.FullNameNormalized).HasColumnName("full_name_normalized").HasMaxLength(255);
-                
+
                 // Relationships
                 e.HasMany(x => x.RefreshTokens).WithOne(x => x.User).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
                 e.HasMany(x => x.OAuthAccounts).WithOne(x => x.User).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
@@ -329,6 +329,7 @@ namespace SmashCourt_BE.Data
                 e.Property(x => x.Status).HasColumnName("status");
                 e.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()");
                 e.Property(x => x.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("now()");
+                e.Property(x => x.ServiceDisplayUrl).HasColumnName("service_display_url");
             });
 
             modelBuilder.Entity<BranchService>(e =>

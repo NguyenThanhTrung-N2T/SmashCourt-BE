@@ -12,6 +12,7 @@ namespace SmashCourt_BE.Models.Entities
         public ServiceStatus Status { get; set; } = ServiceStatus.ACTIVE;
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
+        public string? ServiceDisplayUrl { get; set; }
 
         // Navigation
         public ICollection<BranchService> BranchServices { get; set; } = [];

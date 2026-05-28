@@ -12,5 +12,6 @@ namespace SmashCourt_BE.DTOs.Service
         public ServiceStatus Status { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
+        public string? ServiceDisplayUrl { get; set; }
     }
 }
