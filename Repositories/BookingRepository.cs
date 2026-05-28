@@ -165,7 +165,7 @@ namespace SmashCourt_BE.Repositories
                 throw new AppException(400, "Vui lòng chọn chi nhánh", ErrorCodes.BadRequest);
 
             var date = DateOnly.FromDateTime(query.Date);
-            
+
             // Lấy danh sách status active từ helper (single source of truth)
             var activeStatuses = BookingStatusTransition.GetActiveStatuses();
 
@@ -463,10 +463,31 @@ namespace SmashCourt_BE.Repositories
             if (query.Status.HasValue)
                 q = q.Where(b => b.Status == query.Status.Value);
 
+            // Filter exact booking date
             if (query.Date.HasValue)
             {
                 var date = DateOnly.FromDateTime(query.Date.Value);
                 q = q.Where(b => b.BookingDate == date);
+            }
+
+            if (query.Date.HasValue)
+            {
+                var date = DateOnly.FromDateTime(query.Date.Value);
+                q = q.Where(b => b.BookingDate == date);
+            }
+            else
+            {
+                if (query.FromDate.HasValue)
+                {
+                    var fromDate = DateOnly.FromDateTime(query.FromDate.Value);
+                    q = q.Where(b => b.BookingDate >= fromDate);
+                }
+
+                if (query.ToDate.HasValue)
+                {
+                    var toDate = DateOnly.FromDateTime(query.ToDate.Value);
+                    q = q.Where(b => b.BookingDate <= toDate);
+                }
             }
 
             if (!string.IsNullOrWhiteSpace(query.BookingCode))

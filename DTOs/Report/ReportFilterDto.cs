@@ -23,7 +23,10 @@ public class ReportFilterDto
     public Guid? BranchId { get; set; }
     
     /// <summary>
-    /// Nhóm dữ liệu theo: day, week, month, branch, courtType, paymentMethod, hour, dayOfWeek
+    /// Nhóm dữ liệu.
+    /// Hỗ trợ: day (mặc định), dayOfWeek, month, week, hour, courtType.
+    /// Riêng báo cáo sử dụng sân hỗ trợ: court.
+    /// Dự kiến: branch, paymentMethod.
     /// </summary>
     [StringLength(50)]
     public string? GroupBy { get; set; }

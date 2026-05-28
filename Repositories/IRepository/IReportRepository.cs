@@ -8,13 +8,13 @@ namespace SmashCourt_BE.Repositories.IRepository;
 public interface IReportRepository
 {
     // Lấy dữ liệu tổng quan cho dashboard
-    Task<DashboardSummaryDto> GetDashboardSummaryAsync(DateOnly fromDate, DateOnly toDate, Guid? branchId);
+    Task<DashboardSummaryDto> GetDashboardSummaryAsync(DateOnly fromDate, DateOnly toDate, Guid? branchId, bool isAllTime = false);
 
     // Lấy top chi nhánh, khách hàng, xu hướng doanh thu, xu hướng đặt sân
     Task<List<TopBranchDto>> GetTopBranchesAsync(DateOnly fromDate, DateOnly toDate, int limit);
     Task<List<TopCustomerDto>> GetTopCustomersAsync(DateOnly fromDate, DateOnly toDate, Guid? branchId, int limit);
-    Task<List<RevenueTrendDto>> GetRevenueTrendAsync(DateOnly fromDate, DateOnly toDate, Guid? branchId);
-    Task<List<BookingTrendDto>> GetBookingTrendAsync(DateOnly fromDate, DateOnly toDate, Guid? branchId);
+    Task<List<RevenueTrendDto>> GetRevenueTrendAsync(DateOnly fromDate, DateOnly toDate, Guid? branchId, string? groupBy, bool isAllTime = false);
+    Task<List<BookingTrendDto>> GetBookingTrendAsync(DateOnly fromDate, DateOnly toDate, Guid? branchId, bool isAllTime = false);
 
     // lấy báo cáo doanh thu
     Task<RevenueReportDto> GetRevenueReportAsync(DateOnly fromDate, DateOnly toDate, Guid? branchId, string? groupBy);

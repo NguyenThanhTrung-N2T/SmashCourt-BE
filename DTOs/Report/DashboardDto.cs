@@ -63,12 +63,21 @@ public class ManagerDashboardDto
 public class DashboardSummaryDto
 {
     public decimal TotalRevenue { get; set; }
+    public decimal? RevenueChangePercent { get; set; }
+
     public int TotalBookings { get; set; }
+    public decimal? BookingChangePercent { get; set; }
+
     public int CompletedBookings { get; set; }
     public int CancelledBookings { get; set; }
     public int NoShowBookings { get; set; }
+
     public int NewCustomers { get; set; }
+    public decimal? NewCustomerChangePercent { get; set; }
+
     public decimal OccupancyRate { get; set; }
+    public decimal? OccupancyChangePercent { get; set; }
+
     public decimal OnlinePaymentRevenue { get; set; }
     public decimal CashPaymentRevenue { get; set; }
 }

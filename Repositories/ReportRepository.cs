@@ -37,26 +37,30 @@ public class ReportRepository : IReportRepository
     /// <param name="branchId">ID chi nhánh để filter (nullable, chỉ OWNER có thể filter)</param>
     /// <returns>DTO chứa các metrics tổng quan: doanh thu, số booking, khách hàng mới, occupancy rate</returns>
     public async Task<DashboardSummaryDto> GetDashboardSummaryAsync(
-        DateOnly fromDate, DateOnly toDate, Guid? branchId)
+        DateOnly fromDate, DateOnly toDate, Guid? branchId, bool isAllTime = false)
     {
         // Tạo base query cho bookings trong khoảng thời gian
         var bookingsQuery = _context.Bookings
-            .AsNoTracking()
-            .Where(b => b.BookingDate >= fromDate && b.BookingDate <= toDate);
+            .AsNoTracking();
+
+        if (!isAllTime)
+            bookingsQuery = bookingsQuery.Where(b => b.BookingDate >= fromDate && b.BookingDate <= toDate);
 
         if (branchId.HasValue)
-        {
             bookingsQuery = bookingsQuery.Where(b => b.BranchId == branchId.Value);
-        }
 
-        // Chỉ tính doanh thu từ booking COMPLETED, loại trừ CANCELLED/NO_SHOW theo yêu cầu nghiệp vụ
-        var totalRevenue = await _context.Invoices
+        // Chỉ tính doanh thu từ booking COMPLETED
+        var revenueQuery = _context.Invoices
             .AsNoTracking()
             .Where(i => i.Booking.Status == BookingStatus.COMPLETED &&
-                        i.Booking.BookingDate >= fromDate &&
-                        i.Booking.BookingDate <= toDate &&
-                        (!branchId.HasValue || i.Booking.BranchId == branchId.Value))
-            .SumAsync(i => i.FinalTotal);
+                        (!branchId.HasValue || i.Booking.BranchId == branchId.Value));
+
+        if (!isAllTime)
+            revenueQuery = revenueQuery.Where(i =>
+                i.Booking.BookingDate >= fromDate &&
+                i.Booking.BookingDate <= toDate);
+
+        var totalRevenue = await revenueQuery.SumAsync(i => i.FinalTotal);
 
         // Đếm số lượng bookings theo từng trạng thái
         var bookingStatusCounts = await bookingsQuery
@@ -64,49 +68,50 @@ public class ReportRepository : IReportRepository
             .Select(g => new { Status = g.Key, Count = g.Count() })
             .ToListAsync();
 
-        var totalBookings = bookingStatusCounts.Sum(s => s.Count);
-        var completedBookings = bookingStatusCounts.FirstOrDefault(s => s.Status == BookingStatus.COMPLETED)?.Count ?? 0;
-        var cancelledBookings = bookingStatusCounts.FirstOrDefault(s => s.Status == BookingStatus.CANCELLED)?.Count ?? 0;
-        var noShowBookings = bookingStatusCounts.FirstOrDefault(s => s.Status == BookingStatus.NO_SHOW)?.Count ?? 0;
+        var totalBookings      = bookingStatusCounts.Sum(s => s.Count);
+        var completedBookings  = bookingStatusCounts.FirstOrDefault(s => s.Status == BookingStatus.COMPLETED)?.Count ?? 0;
+        var cancelledBookings  = bookingStatusCounts.FirstOrDefault(s => s.Status == BookingStatus.CANCELLED)?.Count ?? 0;
+        var noShowBookings     = bookingStatusCounts.FirstOrDefault(s => s.Status == BookingStatus.NO_SHOW)?.Count ?? 0;
 
-        // Logic đếm khách hàng mới:
-        // - Không có branchId: đếm customer đăng ký (CreatedAt) trong khoảng thời gian
-        // - Có branchId: đếm customer có booking ĐẦU TIÊN tại branch đó trong khoảng thời gian
+        // Logic đếm khách hàng mới
         int newCustomers;
         if (branchId.HasValue)
         {
-            newCustomers = await _context.Bookings
+            var firstBookingQuery = _context.Bookings
                 .AsNoTracking()
                 .Where(b => b.BranchId == branchId.Value && b.CustomerId.HasValue)
                 .GroupBy(b => b.CustomerId!.Value)
-                .Select(g => g.Min(b => b.BookingDate))
-                .Where(firstBooking => firstBooking >= fromDate && firstBooking <= toDate)
-                .CountAsync();
+                .Select(g => g.Min(b => b.BookingDate));
+
+            if (!isAllTime)
+                firstBookingQuery = firstBookingQuery
+                    .Where(firstBooking => firstBooking >= fromDate && firstBooking <= toDate);
+
+            newCustomers = await firstBookingQuery.CountAsync();
         }
         else
         {
-            // PostgreSQL yêu cầu DateTime phải có Kind = UTC cho timestamp with time zone
-            var fromDateTime = fromDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
-            var toDateTime = toDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc);
-
-            newCustomers = await _context.Users
+            var userQuery = _context.Users
                 .AsNoTracking()
-                .Where(u => u.Role == UserRole.CUSTOMER &&
-                            u.CreatedAt >= fromDateTime &&
-                            u.CreatedAt <= toDateTime)
-                .CountAsync();
+                .Where(u => u.Role == UserRole.CUSTOMER);
+
+            if (!isAllTime)
+            {
+                // PostgreSQL yêu cầu DateTime phải có Kind = UTC cho timestamp with time zone
+                var fromDateTime = fromDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+                var toDateTime   = toDate.ToDateTime(TimeOnly.MaxValue,   DateTimeKind.Utc);
+                userQuery = userQuery.Where(u => u.CreatedAt >= fromDateTime && u.CreatedAt <= toDateTime);
+            }
+
+            newCustomers = await userQuery.CountAsync();
         }
 
-        var occupancyRate = await CalculateOccupancyRateAsync(fromDate, toDate, branchId);
+        var occupancyRate = isAllTime
+            ? 0  // occupancy rate không có nghĩa cho ALL TIME
+            : await CalculateOccupancyRateAsync(fromDate, toDate, branchId);
 
-        // Phân loại doanh thu theo phương thức thanh toán (VNPAY online, CASH tại quầy)
-        // Lấy payment method từ Payment record thành công gần nhất để tránh đếm trùng
-        var invoicesWithPaymentMethod = await _context.Invoices
-            .AsNoTracking()
-            .Where(i => i.Booking.Status == BookingStatus.COMPLETED &&
-                        i.Booking.BookingDate >= fromDate &&
-                        i.Booking.BookingDate <= toDate &&
-                        (!branchId.HasValue || i.Booking.BranchId == branchId.Value))
+        // Phân loại doanh thu theo phương thức thanh toán
+        var invoicesWithPaymentMethod = await revenueQuery
             .Select(i => new
             {
                 i.FinalTotal,
@@ -127,15 +132,15 @@ public class ReportRepository : IReportRepository
 
         return new DashboardSummaryDto
         {
-            TotalRevenue = totalRevenue,
-            TotalBookings = totalBookings,
-            CompletedBookings = completedBookings,
-            CancelledBookings = cancelledBookings,
-            NoShowBookings = noShowBookings,
-            NewCustomers = newCustomers,
-            OccupancyRate = occupancyRate,
+            TotalRevenue         = totalRevenue,
+            TotalBookings        = totalBookings,
+            CompletedBookings    = completedBookings,
+            CancelledBookings    = cancelledBookings,
+            NoShowBookings       = noShowBookings,
+            NewCustomers         = newCustomers,
+            OccupancyRate        = occupancyRate,
             OnlinePaymentRevenue = onlineRevenue,
-            CashPaymentRevenue = cashRevenue
+            CashPaymentRevenue   = cashRevenue
         };
     }
 
@@ -178,13 +183,8 @@ public class ReportRepository : IReportRepository
     public async Task<List<TopCustomerDto>> GetTopCustomersAsync(
         DateOnly fromDate, DateOnly toDate, Guid? branchId, int limit)
     {
-        var query = _context.Invoices
-            .AsNoTracking()
-            .Where(i => i.Booking.Status == BookingStatus.COMPLETED &&
-                        i.Booking.BookingDate >= fromDate &&
-                        i.Booking.BookingDate <= toDate &&
-                        i.Booking.CustomerId.HasValue &&
-                        (!branchId.HasValue || i.Booking.BranchId == branchId.Value));
+        var query = GetInvoicesQuery(fromDate, toDate, branchId)
+            .Where(i => i.Booking.CustomerId.HasValue);
 
         return await query
             .GroupBy(i => new
@@ -216,31 +216,17 @@ public class ReportRepository : IReportRepository
     /// <param name="branchId">ID chi nhánh để filter (nullable)</param>
     /// <returns>Danh sách doanh thu và số booking theo từng ngày, được sắp xếp theo thứ tự thời gian</returns>
     public async Task<List<RevenueTrendDto>> GetRevenueTrendAsync(
-        DateOnly fromDate, DateOnly toDate, Guid? branchId)
+        DateOnly fromDate, DateOnly toDate, Guid? branchId, string? groupBy = "day", bool isAllTime = false) 
     {
-        // Query data grouped by BookingDate
-        var data = await _context.Invoices
-            .AsNoTracking()
-            .Where(i => i.Booking.Status == BookingStatus.COMPLETED &&
-                        i.Booking.BookingDate >= fromDate &&
-                        i.Booking.BookingDate <= toDate &&
-                        (!branchId.HasValue || i.Booking.BranchId == branchId.Value))
-            .GroupBy(i => i.Booking.BookingDate)
-            .Select(g => new
-            {
-                Date = g.Key,
-                Revenue = g.Sum(i => i.FinalTotal),
-                BookingCount = g.Count()
-            })
-            .OrderBy(t => t.Date)
-            .ToListAsync();
+        var invoicesQuery = GetInvoicesQuery(fromDate, toDate, branchId, isAllTime);
 
-        // Format Period in memory (DateOnly.ToString cannot be translated to SQL)
-        return data.Select(d => new RevenueTrendDto
+        var items = await GetRevenueItemsAsync(invoicesQuery, groupBy);
+
+        return items.Select(i => new RevenueTrendDto
         {
-            Period = d.Date.ToString("yyyy-MM-dd"),
-            Revenue = d.Revenue,
-            BookingCount = d.BookingCount
+            Period = i.Period,
+            Revenue = i.Revenue,
+            BookingCount = i.BookingCount
         }).ToList();
     }
 
@@ -248,30 +234,17 @@ public class ReportRepository : IReportRepository
     /// Lấy xu hướng booking theo ngày
     /// </summary>
     public async Task<List<BookingTrendDto>> GetBookingTrendAsync(
-        DateOnly fromDate, DateOnly toDate, Guid? branchId)
+        DateOnly fromDate, DateOnly toDate, Guid? branchId, bool isAllTime = false)
     {
-        // Query data grouped by BookingDate
-        var data = await _context.Bookings
-            .AsNoTracking()
-            .Where(b => b.BookingDate >= fromDate &&
-                        b.BookingDate <= toDate &&
-                        (!branchId.HasValue || b.BranchId == branchId.Value))
-            .GroupBy(b => b.BookingDate)
-            .Select(g => new
-            {
-                Date = g.Key,
-                TotalCount = g.Count(),
-                CompletedCount = g.Count(b => b.Status == BookingStatus.COMPLETED)
-            })
-            .OrderBy(t => t.Date)
-            .ToListAsync();
+        var bookingsQuery = GetBookingsQuery(fromDate, toDate, branchId, isAllTime);
+        string groupBy = "dayOfWeek"; // Fixed groupBy day_of_week for the booking chart.
+        var items = await GetBookingItemsAsync(bookingsQuery, groupBy);
 
-        // Format Period in memory (DateOnly.ToString cannot be translated to SQL)
-        return data.Select(d => new BookingTrendDto
+        return items.Select(i => new BookingTrendDto
         {
-            Period = d.Date.ToString("yyyy-MM-dd"),
-            TotalCount = d.TotalCount,
-            CompletedCount = d.CompletedCount
+            Period = i.Period,
+            TotalCount = i.BookingCount,
+            CompletedCount = i.CompletedCount
         }).ToList();
     }
 
@@ -285,12 +258,7 @@ public class ReportRepository : IReportRepository
     public async Task<RevenueReportDto> GetRevenueReportAsync(
         DateOnly fromDate, DateOnly toDate, Guid? branchId, string? groupBy)
     {
-        var invoicesQuery = _context.Invoices
-            .AsNoTracking()
-            .Where(i => i.Booking.Status == BookingStatus.COMPLETED &&
-                        i.Booking.BookingDate >= fromDate &&
-                        i.Booking.BookingDate <= toDate &&
-                        (!branchId.HasValue || i.Booking.BranchId == branchId.Value));
+        var invoicesQuery = GetInvoicesQuery(fromDate, toDate, branchId);
 
         // Gom tất cả aggregate metrics trong 1 query duy nhất
         var metrics = await invoicesQuery
@@ -332,11 +300,7 @@ public class ReportRepository : IReportRepository
     public async Task<BookingReportDto> GetBookingReportAsync(
         DateOnly fromDate, DateOnly toDate, Guid? branchId, string? groupBy)
     {
-        var bookingsQuery = _context.Bookings
-            .AsNoTracking()
-            .Where(b => b.BookingDate >= fromDate &&
-                        b.BookingDate <= toDate &&
-                        (!branchId.HasValue || b.BranchId == branchId.Value));
+        var bookingsQuery = GetBookingsQuery(fromDate, toDate, branchId);
 
         // Đếm theo status
         var statusCounts = await bookingsQuery
@@ -451,7 +415,6 @@ public class ReportRepository : IReportRepository
 
         if (normalizedGroupBy == "day")
         {
-            // Query data grouped by BookingDate
             var data = await query
                 .GroupBy(i => i.Booking.BookingDate)
                 .Select(g => new
@@ -463,7 +426,6 @@ public class ReportRepository : IReportRepository
                 .OrderBy(r => r.Date)
                 .ToListAsync();
 
-            // Format Period in memory (DateOnly.ToString cannot be translated to SQL)
             return data.Select(d => new RevenueItemDto
             {
                 Period = d.Date.ToString("yyyy-MM-dd"),
@@ -472,14 +434,127 @@ public class ReportRepository : IReportRepository
             }).ToList();
         }
 
-        var validValues = new[] { "day", "week", "month", "branch", "courttype", "paymentmethod", "hour", "dayofweek" };
+        if (normalizedGroupBy == "dayofweek")
+        {
+            var data = await query
+                .GroupBy(i => (int)i.Booking.BookingDate.DayOfWeek)
+                .Select(g => new
+                {
+                    DayOfWeek = g.Key,
+                    Revenue = g.Sum(i => i.FinalTotal),
+                    BookingCount = g.Count()
+                })
+                .ToListAsync();
+
+            return data
+                .OrderBy(d => d.DayOfWeek == 0 ? 7 : d.DayOfWeek)
+                .Select(d => new RevenueItemDto
+                {
+                    Period = ((DayOfWeek)d.DayOfWeek).ToString(),
+                    Revenue = d.Revenue,
+                    BookingCount = d.BookingCount
+                }).ToList();
+        }
+
+        if (normalizedGroupBy == "month")
+        {
+            var data = await query
+                .GroupBy(i => new { i.Booking.BookingDate.Year, i.Booking.BookingDate.Month })
+                .Select(g => new
+                {
+                    g.Key.Year,
+                    g.Key.Month,
+                    Revenue = g.Sum(i => i.FinalTotal),
+                    BookingCount = g.Count()
+                })
+                .OrderBy(r => r.Year)
+                .ThenBy(r => r.Month)
+                .ToListAsync();
+
+            return data.Select(d => new RevenueItemDto
+            {
+                Period = $"{d.Year:0000}-{d.Month:00}",
+                Revenue = d.Revenue,
+                BookingCount = d.BookingCount
+            }).ToList();
+        }
+
+        if (normalizedGroupBy == "week")
+        {
+            // Group by the Monday of each week
+            var data = await query
+                .GroupBy(i => i.Booking.BookingDate.AddDays(
+                    i.Booking.BookingDate.DayOfWeek == DayOfWeek.Sunday ? -6 : 1 - (int)i.Booking.BookingDate.DayOfWeek))
+                .Select(g => new
+                {
+                    WeekStart = g.Key,
+                    Revenue = g.Sum(i => i.FinalTotal),
+                    BookingCount = g.Count()
+                })
+                .OrderBy(w => w.WeekStart)
+                .ToListAsync();
+
+            return data.Select(d => new RevenueItemDto
+            {
+                // Format as "YYYY-W##" or similar. For simplicity, showing week starting date.
+                Period = $"{d.WeekStart:yyyy-MM-dd}",
+                Revenue = d.Revenue,
+                BookingCount = d.BookingCount
+            }).ToList();
+        }
+
+        if (normalizedGroupBy == "hour")
+        {
+            var data = await query
+                .GroupBy(i => i.Booking.BookingCourts.Min(bc => bc.StartTime).Hour)
+                .Select(g => new
+                {
+                    Hour = g.Key,
+                    Revenue = g.Sum(i => i.FinalTotal),
+                    BookingCount = g.Count()
+                })
+                .OrderBy(h => h.Hour)
+                .ToListAsync();
+
+            return data.Select(d => new RevenueItemDto
+            {
+                Period = $"{d.Hour:D2}:00",
+                Revenue = d.Revenue,
+                BookingCount = d.BookingCount
+            }).ToList();
+        }
+
+        if (normalizedGroupBy == "courttype")
+        {
+            var data = await query
+                .GroupBy(i => i.Booking.BookingCourts
+                    .Select(bc => bc.Court.CourtType.Name)
+                    .FirstOrDefault() ?? "Unknown")
+                .Select(g => new
+                {
+                    CourtTypeName = g.Key,
+                    Revenue = g.Sum(i => i.FinalTotal),
+                    BookingCount = g.Count()
+                })
+                .OrderByDescending(g => g.Revenue)
+                .ToListAsync();
+
+            return data.Select(d => new RevenueItemDto
+            {
+                Period = d.CourtTypeName,
+                Revenue = d.Revenue,
+                BookingCount = d.BookingCount
+            }).ToList();
+        }
+
+        var validValues = new[] { "day", "dayofweek", "month", "week", "branch", "courttype", "paymentmethod", "hour" };
         if (!validValues.Contains(normalizedGroupBy))
             throw new AppException(400,
                 $"groupBy '{groupBy}' không hợp lệ. Các giá trị hợp lệ: day, week, month, branch, courtType, paymentMethod, hour, dayOfWeek",
                 ErrorCodes.BadRequest);
 
         throw new AppException(400,
-            $"groupBy '{groupBy}' chưa được hỗ trợ. Hiện tại chỉ hỗ trợ: day",
+            $"groupBy '{groupBy}' chưa được hỗ trợ. Hiện tại hỗ trợ: day, dayofweek, month, week, hour, courttype",
             ErrorCodes.BadRequest);
     }
 
@@ -493,7 +568,6 @@ public class ReportRepository : IReportRepository
 
         if (normalizedGroupBy == "day")
         {
-            // Query data grouped by BookingDate
             var data = await query
                 .GroupBy(b => b.BookingDate)
                 .Select(g => new
@@ -506,7 +580,6 @@ public class ReportRepository : IReportRepository
                 .OrderBy(b => b.Date)
                 .ToListAsync();
 
-            // Format Period in memory (DateOnly.ToString cannot be translated to SQL)
             return data.Select(d => new BookingItemDto
             {
                 Period = d.Date.ToString("yyyy-MM-dd"),
@@ -516,14 +589,135 @@ public class ReportRepository : IReportRepository
             }).ToList();
         }
 
-        var validValues = new[] { "day", "week", "month", "branch", "courttype", "paymentmethod", "hour", "dayofweek" };
+        if (normalizedGroupBy == "dayofweek")
+        {
+            var data = await query
+                .GroupBy(b => (int)b.BookingDate.DayOfWeek)
+                .Select(g => new
+                {
+                    DayOfWeek = g.Key,
+                    BookingCount = g.Count(),
+                    CompletedCount = g.Count(b => b.Status == BookingStatus.COMPLETED),
+                    CancelledCount = g.Count(b => b.Status == BookingStatus.CANCELLED)
+                })
+                .ToListAsync();
+
+            return data
+                .OrderBy(d => d.DayOfWeek == 0 ? 7 : d.DayOfWeek)
+                .Select(d => new BookingItemDto
+                {
+                    Period = ((DayOfWeek)d.DayOfWeek).ToString(),
+                    BookingCount = d.BookingCount,
+                    CompletedCount = d.CompletedCount,
+                    CancelledCount = d.CancelledCount
+                }).ToList();
+        }
+
+        if (normalizedGroupBy == "month")
+        {
+            var data = await query
+                .GroupBy(b => new { b.BookingDate.Year, b.BookingDate.Month })
+                .Select(g => new
+                {
+                    g.Key.Year,
+                    g.Key.Month,
+                    BookingCount = g.Count(),
+                    CompletedCount = g.Count(b => b.Status == BookingStatus.COMPLETED),
+                    CancelledCount = g.Count(b => b.Status == BookingStatus.CANCELLED)
+                })
+                .OrderBy(b => b.Year)
+                .ThenBy(b => b.Month)
+                .ToListAsync();
+
+            return data.Select(d => new BookingItemDto
+            {
+                Period = $"{d.Year:0000}-{d.Month:00}",
+                BookingCount = d.BookingCount,
+                CompletedCount = d.CompletedCount,
+                CancelledCount = d.CancelledCount
+            }).ToList();
+        }
+
+        if (normalizedGroupBy == "week")
+        {
+            var data = await query
+                .GroupBy(b => b.BookingDate.AddDays(
+                    b.BookingDate.DayOfWeek == DayOfWeek.Sunday ? -6 : 1 - (int)b.BookingDate.DayOfWeek))
+                .Select(g => new
+                {
+                    WeekStart = g.Key,
+                    BookingCount = g.Count(),
+                    CompletedCount = g.Count(b => b.Status == BookingStatus.COMPLETED),
+                    CancelledCount = g.Count(b => b.Status == BookingStatus.CANCELLED)
+                })
+                .OrderBy(w => w.WeekStart)
+                .ToListAsync();
+
+            return data.Select(d => new BookingItemDto
+            {
+                Period = $"{d.WeekStart:yyyy-MM-dd}",
+                BookingCount = d.BookingCount,
+                CompletedCount = d.CompletedCount,
+                CancelledCount = d.CancelledCount
+            }).ToList();
+        }
+
+        if (normalizedGroupBy == "hour")
+        {
+            var data = await query
+                .GroupBy(b => b.BookingCourts.Min(bc => bc.StartTime).Hour)
+                .Select(g => new
+                {
+                    Hour = g.Key,
+                    BookingCount = g.Count(),
+                    CompletedCount = g.Count(b => b.Status == BookingStatus.COMPLETED),
+                    CancelledCount = g.Count(b => b.Status == BookingStatus.CANCELLED)
+                })
+                .OrderBy(h => h.Hour)
+                .ToListAsync();
+
+            return data.Select(d => new BookingItemDto
+            {
+                Period = $"{d.Hour:D2}:00",
+                BookingCount = d.BookingCount,
+                CompletedCount = d.CompletedCount,
+                CancelledCount = d.CancelledCount
+            }).ToList();
+        }
+
+        if (normalizedGroupBy == "courttype")
+        {
+            var data = await query
+                .GroupBy(b => b.BookingCourts
+                    .Select(bc => bc.Court.CourtType.Name)
+                    .FirstOrDefault() ?? "Unknown")
+                .Select(g => new
+                {
+                    CourtTypeName = g.Key,
+                    BookingCount = g.Count(),
+                    CompletedCount = g.Count(b => b.Status == BookingStatus.COMPLETED),
+                    CancelledCount = g.Count(b => b.Status == BookingStatus.CANCELLED)
+                })
+                .OrderByDescending(g => g.BookingCount)
+                .ToListAsync();
+
+            return data.Select(d => new BookingItemDto
+            {
+                Period = d.CourtTypeName,
+                BookingCount = d.BookingCount,
+                CompletedCount = d.CompletedCount,
+                CancelledCount = d.CancelledCount
+            }).ToList();
+        }
+
+        var validValues = new[] { "day", "dayofweek", "month", "week", "branch", "courttype", "paymentmethod", "hour" };
         if (!validValues.Contains(normalizedGroupBy))
             throw new AppException(400,
                 $"groupBy '{groupBy}' không hợp lệ. Các giá trị hợp lệ: day, week, month, branch, courtType, paymentMethod, hour, dayOfWeek",
                 ErrorCodes.BadRequest);
 
         throw new AppException(400,
-            $"groupBy '{groupBy}' chưa được hỗ trợ. Hiện tại chỉ hỗ trợ: day",
+            $"groupBy '{groupBy}' chưa được hỗ trợ. Hiện tại hỗ trợ: day, dayofweek, month, week, hour, courttype",
             ErrorCodes.BadRequest);
     }
 
@@ -1132,5 +1326,36 @@ public class ReportRepository : IReportRepository
             TotalDiscount = d.TotalDiscount
         }).ToList();
     }
+    #endregion
+
+    #region Helper Query Builders
+
+    private IQueryable<Models.Entities.Invoice> GetInvoicesQuery(
+        DateOnly fromDate, DateOnly toDate, Guid? branchId, bool isAllTime = false)
+    {
+        var query = _context.Invoices
+            .AsNoTracking()
+            .Where(i => i.Booking.Status == BookingStatus.COMPLETED &&
+                        (!branchId.HasValue || i.Booking.BranchId == branchId.Value));
+
+        if (!isAllTime)
+            query = query.Where(i => i.Booking.BookingDate >= fromDate && i.Booking.BookingDate <= toDate);
+
+        return query;
+    }
+
+    private IQueryable<Models.Entities.Booking> GetBookingsQuery(
+        DateOnly fromDate, DateOnly toDate, Guid? branchId, bool isAllTime = false)
+    {
+        var query = _context.Bookings
+            .AsNoTracking()
+            .Where(b => !branchId.HasValue || b.BranchId == branchId.Value);
+
+        if (!isAllTime)
+            query = query.Where(b => b.BookingDate >= fromDate && b.BookingDate <= toDate);
+
+        return query;
+    }
+
     #endregion
 }
