@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using SmashCourt_BE.Common;
 using SmashCourt_BE.Integrations.AI.DTOs;
 using SmashCourt_BE.Services.IService;
@@ -22,16 +23,17 @@ public class AIController : ControllerBase
     }
 
     [HttpPost("chat")]
-    [Authorize(Roles = "CUSTOMER")]
+    [AllowAnonymous]
+    [EnableRateLimiting("ai-public")]
     public async Task<IActionResult> Chat([FromBody] ChatRequestDto request)
     {
-        var (userId, userRole) = GetCurrentUser();
-        var response = await _aiService.ProcessChatAsync(request, userId, userRole);
+        var response = await _aiService.ProcessChatAsync(request);
         return Ok(ApiResponse<ChatResponseDto>.Ok(response));
     }
 
     [HttpGet("chat/faq")]
     [AllowAnonymous]
+    [EnableRateLimiting("ai-public")]
     public async Task<IActionResult> GetFaqList()
     {
         var response = await _aiService.GetFaqListAsync();
@@ -40,6 +42,7 @@ public class AIController : ControllerBase
 
     [HttpPost("suggest/booking")]
     [Authorize(Roles = "CUSTOMER")]
+    [EnableRateLimiting("ai-user")]
     public async Task<IActionResult> SuggestBooking([FromBody] BookingSuggestionRequestDto request)
     {
         var (userId, _) = GetCurrentUser();
@@ -49,6 +52,7 @@ public class AIController : ControllerBase
 
     [HttpPost("suggest/pricing")]
     [Authorize(Roles = "OWNER,BRANCH_MANAGER")]
+    [EnableRateLimiting("ai-management")]
     public async Task<IActionResult> SuggestPricing([FromBody] PricingSuggestionRequestDto request)
     {
         var (userId, userRole) = GetCurrentUser();
@@ -58,6 +62,7 @@ public class AIController : ControllerBase
 
     [HttpPost("suggest/promotions")]
     [Authorize(Roles = "OWNER,BRANCH_MANAGER")]
+    [EnableRateLimiting("ai-management")]
     public async Task<IActionResult> SuggestPromotions([FromBody] PromotionSuggestionRequestDto request)
     {
         var (userId, userRole) = GetCurrentUser();
@@ -67,6 +72,7 @@ public class AIController : ControllerBase
 
     [HttpPost("analytics/summary")]
     [Authorize(Roles = "OWNER,BRANCH_MANAGER")]
+    [EnableRateLimiting("ai-management")]
     public async Task<IActionResult> GetAnalyticsSummary([FromBody] AnalyticsSummaryRequestDto request)
     {
         var (userId, userRole) = GetCurrentUser();
@@ -76,6 +82,7 @@ public class AIController : ControllerBase
 
     [HttpPost("analytics/strategic")]
     [Authorize(Roles = "OWNER")]
+    [EnableRateLimiting("ai-management")]
     public async Task<IActionResult> GetStrategicSuggestions([FromBody] StrategicSuggestionRequestDto request)
     {
         var (userId, _) = GetCurrentUser();

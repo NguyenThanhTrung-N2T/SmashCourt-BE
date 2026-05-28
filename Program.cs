@@ -183,10 +183,10 @@ builder.Services.AddHttpClient<IFastApiClient, FastApiClient>((serviceProvider, 
     var configuration = serviceProvider.GetRequiredService<IConfiguration>();
     var aiServiceSection = configuration.GetSection("AIService");
     var baseUrl = aiServiceSection["BaseUrl"] ?? "http://localhost:8000";
-    var timeoutSeconds = aiServiceSection.GetValue<int?>("Timeout") ?? 10;
 
     client.BaseAddress = new Uri(baseUrl);
-    client.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
+    // Set timeout vô cực để tránh HttpClient tự động cancel request giữa chừng khi FastAPI mất nhiều thời gian phản hồi. Polly sẽ bắt lỗi timeout và trả về TimeoutRejectedException, cho phép chúng ta retry hoặc fallback một cách nhất quán.
+    client.Timeout = Timeout.InfiniteTimeSpan;
 });
 
 builder.Services.AddScoped<EmailService>();
@@ -271,6 +271,30 @@ builder.Services.AddRateLimiter(options =>
 
     // Upload / Email
     options.AddFixedWindowLimiter("sensitive", opt =>
+    {
+        opt.PermitLimit = 10;
+        opt.Window = TimeSpan.FromMinutes(1);
+        opt.QueueLimit = 0;
+    });
+
+    // AI Public endpoints (FAQ, public chat) - cho phép nhiều request vì là public
+    options.AddFixedWindowLimiter("ai-public", opt =>
+    {
+        opt.PermitLimit = 100;
+        opt.Window = TimeSpan.FromMinutes(1);
+        opt.QueueLimit = 0;
+    });
+
+    // AI User endpoints (customer personalized suggestions) - vừa phải
+    options.AddFixedWindowLimiter("ai-user", opt =>
+    {
+        opt.PermitLimit = 20;
+        opt.Window = TimeSpan.FromMinutes(1);
+        opt.QueueLimit = 0;
+    });
+
+    // AI Management endpoints (analytics, pricing, promotions) - chặt hơn vì tốn tài nguyên
+    options.AddFixedWindowLimiter("ai-management", opt =>
     {
         opt.PermitLimit = 10;
         opt.Window = TimeSpan.FromMinutes(1);

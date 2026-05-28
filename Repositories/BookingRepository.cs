@@ -450,6 +450,9 @@ namespace SmashCourt_BE.Repositories
                 .Include(b => b.Customer)
                 .Include(b => b.BookingCourts)
                     .ThenInclude(bc => bc.Court)
+                        .ThenInclude(c => c.CourtType) // ✅ ADDED: Include CourtType
+                .Include(b => b.BookingCourts)
+                    .ThenInclude(bc => bc.BookingPriceItems) // ✅ ADDED: Include BookingPriceItems
                 .Include(b => b.Invoice)
                 .Where(b => b.CustomerId == customerId);
 

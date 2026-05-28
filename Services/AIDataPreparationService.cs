@@ -57,15 +57,17 @@ public class AIDataPreparationService
         // Transform to patterns (remove internal IDs)
         var patterns = bookings
             .Where(b => b.Status == BookingStatus.COMPLETED) // Only completed bookings for pattern analysis
-            .SelectMany(b => b.BookingCourts.Select(bc => new BookingPattern
-            {
-                BranchName = b.Branch.Name,
-                CourtType = bc.Court.CourtType.Name,
-                DayOfWeek = b.BookingDate.DayOfWeek.ToString(),
-                TimeSlot = $"{bc.StartTime:HH:mm}-{bc.EndTime:HH:mm}",
-                Price = bc.BookingPriceItems.Sum(pi => pi.UnitPrice), // Fixed: Use UnitPrice instead of Price
-                BookingDate = b.BookingDate.ToString("yyyy-MM-dd")
-            }))
+            .SelectMany(b => b.BookingCourts
+                .Where(bc => bc.Court != null && bc.Court.CourtType != null && b.Branch != null) // ✅ Null check
+                .Select(bc => new BookingPattern
+                {
+                    BranchName = b.Branch.Name,
+                    CourtType = bc.Court.CourtType.Name,
+                    DayOfWeek = b.BookingDate.DayOfWeek.ToString(),
+                    TimeSlot = $"{bc.StartTime:HH:mm}-{bc.EndTime:HH:mm}",
+                    Price = bc.BookingPriceItems?.Sum(pi => pi.UnitPrice) ?? 0, // ✅ Null check for BookingPriceItems
+                    BookingDate = b.BookingDate.ToString("yyyy-MM-dd")
+                }))
             .ToList();
 
         _logger.LogInformation("Prepared {Count} booking patterns for user {UserId}", patterns.Count, userId);
@@ -311,6 +313,32 @@ public class AIDataPreparationService
             TotalBookings = ownerDashboard.Summary.TotalBookings,
             BranchPerformance = branchPerformance
         };
+    }
+
+    /// <summary>
+    /// Build public chat context for anonymous users
+    /// Includes: system info, booking process, cancellation policy, payment info, FAQ
+    /// Does NOT include user-specific data, booking history, or loyalty info
+    /// </summary>
+    /// <returns>Public chat context string</returns>
+    public Task<string> BuildPublicChatContextAsync()
+    {
+        _logger.LogInformation("Building public chat context for anonymous user");
+
+        var contextParts = new List<string>
+        {
+            "System: SmashCourt - Badminton Court Booking System",
+            "Services: Court booking, online payment, loyalty program",
+            "Booking Process: Browse courts → Select time slot → Confirm booking → Pay online",
+            "Cancellation Policy: Free cancellation up to 24 hours before booking time",
+            "Payment Methods: VNPay, Credit/Debit Card",
+            "Support: Contact customer service for assistance"
+        };
+
+        var context = string.Join(". ", contextParts);
+        _logger.LogInformation("Built public chat context");
+
+        return Task.FromResult(context);
     }
 
     /// <summary>
