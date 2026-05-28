@@ -3,6 +3,7 @@ using SmashCourt_BE.Integrations.AI;
 using SmashCourt_BE.Integrations.AI.DTOs;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
+using SmashCourt_BE.Services.AI.DTOs;
 using SmashCourt_BE.Services.IService;
 using SmashCourt_BE.Services.Internal;
 
@@ -136,10 +137,48 @@ public class AIService : IAIService
         Guid userId,
         string userRole)
     {
-        var branchId = await ResolveBranchIdAsync(request.BranchId, userId, userRole);
-        var fallback = _formatter.GetFallbackPricingSuggestions();
-        fallback.Message = "AI pricing suggestions are not available yet because the Python AI service has no pricing endpoint.";
-        return fallback;
+        try
+        {
+            var branchId = await ResolveBranchIdAsync(request.BranchId, userId, userRole);
+            var occupancy = await _dataPreparationService.PrepareOccupancyDataAsync(branchId, request.FromDate, request.ToDate);
+            var revenue = await _dataPreparationService.PrepareRevenueDataAsync(branchId, request.FromDate, request.ToDate);
+            var branch = branchId.HasValue ? await _branchRepository.GetByIdAsync(branchId.Value) : null;
+
+            var aiRequest = new FastApiPricingSuggestionRequest
+            {
+                BranchId = branchId?.ToString() ?? "all",
+                BranchName = branch?.Name ?? "All Branches",
+                Period = $"{request.FromDate:yyyy-MM-dd}..{request.ToDate:yyyy-MM-dd}",
+                AverageOccupancyRate = NormalizeRate(occupancy.AverageOccupancyRate),
+                OccupancyPatterns = occupancy.Patterns.Select(o => new FastApiOccupancyPatternItem
+                {
+                    Period = o.Period,
+                    OccupancyRate = NormalizeRate(o.OccupancyRate),
+                    TotalSlots = o.TotalSlots,
+                    BookedSlots = o.BookedSlots
+                }).ToList(),
+                RevenuePatterns = revenue.Patterns.Select(r => new FastApiRevenuePatternItem
+                {
+                    Period = r.Period,
+                    Revenue = r.Revenue,
+                    BookingCount = r.BookingCount,
+                    AverageRevenuePerBooking = r.AverageRevenuePerBooking
+                }).ToList()
+            };
+
+            var aiResponse = await _fastApiClient.PostAsync<FastApiPricingSuggestionRequest, AiPricingSuggestionResponseDto>(
+                "/api/v1/ai/suggest/pricing",
+                aiRequest);
+
+            return aiResponse == null
+                ? _formatter.GetFallbackPricingSuggestions()
+                : _formatter.FormatPricingSuggestions(aiResponse);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to generate pricing suggestions for user {UserId}", userId);
+            return _formatter.GetFallbackPricingSuggestions();
+        }
     }
 
     public async Task<PromotionSuggestionResponseDto> GeneratePromotionSuggestionsAsync(
@@ -147,8 +186,47 @@ public class AIService : IAIService
         Guid userId,
         string userRole)
     {
-        var branchId = await ResolveBranchIdAsync(request.BranchId, userId, userRole);
-        return _formatter.GetFallbackPromotionSuggestions(branchId ?? Guid.Empty);
+        try
+        {
+            var branchId = await ResolveBranchIdAsync(request.BranchId, userId, userRole);
+            var occupancy = await _dataPreparationService.PrepareOccupancyDataAsync(branchId, request.FromDate, request.ToDate);
+            var revenue = await _dataPreparationService.PrepareRevenueDataAsync(branchId, request.FromDate, request.ToDate);
+            var branch = branchId.HasValue ? await _branchRepository.GetByIdAsync(branchId.Value) : null;
+
+            var aiRequest = new FastApiPromotionSuggestionRequest
+            {
+                BranchId = branchId?.ToString() ?? "all",
+                BranchName = branch?.Name ?? "All Branches",
+                Period = $"{request.FromDate:yyyy-MM-dd}..{request.ToDate:yyyy-MM-dd}",
+                OccupancyPatterns = occupancy.Patterns.Select(o => new FastApiOccupancyPatternItem
+                {
+                    Period = o.Period,
+                    OccupancyRate = NormalizeRate(o.OccupancyRate),
+                    TotalSlots = o.TotalSlots,
+                    BookedSlots = o.BookedSlots
+                }).ToList(),
+                RevenuePatterns = revenue.Patterns.Select(r => new FastApiRevenuePatternItem
+                {
+                    Period = r.Period,
+                    Revenue = r.Revenue,
+                    BookingCount = r.BookingCount,
+                    AverageRevenuePerBooking = r.AverageRevenuePerBooking
+                }).ToList()
+            };
+
+            var aiResponse = await _fastApiClient.PostAsync<FastApiPromotionSuggestionRequest, AiPromotionSuggestionResponseDto>(
+                "/api/v1/ai/suggest/promotions",
+                aiRequest);
+
+            return aiResponse == null
+                ? _formatter.GetFallbackPromotionSuggestions(branchId ?? Guid.Empty)
+                : _formatter.FormatPromotionSuggestions(aiResponse);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to generate promotion suggestions for user {UserId}", userId);
+            return _formatter.GetFallbackPromotionSuggestions(request.BranchId ?? Guid.Empty);
+        }
     }
 
     public async Task<AnalyticsSummaryResponseDto> GenerateAnalyticsSummaryAsync(
@@ -204,11 +282,42 @@ public class AIService : IAIService
         }
     }
 
-    public Task<StrategicSuggestionResponseDto> GenerateStrategicSuggestionsAsync(
+    public async Task<StrategicSuggestionResponseDto> GenerateStrategicSuggestionsAsync(
         StrategicSuggestionRequestDto request,
         Guid userId)
     {
-        return Task.FromResult(_formatter.GetFallbackStrategicSuggestions());
+        try
+        {
+            var crossBranch = await _dataPreparationService.PrepareCrossBranchDataAsync(request.FromDate, request.ToDate);
+
+            var aiRequest = new FastApiStrategicSuggestionRequest
+            {
+                Period = $"{request.FromDate:yyyy-MM-dd}..{request.ToDate:yyyy-MM-dd}",
+                TotalBranches = crossBranch.TotalBranches,
+                TotalRevenue = crossBranch.TotalRevenue,
+                TotalBookings = crossBranch.TotalBookings,
+                BranchPerformances = crossBranch.BranchPerformance.Select(b => new FastApiStrategicBranchPerformanceItem
+                {
+                    BranchName = b.BranchName,
+                    Revenue = b.Revenue,
+                    BookingCount = b.BookingCount,
+                    AverageRevenuePerBooking = b.AverageRevenuePerBooking
+                }).ToList()
+            };
+
+            var aiResponse = await _fastApiClient.PostAsync<FastApiStrategicSuggestionRequest, AiStrategicSuggestionResponseDto>(
+                "/api/v1/ai/analytics/strategic",
+                aiRequest);
+
+            return aiResponse == null
+                ? _formatter.GetFallbackStrategicSuggestions()
+                : _formatter.FormatStrategicSuggestions(aiResponse);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to generate strategic suggestions for user {UserId}", userId);
+            return _formatter.GetFallbackStrategicSuggestions();
+        }
     }
 
     private async Task<Guid?> ResolveBranchIdAsync(Guid? requestedBranchId, Guid userId, string userRole)
@@ -229,83 +338,5 @@ public class AIService : IAIService
     private static decimal NormalizeRate(decimal rate)
     {
         return rate > 1 ? rate / 100 : rate;
-    }
-
-    private sealed class FastApiFaqListResponse
-    {
-        public List<FastApiFaqItem> Items { get; set; } = [];
-
-        public int Total { get; set; }
-    }
-
-    private sealed class FastApiFaqItem
-    {
-        public string Id { get; set; } = string.Empty;
-
-        public string Question { get; set; } = string.Empty;
-
-        public string Category { get; set; } = string.Empty;
-
-        public string? Answer { get; set; }
-    }
-
-    private sealed class FastApiBookingSuggestionRequest
-    {
-        public string UserId { get; set; } = string.Empty;
-
-        public string? UserName { get; set; }
-
-        public List<FastApiBookingHistoryItem> BookingHistory { get; set; } = [];
-
-        public string? CurrentBranchId { get; set; }
-
-        public string? CurrentBranchName { get; set; }
-    }
-
-    private sealed class FastApiBookingHistoryItem
-    {
-        public string BookingDate { get; set; } = string.Empty;
-
-        public string BranchName { get; set; } = string.Empty;
-
-        public string CourtType { get; set; } = string.Empty;
-
-        public List<string> TimeSlots { get; set; } = [];
-
-        public string Status { get; set; } = string.Empty;
-
-        public decimal TotalAmount { get; set; }
-    }
-
-    private sealed class FastApiAnalyticsRequest
-    {
-        public string BranchId { get; set; } = string.Empty;
-
-        public string BranchName { get; set; } = string.Empty;
-
-        public string Period { get; set; } = string.Empty;
-
-        public FastApiAnalyticsMetrics Metrics { get; set; } = new();
-    }
-
-    private sealed class FastApiAnalyticsMetrics
-    {
-        public decimal TotalRevenue { get; set; }
-
-        public int TotalBookings { get; set; }
-
-        public int CancelledBookings { get; set; }
-
-        public decimal CancellationRate { get; set; }
-
-        public decimal AvgOccupancyRate { get; set; }
-
-        public List<string> PeakHours { get; set; } = [];
-
-        public List<string> LowHours { get; set; } = [];
-
-        public List<object> RevenueByCourtType { get; set; } = [];
-
-        public List<object> TopPromotions { get; set; } = [];
     }
 }
