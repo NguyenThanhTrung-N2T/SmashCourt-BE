@@ -220,8 +220,7 @@ namespace SmashCourt_BE.Services
         }
 
         // đặt sân online, có thể có hoặc không có customerId (khách vãng lai), nhưng nếu có thì sẽ gắn booking với tài khoản đó
-        public async Task<OnlineBookingResponse> CreateOnlineAsync(
-            CreateOnlineBookingDto dto, Guid? customerId)
+        public async Task<OnlineBookingResponse> CreateOnlineAsync(CreateOnlineBookingDto dto, Guid? customerId)
         {
             // 1. Validate khách vãng lai
             if (customerId == null &&
@@ -343,7 +342,6 @@ namespace SmashCourt_BE.Services
 
             // 7. Tạo booking PENDING — 1 booking cho tất cả courts
             // Dùng UTC để Npgsql lưu timestamptz đúng (Kind=Utc). Frontend tự convert sang VN time.
-            var expiresAt = DateTime.UtcNow.AddMinutes(10);
             var bookingCode = await _codeGeneratorService.GenerateBookingCodeAsync();
             var booking = new Booking
             {
@@ -357,7 +355,6 @@ namespace SmashCourt_BE.Services
                 Status = BookingStatus.PENDING,
                 Source = BookingSource.ONLINE,
                 Note = dto.Note?.Trim(),
-                ExpiresAt = expiresAt,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
@@ -389,7 +386,7 @@ namespace SmashCourt_BE.Services
                     Date = DateOnly.FromDateTime(dto.BookingDate),
                     StartTime = TimeOnly.FromTimeSpan(slot.StartTime),
                     EndTime = TimeOnly.FromTimeSpan(slot.EndTime),
-                    ExpiresAt = expiresAt,
+                    ExpiresAt = invoice.ExpiresAt!.Value,  // Invoice always has ExpiresAt for PREPAID
                     CreatedAt = DateTime.UtcNow
                 });
             }
@@ -444,7 +441,7 @@ namespace SmashCourt_BE.Services
             {
                 BookingId = booking.Id,
                 PaymentUrl = paymentInfo.Url,
-                ExpiresAt = expiresAt,
+                ExpiresAt = invoice.ExpiresAt!.Value,
                 FinalTotal = finalTotal
             };
         }
@@ -2193,7 +2190,7 @@ namespace SmashCourt_BE.Services
             Status = b.Status.ToString(),
             Source = b.Source.ToString(),
             Note = b.Note,
-            ExpiresAt = b.ExpiresAt,
+            ExpiresAt = b.Invoice?.ExpiresAt,
             CreatedAt = b.CreatedAt,
             UpdatedAt = b.UpdatedAt,
             CourtFee = b.Invoice?.CourtFee ?? 0,
@@ -2304,12 +2301,18 @@ namespace SmashCourt_BE.Services
                     CreatedAt = DateTime.UtcNow
                 });
 
-                // Increment promotion usage count
-                promotion.UsedCount++;
-                await _promotionRepo.UpdateAsync(promotion);
+                // Only increment immediately if the customer is paying at the counter later.
+                // Online prepaid orders will increment inside HandleVnPayIpnAsync when money is secured.
+                if (paymentTiming == PaymentTiming.POSTPAID)
+                {
+                    promotion.UsedCount++;
+                    await _promotionRepo.UpdateAsync(promotion);
+                }
             }
 
             var invoiceCode = await _codeGeneratorService.GenerateInvoiceCodeAsync();
+            var expiresAt = DateTime.UtcNow.AddMinutes(10);
+
             var invoice = await _invoiceRepo.CreateAsync(new Invoice
             {
                 InvoiceCode = invoiceCode,
@@ -2321,6 +2324,7 @@ namespace SmashCourt_BE.Services
                 FinalTotal = finalTotal,
                 PaymentStatus = InvoicePaymentStatus.UNPAID,
                 PaymentTiming = paymentTiming,
+                ExpiresAt = expiresAt,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             });

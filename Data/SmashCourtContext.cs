@@ -450,7 +450,6 @@ namespace SmashCourt_BE.Data
                 e.Property(x => x.Status).HasColumnName("status");
                 e.Property(x => x.Source).HasColumnName("source");
                 e.Property(x => x.Note).HasColumnName("note");
-                e.Property(x => x.ExpiresAt).HasColumnName("expires_at");
                 e.Property(x => x.CheckedInAt).HasColumnName("checked_in_at");
                 e.Property(x => x.CreatedBy).HasColumnName("created_by");
                 e.Property(x => x.CancelledBy).HasColumnName("cancelled_by");
@@ -593,6 +592,7 @@ namespace SmashCourt_BE.Data
                 e.Property(x => x.FinalTotal).HasColumnName("final_total").HasPrecision(12, 2);
                 e.Property(x => x.PaymentStatus).HasColumnName("payment_status");
                 e.Property(x => x.PaymentTiming).HasColumnName("payment_timing").HasConversion<int>();
+                e.Property(x => x.ExpiresAt).HasColumnName("expires_at");
                 e.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()");
                 e.Property(x => x.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("now()");
             });

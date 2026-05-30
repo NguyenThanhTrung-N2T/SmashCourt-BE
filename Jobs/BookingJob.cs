@@ -86,18 +86,21 @@ namespace SmashCourt_BE.Jobs
             try
             {
                 var now = DateTimeHelper.GetUtcNow();
-
-                var expiredBookings = await _db.Bookings
-                    .Include(b => b.BookingCourts)
-                        .ThenInclude(bc => bc.Court)
-                    .Where(b => b.Status == BookingStatus.PENDING && b.ExpiresAt < now)
+                // 1. Query invoices that have expired and are still unpaid
+                var expiredInvoices = await _db.Invoices
+                    .Include(i => i.Booking)
+                        .ThenInclude(b => b.BookingCourts)
+                            .ThenInclude(bc => bc.Court)
+                    .Where(i => i.PaymentStatus == InvoicePaymentStatus.UNPAID && i.ExpiresAt < now)
                     .ToListAsync();
 
-                if (expiredBookings.Count == 0)
+                if (expiredInvoices.Count == 0)
                 {
                     _logger.LogInformation("[Job-01] No expired PENDING bookings. Elapsed: {Ms}ms", sw.ElapsedMilliseconds);
                     return;
                 }
+                // Pull the booking entities out for slot processing
+                var expiredBookings = expiredInvoices.Select(i => i.Booking).ToList();
 
                 var cancelledCourtIds = expiredBookings
                     .SelectMany(b => b.BookingCourts)
@@ -111,15 +114,24 @@ namespace SmashCourt_BE.Jobs
 
                 var busyCourtIds = await GetBusyCourtIdsAsync(cancelledCourtIds, cancelledBookingIds);
 
-                foreach (var booking in expiredBookings)
+                // 2. Loop through the invoices to update both the invoice and related booking
+                foreach (var invoice in expiredInvoices)
                 {
-                    booking.Status = BookingStatus.CANCELLED;
-                    booking.ExpiresAt = null;
-                    booking.CancelledAt = now;
-                    booking.CancelSource = CancelSourceEnum.SYSTEM;
-                    booking.UpdatedAt = now;
+                    // Update Invoice Status
+                    invoice.PaymentStatus = InvoicePaymentStatus.EXPIRED;
+                    invoice.UpdatedAt = now;
 
-                    ReleaseCourtSlots(booking.BookingCourts, busyCourtIds, now, deactivate: true);
+                    // Update Booking Status
+                    var booking = invoice.Booking;
+                    if (booking != null)
+                    {
+                        booking.Status = BookingStatus.CANCELLED;
+                        booking.CancelledAt = now;
+                        booking.CancelSource = CancelSourceEnum.SYSTEM;
+                        booking.UpdatedAt = now;
+
+                        ReleaseCourtSlots(booking.BookingCourts, busyCourtIds, now, deactivate: true);
+                    }
                 }
 
                 // Purge any stale slot locks in the same transaction

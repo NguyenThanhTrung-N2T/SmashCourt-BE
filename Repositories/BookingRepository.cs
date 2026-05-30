@@ -829,7 +829,6 @@ namespace SmashCourt_BE.Repositories
                 .Where(b => b.Id == bookingId && b.Status == expectedStatus)
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(b => b.Status, BookingStatus.PAID_ONLINE)
-                    .SetProperty(b => b.ExpiresAt, (DateTime?)null)
                     .SetProperty(b => b.CancelTokenHash, cancelTokenHash)
                     .SetProperty(b => b.CancelTokenExpiresAt, cancelTokenExpiry)
                     .SetProperty(b => b.UpdatedAt, now));

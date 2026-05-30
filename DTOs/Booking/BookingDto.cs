@@ -17,7 +17,6 @@ namespace SmashCourt_BE.DTOs.Booking
         public string Status { get; set; } = null!;
         public string Source { get; set; } = null!;
         public string? Note { get; set; }
-        public DateTime? ExpiresAt { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
 
@@ -28,6 +27,7 @@ namespace SmashCourt_BE.DTOs.Booking
         public decimal PromotionDiscountAmount { get; set; }
         public decimal FinalTotal { get; set; }
         public string PaymentStatus { get; set; } = null!;
+        public DateTime? ExpiresAt { get; set; }
 
         // Courts
         public List<BookingCourtDto> Courts { get; set; } = [];

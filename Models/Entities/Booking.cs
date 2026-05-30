@@ -15,7 +15,6 @@ namespace SmashCourt_BE.Models.Entities
         public BookingStatus Status { get; set; } = BookingStatus.PENDING;
         public BookingSource Source { get; set; }
         public string? Note { get; set; }
-        public DateTime? ExpiresAt { get; set; }
         public DateTime? CheckedInAt { get; set; }  // Thời điểm khách check-in (bắt đầu chơi)
         public Guid? CreatedBy { get; set; }
         public Guid? CancelledBy { get; set; }

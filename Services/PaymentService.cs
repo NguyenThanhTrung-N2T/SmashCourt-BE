@@ -70,16 +70,14 @@ namespace SmashCourt_BE.Services
                 throw new AppException(400,
                     "Chỉ có thể thanh toán lại cho đơn đang chờ thanh toán",
                     ErrorCodes.BadRequest);
-
-            // 4. Validate expiry — booking chưa hết hạn
-            if (!booking.ExpiresAt.HasValue || booking.ExpiresAt.Value <= DateTime.UtcNow)
-                throw new AppException(400,
-                    "Đơn đặt sân đã hết hạn thanh toán, vui lòng đặt lại",
-                    ErrorCodes.BadRequest);
-
             // 5. Lấy invoice (đã được tạo lúc đặt sân lần đầu)
             var invoice = booking.Invoice
                 ?? throw new AppException(500, "Không tìm thấy hóa đơn", ErrorCodes.InternalError);
+            // 4. Validate expiry — booking chưa hết hạn
+            if (!invoice.ExpiresAt.HasValue || invoice.ExpiresAt.Value <= DateTime.UtcNow)
+                throw new AppException(400,
+                    "Đơn đặt sân đã hết hạn thanh toán, vui lòng đặt lại",
+                    ErrorCodes.BadRequest);
 
             var now = DateTime.UtcNow;
             var newExpiresAt = now.AddMinutes(10);
@@ -124,7 +122,9 @@ namespace SmashCourt_BE.Services
             });
 
             // 7C. Gia hạn ExpiresAt của booking
-            booking.ExpiresAt = newExpiresAt;
+            invoice.ExpiresAt = newExpiresAt;
+            invoice.UpdatedAt = now;
+
             booking.UpdatedAt = now;
             await _bookingRepo.UpdateAsync(booking);
 
@@ -304,12 +304,24 @@ namespace SmashCourt_BE.Services
             {
                 // 5B. Xử lý thanh toán thất bại
                 booking.Status = BookingStatus.CANCELLED;
-                booking.ExpiresAt = null;
                 booking.CancelledAt = now;
                 booking.CancelSource = CancelSourceEnum.SYSTEM;
                 booking.UpdatedAt = now;
                 await _bookingRepo.UpdateAsync(booking);
 
+                // Cập nhật trạng thái Invoice tương ứng khi payment thất bại
+                var invoice = payment.Invoice;
+                if (invoice != null)
+                {
+                    // Nếu bạn đã thêm trạng thái EXPIRED/CANCELLED vào InvoicePaymentStatus:
+                    invoice.PaymentStatus = InvoicePaymentStatus.EXPIRED;
+
+                    // Nếu KHÔNG thêm enum mới, hãy nullify Expiry để ngăn loop trong cron job:
+                    // invoice.ExpiresAt = null; 
+
+                    invoice.UpdatedAt = now;
+                    await _invoiceRepo.UpdateAsync(invoice);
+                }
                 // Deactivate booking courts - nhất quán với CancelByStaffAsync
                 await _bookingRepo.UpdateCourtActiveStatusAsync(booking.Id, false);
 

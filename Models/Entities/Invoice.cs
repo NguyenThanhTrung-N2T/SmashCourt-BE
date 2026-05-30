@@ -14,6 +14,7 @@ namespace SmashCourt_BE.Models.Entities
         public decimal FinalTotal { get; set; }
         public InvoicePaymentStatus PaymentStatus { get; set; } = InvoicePaymentStatus.UNPAID;
         public PaymentTiming PaymentTiming { get; set; } = PaymentTiming.POSTPAID;  // Default: trả sau
+        public DateTime? ExpiresAt { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
 
