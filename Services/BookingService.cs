@@ -93,7 +93,7 @@ namespace SmashCourt_BE.Services
             _logger = logger;
             _configuration = configuration;
         }
-        
+
         // Lấy danh sách booking theo quyền + chi nhánh + filter 
         public async Task<PagedResult<BookingDto>> GetAllAsync(
             BookingListQuery query, Guid currentUserId, string currentUserRole)
@@ -832,6 +832,14 @@ namespace SmashCourt_BE.Services
             // TODO: Broadcast SignalR
         }
 
+        // Thu tiền cho booking đang chờ (PENDING_PAYMENT) và hoàn tất đơn
+        public async Task CollectPaymentAsync(Guid id, Guid currentUserId, string currentUserRole)
+        {
+            // Reuse Checkout logic which already handles PENDING_PAYMENT and IN_PROGRESS states,
+            // creates necessary Payment records and updates invoice/booking status.
+            await CheckoutAsync(id, currentUserId, currentUserRole);
+        }
+
         /// <summary>
         /// Hủy booking bởi khách hàng (authenticated cancel from booking history)
         /// Flow: Validate ownership → Atomic status update → Update courts → Create refund → Send email
@@ -951,7 +959,7 @@ namespace SmashCourt_BE.Services
                 // 7.6. Xử lý refund nếu đã thanh toán
                 if (invoice?.PaymentStatus != InvoicePaymentStatus.UNPAID)
                 {
-                        // Tính % refund dựa trên cancel policy
+                    // Tính % refund dựa trên cancel policy
                     var refundPercent = await CalculateRefundPercentAsync(
                         firstCourt.StartTime, booking.BookingDate);
 
@@ -1232,10 +1240,10 @@ namespace SmashCourt_BE.Services
 
                     if (payment != null && refundPercent > 0)
                     {
-                    // Tính số tiền hoàn = FinalTotal * refundPercent / 100
+                        // Tính số tiền hoàn = FinalTotal * refundPercent / 100
                         refundAmount = Math.Round(invoice!.FinalTotal * refundPercent / 100, 0);
 
-                    // Tạo refund record với status PENDING (chờ staff confirm)
+                        // Tạo refund record với status PENDING (chờ staff confirm)
                         await _refundRepo.CreateAsync(new Refund
                         {
                             PaymentId = payment.Id,
@@ -1245,7 +1253,7 @@ namespace SmashCourt_BE.Services
                             CreatedAt = now
                         });
 
-                    // Đổi status thành CANCELLED_PENDING_REFUND
+                        // Đổi status thành CANCELLED_PENDING_REFUND
                         booking.Status = BookingStatus.CANCELLED_PENDING_REFUND;
                     }
                 }
@@ -1305,14 +1313,13 @@ namespace SmashCourt_BE.Services
             var endLocal = date.ToDateTime(bookingCourt.EndTime);
 
             var startDateTime = TimeZoneInfo.ConvertTimeToUtc(startLocal, DateTimeHelper.VNTimezone);
-            var endDateTime = TimeZoneInfo.ConvertTimeToUtc(endLocal, DateTimeHelper.VNTimezone);
 
             var now = DateTimeHelper.GetUtcNow();
 
             if (now < startDateTime.AddMinutes(-15))
                 throw new AppException(400, "Quá sớm để check-in", ErrorCodes.BadRequest);
 
-            if (now > endDateTime)
+            if (now > startDateTime.AddMinutes(15))
                 throw new AppException(400, "Đã quá thời gian check-in", ErrorCodes.BadRequest);
 
             if (booking.Status != BookingStatus.CONFIRMED &&
@@ -1787,7 +1794,7 @@ namespace SmashCourt_BE.Services
         private async Task<decimal> CalculateRefundPercentAsync(
             TimeOnly startTime, DateOnly bookingDate)
         {
-        // Lấy thời gian hiện tại ở VN để tính số giờ còn lại trước khi bắt đầu booking
+            // Lấy thời gian hiện tại ở VN để tính số giờ còn lại trước khi bắt đầu booking
             var bookingDateTime = bookingDate.ToDateTime(startTime);
             var vnNow = DateTimeHelper.GetUtcNow();
 

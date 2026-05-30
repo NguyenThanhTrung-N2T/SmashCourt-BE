@@ -190,7 +190,7 @@ namespace SmashCourt_BE.Controllers
                 : null;
 
             var result = await _service.CreateOnlineAsync(dto, customerId);
-            return StatusCode(201, ApiResponse<OnlineBookingResponse>.Ok(result,"Đặt sân online thành công"));
+            return StatusCode(201, ApiResponse<OnlineBookingResponse>.Ok(result, "Đặt sân online thành công"));
         }
 
 
@@ -242,7 +242,7 @@ namespace SmashCourt_BE.Controllers
         public async Task<IActionResult> GetCancelInfo(string token)
         {
             var result = await _service.GetCancelInfoAsync(token);
-            return Ok(ApiResponse<CancelTokenInfoDto>.Ok(result,"Lấy thông tin đặt sân thành công"));
+            return Ok(ApiResponse<CancelTokenInfoDto>.Ok(result, "Lấy thông tin đặt sân thành công"));
         }
 
 
@@ -282,6 +282,19 @@ namespace SmashCourt_BE.Controllers
             var role = User.FindFirstValue(ClaimTypes.Role)!;
             await _service.CheckoutAsync(id, userId, role);
             return Ok(ApiResponse.Ok(message: "Checkout thành công"));
+        }
+
+        /// <summary>
+        /// Thu tiền cho booking đang chờ (PENDING_PAYMENT) và đánh dấu hoàn tất (staff)
+        /// </summary>
+        [HttpPost("{id:guid}/complete-payment")]
+        [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
+        public async Task<IActionResult> CollectPayment(Guid id)
+        {
+            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var role = User.FindFirstValue(ClaimTypes.Role)!;
+            await _service.CollectPaymentAsync(id, userId, role);
+            return Ok(ApiResponse.Ok(message: "Thu tiền thành công, đơn đã hoàn tất"));
         }
 
 

@@ -44,6 +44,9 @@ namespace SmashCourt_BE.Services.IService
         // Check-out booking bởi nhân viên (staff)
         Task CheckoutAsync(Guid id, Guid currentUserId, string currentUserRole);
 
+        // Thu tiền cho booking đang chờ (PENDING_PAYMENT) và hoàn tất đơn (staff)
+        Task CollectPaymentAsync(Guid id, Guid currentUserId, string currentUserRole);
+
         // Thêm dịch vụ vào booking bởi nhân viên (staff)
         Task<BookingDto> AddServiceAsync(Guid id, AddBookingServiceDto dto, Guid currentUserId, string currentUserRole);
 

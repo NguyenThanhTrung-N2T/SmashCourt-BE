@@ -10,9 +10,8 @@ using System.Security.Claims;
 
 namespace SmashCourt_BE.Controllers
 {
-    // Controllers/CourtController.cs
     [ApiController]
-    [Route("api/branches/{branchId:guid}/courts")]
+    [Route("api/courts")]
     public class CourtController : ControllerBase
     {
         private readonly ICourtService _service;
@@ -23,19 +22,21 @@ namespace SmashCourt_BE.Controllers
         }
 
         /// <summary>
-        /// Lấy danh sách sân tại chi nhánh
+        /// Lấy danh sách sân.
+        /// Public: cần branchId.
+        /// Internal: auto-resolve branchId nếu không truyền.
         /// </summary>
         [HttpGet]
         [ProducesResponseType(StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<IActionResult> GetAll(Guid branchId, [FromQuery] Guid? courtTypeId = null)
+        public async Task<IActionResult> GetAll(
+            [FromQuery] Guid? branchId, 
+            [FromQuery] Guid? typeId)
         {
-            var isStaffOrAbove = User.Identity?.IsAuthenticated == true &&
-                (User.IsInRole(UserRole.OWNER.ToString()) ||
-                 User.IsInRole(UserRole.BRANCH_MANAGER.ToString()) ||
-                 User.IsInRole(UserRole.STAFF.ToString()));
+            var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            var userId = userIdStr != null ? Guid.Parse(userIdStr) : (Guid?)null;
+            var role = User.FindFirstValue(ClaimTypes.Role);
 
-            var result = await _service.GetAllByBranchAsync(branchId, isStaffOrAbove, courtTypeId);
+            var result = await _service.GetAllAsync(branchId, typeId, userId, role);
             return Ok(ApiResponse<List<CourtDto>>.Ok(result));
         }
 
@@ -45,122 +46,159 @@ namespace SmashCourt_BE.Controllers
         [HttpGet("{id:guid}")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<IActionResult> GetById(Guid branchId, Guid id)
+        public async Task<IActionResult> GetById(Guid id, [FromQuery] Guid? branchId)
         {
-            var isStaffOrAbove = User.Identity?.IsAuthenticated == true &&
-                (User.IsInRole(UserRole.OWNER.ToString()) ||
-                 User.IsInRole(UserRole.BRANCH_MANAGER.ToString()) ||
-                 User.IsInRole(UserRole.STAFF.ToString()));
+            var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            var userId = userIdStr != null ? Guid.Parse(userIdStr) : (Guid?)null;
+            var role = User.FindFirstValue(ClaimTypes.Role);
 
-            var result = await _service.GetByIdAsync(id, branchId, isStaffOrAbove);
+            var result = await _service.GetByIdAsync(id, branchId, userId, role);
             return Ok(ApiResponse<CourtDto>.Ok(result));
         }
 
+        /// <summary>
+        /// Stats-only dashboard — 4 ô thống kê, có thể poll độc lập mọi 30–60 giây. (todo: signalr)
+        /// </summary>
+        [HttpGet("management-dashboard/stats")]
+        [Authorize(Policy = AuthorizationPolicies.OwnerOrManager)]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        public async Task<IActionResult> GetManagementStats(
+            [FromQuery] Guid? branchId,
+            [FromQuery] DateOnly? date)
+        {
+            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var role   = User.FindFirstValue(ClaimTypes.Role)!;
+
+            var result = await _service.GetManagementStatsAsync(branchId, date, userId, role);
+            return Ok(ApiResponse<CourtManagementStatsDto>.Ok(result, "Lấy thống kê sân thành công"));
+        }
 
         /// <summary>
-        /// Thêm sân mới vào chi nhánh — OWNER hoặc MANAGER chi nhánh đó
+        /// Danh sách card sân (phân trang) kèm timeline ngày được chọn.
+        /// </summary>
+        [HttpGet("management-dashboard/courts")]
+        [Authorize(Policy = AuthorizationPolicies.OwnerOrManager)]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        public async Task<IActionResult> GetManagementCourts(
+            [FromQuery] CourtManagementDashboardQuery query)
+        {
+            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var role   = User.FindFirstValue(ClaimTypes.Role)!;
+
+            var result = await _service.GetManagementCourtsAsync(
+                query.BranchId, query.Date, query.Search, query.TypeId,
+                query.Page, query.PageSize, userId, role);
+
+            return Ok(ApiResponse<Common.PagedResult<CourtManagementCardDto>>.Ok(result, "Lấy danh sách card sân thành công"));
+        }
+
+        /// <summary>
+        /// Full-detail timeline — tất cả sân trong ngày kèm thông tin đặt sân. (todo: signalr)
+        /// </summary>
+        [HttpGet("management-timeline")]
+        [Authorize(Policy = AuthorizationPolicies.OwnerOrManager)]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        public async Task<IActionResult> GetManagementTimeline(
+            [FromQuery] Guid? branchId,
+            [FromQuery] DateOnly date,
+            [FromQuery] Guid? typeId)
+        {
+            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var role   = User.FindFirstValue(ClaimTypes.Role)!;
+
+            var result = await _service.GetManagementTimelineAsync(branchId, date, typeId, userId, role);
+            return Ok(ApiResponse<CourtManagementTimelineDto>.Ok(result, "Lấy timeline quản lý sân thành công"));
+        }
+
+        /// <summary>
+        /// Chi tiết sân cho modal quản lý — giá, khách đang chơi, lịch sắp tới.
+        /// </summary>
+        [HttpGet("{id:guid}/management-details")]
+        [Authorize(Policy = AuthorizationPolicies.OwnerOrManager)]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> GetManagementDetail(Guid id, [FromQuery] DateOnly? date)
+        {
+            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var role   = User.FindFirstValue(ClaimTypes.Role)!;
+
+            var result = await _service.GetManagementDetailAsync(id, date, userId, role);
+            return Ok(ApiResponse<CourtManagementDetailDto>.Ok(result, "Lấy chi tiết sân thành công"));
+        }
+
+        /// <summary>
+        /// Thêm sân mới.
         /// </summary>
         [HttpPost]
         [Authorize(Policy = AuthorizationPolicies.OwnerOrManager)]
         [ProducesResponseType(StatusCodes.Status201Created)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(StatusCodes.Status403Forbidden)]
-        [ProducesResponseType(StatusCodes.Status404NotFound)]
-        [ProducesResponseType(StatusCodes.Status409Conflict)]
-        public async Task<IActionResult> Create(Guid branchId, [FromBody] CreateCourtDto dto)
+        public async Task<IActionResult> Create([FromQuery] Guid? branchId, [FromBody] CreateCourtDto dto)
         {
-            var currentUserId = Guid.Parse(
-                User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            var currentUserRole = User.FindFirstValue(ClaimTypes.Role)!;
+            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var role   = User.FindFirstValue(ClaimTypes.Role)!;
 
-            var result = await _service.CreateAsync(
-                branchId, dto, currentUserId, currentUserRole);
-
+            var result = await _service.CreateAsync(branchId, dto, userId, role);
             return StatusCode(201, ApiResponse<CourtDto>.Ok(result, "Tạo sân thành công"));
         }
 
         /// <summary>
-        /// Cập nhật thông tin sân — OWNER hoặc MANAGER chi nhánh đó
+        /// Cập nhật thông tin sân.
         /// </summary>
         [HttpPut("{id:guid}")]
         [Authorize(Policy = AuthorizationPolicies.OwnerOrManager)]
         [ProducesResponseType(StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(StatusCodes.Status403Forbidden)]
-        [ProducesResponseType(StatusCodes.Status404NotFound)]
-        [ProducesResponseType(StatusCodes.Status409Conflict)]
-        public async Task<IActionResult> Update(
-            Guid branchId, Guid id, [FromBody] UpdateCourtDto dto)
+        public async Task<IActionResult> Update(Guid id, [FromQuery] Guid? branchId, [FromBody] UpdateCourtDto dto)
         {
-            var currentUserId = Guid.Parse(
-                User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            var currentUserRole = User.FindFirstValue(ClaimTypes.Role)!;
+            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var role   = User.FindFirstValue(ClaimTypes.Role)!;
 
-            var result = await _service.UpdateAsync(
-                id, branchId, dto, currentUserId, currentUserRole);
-
-            return Ok(ApiResponse<CourtDto>.Ok(result));
+            var result = await _service.UpdateAsync(id, branchId, dto, userId, role);
+            return Ok(ApiResponse<CourtDto>.Ok(result, "Cập nhật sân thành công"));
         }
 
-
         /// <summary>
-        /// Tạm ngưng sân — OWNER hoặc MANAGER chi nhánh đó
+        /// Tạm ngưng sân.
         /// </summary>
         [HttpPost("{id:guid}/suspend")]
         [Authorize(Policy = AuthorizationPolicies.OwnerOrManager)]
         [ProducesResponseType(StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(StatusCodes.Status403Forbidden)]
-        [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<IActionResult> Suspend(Guid branchId, Guid id)
+        public async Task<IActionResult> Suspend(Guid id, [FromQuery] Guid? branchId)
         {
-            var currentUserId = Guid.Parse(
-                User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            var currentUserRole = User.FindFirstValue(ClaimTypes.Role)!;
+            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var role   = User.FindFirstValue(ClaimTypes.Role)!;
 
-            await _service.SuspendAsync(id, branchId, currentUserId, currentUserRole);
+            await _service.SuspendAsync(id, branchId, userId, role);
             return Ok(ApiResponse<object>.Ok(null!, "Tạm ngưng sân thành công"));
         }
 
         /// <summary>
-        /// Mở lại sân — OWNER hoặc MANAGER chi nhánh đó
+        /// Mở lại sân.
         /// </summary>
         [HttpPost("{id:guid}/activate")]
         [Authorize(Policy = AuthorizationPolicies.OwnerOrManager)]
         [ProducesResponseType(StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(StatusCodes.Status403Forbidden)]
-        [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<IActionResult> Activate(Guid branchId, Guid id)
+        public async Task<IActionResult> Activate(Guid id, [FromQuery] Guid? branchId)
         {
-            var currentUserId = Guid.Parse(
-                User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            var currentUserRole = User.FindFirstValue(ClaimTypes.Role)!;
+            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var role   = User.FindFirstValue(ClaimTypes.Role)!;
 
-            await _service.ActivateAsync(id, branchId, currentUserId, currentUserRole);
+            await _service.ActivateAsync(id, branchId, userId, role);
             return Ok(ApiResponse<object>.Ok(null!, "Mở lại sân thành công"));
         }
 
         /// <summary>
-        /// Xóa mềm sân — OWNER hoặc MANAGER chi nhánh đó
+        /// Xóa mềm sân.
         /// </summary>
         [HttpDelete("{id:guid}")]
         [Authorize(Policy = AuthorizationPolicies.OwnerOrManager)]
         [ProducesResponseType(StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(StatusCodes.Status403Forbidden)]
-        [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<IActionResult> Delete(Guid branchId, Guid id)
+        public async Task<IActionResult> Delete(Guid id, [FromQuery] Guid? branchId)
         {
-            var currentUserId = Guid.Parse(
-                User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            var currentUserRole = User.FindFirstValue(ClaimTypes.Role)!;
+            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var role   = User.FindFirstValue(ClaimTypes.Role)!;
 
-            await _service.DeleteAsync(id, branchId, currentUserId, currentUserRole);
+            await _service.DeleteAsync(id, branchId, userId, role);
             return Ok(ApiResponse<object>.Ok(null!, "Xóa sân thành công"));
         }
-
-
-
     }
 }

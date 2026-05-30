@@ -2,6 +2,7 @@ using SmashCourt_BE.Data;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
+using SmashCourt_BE.Models.ViewModels;
 using Microsoft.EntityFrameworkCore;
 
 namespace SmashCourt_BE.Repositories
@@ -129,6 +130,101 @@ namespace SmashCourt_BE.Repositories
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(c => c.Status, status)
                     .SetProperty(c => c.UpdatedAt, updatedAt));
+        }
+        /// <summary>
+        /// Bulk-fetch tất cả dữ liệu cần thiết cho management dashboard trong 3 queries.
+        /// Courts + Branch (1 query), BookingCourts for the given date (1 query), filter in-memory.
+        /// </summary>
+        public async Task<CourtManagementBulkData> GetManagementDashboardDataAsync(
+            Guid branchId, DateOnly date, string? search, Guid? typeId)
+        {
+            // Query 1: Branch info
+            var branch = await _context.Branches
+                .AsNoTracking()
+                .FirstOrDefaultAsync(b => b.Id == branchId)
+                ?? throw new Common.AppException(404, "Không tìm thấy chi nhánh", Common.ErrorCodes.NotFound);
+
+            // Query 2: All active courts for the branch (with CourtType for name/price lookup)
+            var courtQuery = _context.Courts
+                .AsNoTracking()
+                .Include(c => c.CourtType)
+                .Where(c => c.BranchId == branchId && c.Status != CourtStatus.INACTIVE);
+
+            if (!string.IsNullOrWhiteSpace(search))
+                courtQuery = courtQuery.Where(c => c.Name.ToLower().Contains(search.Trim().ToLower()));
+
+            if (typeId.HasValue)
+                courtQuery = courtQuery.Where(c => c.CourtTypeId == typeId.Value);
+
+            var courts = await courtQuery.OrderBy(c => c.Name).ToListAsync();
+
+            // Query 3: All active BookingCourts for the given date for courts in this branch
+            var courtIds = courts.Select(c => c.Id).ToList();
+            var activeStatuses = Helpers.BookingStatusTransition.GetActiveStatuses();
+
+            var bookingCourts = await _context.BookingCourts
+                .AsNoTracking()
+                .Include(bc => bc.Booking)
+                    .ThenInclude(b => b.Customer)
+                .Where(bc =>
+                    courtIds.Contains(bc.CourtId) &&
+                    bc.Date == date &&
+                    // bc.IsActive &&
+                    activeStatuses.Contains(bc.Booking.Status))
+                .OrderBy(bc => bc.StartTime)
+                .ToListAsync();
+
+            return new CourtManagementBulkData
+            {
+                Branch = branch,
+                Courts = courts,
+                TodayBookingCourts = bookingCourts
+            };
+        }
+
+        /// <summary>
+        /// Bulk-fetch dữ liệu cho management-timeline: giống dashboard nhng không có search filter và luôn
+        /// include booking identity (Customer name, status) để vẽ named blocks.
+        /// </summary>
+        public async Task<CourtManagementBulkData> GetManagementTimelineDataAsync(
+            Guid branchId, DateOnly date, Guid? typeId)
+        {
+            var branch = await _context.Branches
+                .AsNoTracking()
+                .FirstOrDefaultAsync(b => b.Id == branchId)
+                ?? throw new Common.AppException(404, "Không tìm thấy chi nhánh", Common.ErrorCodes.NotFound);
+
+            var courtQuery = _context.Courts
+                .AsNoTracking()
+                .Include(c => c.CourtType)
+                .Where(c => c.BranchId == branchId && c.Status != CourtStatus.INACTIVE);
+
+            if (typeId.HasValue)
+                courtQuery = courtQuery.Where(c => c.CourtTypeId == typeId.Value);
+
+            var courts = await courtQuery.OrderBy(c => c.Name).ToListAsync();
+            var courtIds = courts.Select(c => c.Id).ToList();
+
+            var activeStatuses = Helpers.BookingStatusTransition.GetActiveStatuses();
+
+            var bookingCourts = await _context.BookingCourts
+                .AsNoTracking()
+                .Include(bc => bc.Booking)
+                    .ThenInclude(b => b.Customer)
+                .Where(bc =>
+                    courtIds.Contains(bc.CourtId) &&
+                    bc.Date == date &&
+                    // bc.IsActive &&
+                    activeStatuses.Contains(bc.Booking.Status))
+                .OrderBy(bc => bc.StartTime)
+                .ToListAsync();
+
+            return new CourtManagementBulkData
+            {
+                Branch = branch,
+                Courts = courts,
+                TodayBookingCourts = bookingCourts
+            };
         }
     }
 }
