@@ -50,7 +50,7 @@ namespace SmashCourt_BE.Repositories.IRepository
         Task<bool> HasCourtsWithTypeAsync(Guid branchId, Guid courtTypeId);
 
         // lấy danh sách dịch vụ của chi nhánh
-        Task<List<BranchService>> GetServicesAsync(Guid branchId);
+        Task<PagedResult<BranchService>> GetServicesAsync(Guid branchId, int page, int pageSize);
 
         // lấy thông tin dịch vụ của chi nhánh theo id, trả về null nếu không tìm thấy
         Task<BranchService?> GetBranchServiceAsync(Guid branchId, Guid serviceId);

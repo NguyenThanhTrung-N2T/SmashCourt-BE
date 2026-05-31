@@ -5,7 +5,7 @@ using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
 using SmashCourt_BE.Services.IService;
-
+using SmashCourt_BE.Services.Helpers;
 namespace SmashCourt_BE.Services
 {
     public class CourtService : ICourtService
@@ -17,6 +17,7 @@ namespace SmashCourt_BE.Services
         private readonly IBranchPriceRepository _branchPriceRepo;
         private readonly ISystemPriceRepository _systemPriceRepo;
         private readonly ITimeSlotRepository _timeSlotRepo;
+        private readonly IBranchScopeResolver _branchScopeResolver;
 
         public CourtService(
             ICourtRepository repo,
@@ -25,7 +26,8 @@ namespace SmashCourt_BE.Services
             ICourtTypeRepository courtTypeRepo,
             IBranchPriceRepository branchPriceRepo,
             ISystemPriceRepository systemPriceRepo,
-            ITimeSlotRepository timeSlotRepo)
+            ITimeSlotRepository timeSlotRepo,
+            IBranchScopeResolver branchScopeResolver)
         {
             _repo = repo;
             _branchRepo = branchRepo;
@@ -34,6 +36,7 @@ namespace SmashCourt_BE.Services
             _branchPriceRepo = branchPriceRepo;
             _systemPriceRepo = systemPriceRepo;
             _timeSlotRepo = timeSlotRepo;
+            _branchScopeResolver = branchScopeResolver;
         }
 
         public async Task<List<CourtDto>> GetAllAsync(
@@ -51,7 +54,7 @@ namespace SmashCourt_BE.Services
             Guid branchId;
             if (isStaffOrAbove)
             {
-                branchId = await ResolveScopedBranchIdAsync(requestedBranchId, currentUserId!.Value, currentUserRole!);
+                branchId = await _branchScopeResolver.ResolveBranchIdAsync(requestedBranchId, currentUserId!.Value, currentUserRole!);
             }
             else
             {
@@ -85,7 +88,7 @@ namespace SmashCourt_BE.Services
             Guid? branchId = null;
             if (isStaffOrAbove || requestedBranchId.HasValue)
             {
-                branchId = await ResolveScopedBranchIdAsync(requestedBranchId,
+                branchId = await _branchScopeResolver.ResolveBranchIdAsync(requestedBranchId,
                    currentUserId ?? Guid.Empty,
                    currentUserRole ?? "");
             }
@@ -109,7 +112,7 @@ namespace SmashCourt_BE.Services
 
         public async Task<CourtDto> CreateAsync(Guid? requestedBranchId, CreateCourtDto dto, Guid currentUserId, string currentUserRole)
         {
-            var branchId = await ResolveScopedBranchIdAsync(requestedBranchId, currentUserId, currentUserRole);
+            var branchId = await _branchScopeResolver.ResolveBranchIdAsync(requestedBranchId, currentUserId, currentUserRole);
             var branch = await _branchRepo.GetByIdAsync(branchId);
             if (branch == null || branch.Status != BranchStatus.ACTIVE)
                 throw new AppException(400, "Chi nhánh không khả dụng", ErrorCodes.BadRequest);
@@ -145,7 +148,7 @@ namespace SmashCourt_BE.Services
 
         public async Task<CourtDto> UpdateAsync(Guid id, Guid? requestedBranchId, UpdateCourtDto dto, Guid currentUserId, string currentUserRole)
         {
-            var branchId = await ResolveScopedBranchIdAsync(requestedBranchId, currentUserId, currentUserRole);
+            var branchId = await _branchScopeResolver.ResolveBranchIdAsync(requestedBranchId, currentUserId, currentUserRole);
             var court = await _repo.GetByIdAsync(id, branchId);
             if (court == null)
                 throw new AppException(404, "Không tìm thấy sân", ErrorCodes.NotFound);
@@ -175,7 +178,7 @@ namespace SmashCourt_BE.Services
 
         public async Task SuspendAsync(Guid id, Guid? requestedBranchId, Guid currentUserId, string currentUserRole)
         {
-            var branchId = await ResolveScopedBranchIdAsync(requestedBranchId, currentUserId, currentUserRole);
+            var branchId = await _branchScopeResolver.ResolveBranchIdAsync(requestedBranchId, currentUserId, currentUserRole);
             var court = await _repo.GetByIdAsync(id, branchId);
             if (court == null) throw new AppException(404, "Không tìm thấy sân", ErrorCodes.NotFound);
 
@@ -195,7 +198,7 @@ namespace SmashCourt_BE.Services
 
         public async Task ActivateAsync(Guid id, Guid? requestedBranchId, Guid currentUserId, string currentUserRole)
         {
-            var branchId = await ResolveScopedBranchIdAsync(requestedBranchId, currentUserId, currentUserRole);
+            var branchId = await _branchScopeResolver.ResolveBranchIdAsync(requestedBranchId, currentUserId, currentUserRole);
             var court = await _repo.GetByIdAsync(id, branchId);
             if (court == null) throw new AppException(404, "Không tìm thấy sân", ErrorCodes.NotFound);
 
@@ -209,7 +212,7 @@ namespace SmashCourt_BE.Services
 
         public async Task DeleteAsync(Guid id, Guid? requestedBranchId, Guid currentUserId, string currentUserRole)
         {
-            var branchId = await ResolveScopedBranchIdAsync(requestedBranchId, currentUserId, currentUserRole);
+            var branchId = await _branchScopeResolver.ResolveBranchIdAsync(requestedBranchId, currentUserId, currentUserRole);
             var court = await _repo.GetByIdAsync(id, branchId);
             if (court == null) throw new AppException(404, "Không tìm thấy sân", ErrorCodes.NotFound);
 
@@ -228,7 +231,7 @@ namespace SmashCourt_BE.Services
             Guid? requestedBranchId, DateOnly? date,
             Guid currentUserId, string currentUserRole)
         {
-            var branchId = await ResolveScopedBranchIdAsync(requestedBranchId, currentUserId, currentUserRole);
+            var branchId = await _branchScopeResolver.ResolveBranchIdAsync(requestedBranchId, currentUserId, currentUserRole);
             var targetDate = date ?? DateTimeHelper.GetTodayInVietnam();
             var data = await _repo.GetManagementDashboardDataAsync(branchId, targetDate, null, null);
 
@@ -258,7 +261,7 @@ namespace SmashCourt_BE.Services
             int page, int pageSize,
             Guid currentUserId, string currentUserRole)
         {
-            var branchId = await ResolveScopedBranchIdAsync(requestedBranchId, currentUserId, currentUserRole);
+            var branchId = await _branchScopeResolver.ResolveBranchIdAsync(requestedBranchId, currentUserId, currentUserRole);
             var targetDate = date ?? DateTimeHelper.GetTodayInVietnam();
             var data = await _repo.GetManagementDashboardDataAsync(branchId, targetDate, search, typeId);
 
@@ -314,7 +317,7 @@ namespace SmashCourt_BE.Services
             Guid? requestedBranchId, DateOnly date, Guid? typeId,
             Guid currentUserId, string currentUserRole)
         {
-            var branchId = await ResolveScopedBranchIdAsync(requestedBranchId, currentUserId, currentUserRole);
+            var branchId = await _branchScopeResolver.ResolveBranchIdAsync(requestedBranchId, currentUserId, currentUserRole);
             var data = await _repo.GetManagementTimelineDataAsync(branchId, date, typeId);
 
             var branch = data.Branch;
@@ -363,7 +366,7 @@ namespace SmashCourt_BE.Services
             if (court == null) throw new AppException(404, "Không tìm thấy sân", ErrorCodes.NotFound);
 
             // Scope resolution for the court's branch
-            await ResolveScopedBranchIdAsync(court.BranchId, currentUserId, currentUserRole);
+            await _branchScopeResolver.ResolveBranchIdAsync(court.BranchId, currentUserId, currentUserRole);
 
             var branch = await _branchRepo.GetByIdAsync(court.BranchId)
                 ?? throw new AppException(404, "Không tìm thấy chi nhánh", ErrorCodes.NotFound);
@@ -415,27 +418,6 @@ namespace SmashCourt_BE.Services
                     StatusShort = MapStatusShort(bc.Booking.Status)
                 }).ToList()
             };
-        }
-
-        private async Task<Guid> ResolveScopedBranchIdAsync(Guid? requestedBranchId, Guid currentUserId, string currentUserRole)
-        {
-            var isManagerOrStaff = currentUserRole == UserRole.BRANCH_MANAGER.ToString() || currentUserRole == UserRole.STAFF.ToString();
-
-            if (!isManagerOrStaff)
-            {
-                if (!requestedBranchId.HasValue)
-                    throw new AppException(400, "Vui lòng chọn chi nhánh", ErrorCodes.BadRequest);
-                return requestedBranchId.Value;
-            }
-
-            var assignment = await _userBranchRepo.GetActiveByUserIdAsync(currentUserId);
-            if (assignment == null)
-                throw new AppException(403, "Bạn chưa được gán vào chi nhánh nào", ErrorCodes.Forbidden);
-
-            if (requestedBranchId.HasValue && requestedBranchId.Value != assignment.BranchId)
-                throw new AppException(403, "Bạn không có quyền xem chi nhánh này", ErrorCodes.Forbidden);
-
-            return assignment.BranchId;
         }
 
         private static CourtOperationalStatus DeriveOperationalStatus(Court court, List<Models.Entities.BookingCourt> courtBcs, TimeOnly now)

@@ -238,7 +238,7 @@ namespace SmashCourt_BE.Services
             // 6. Kiểm tra status trước khi cấp token (CRITICAL FIX)
             if (user.Status == UserStatus.LOCKED)
                 throw new AppException(403, "Tài khoản của bạn đã bị khóa, vui lòng liên hệ hỗ trợ", ErrorCodes.AccountLocked);
-            
+
             if (user.Status == UserStatus.INACTIVE)
                 throw new AppException(403, "Tài khoản của bạn đã bị vô hiệu hóa", ErrorCodes.AccountLocked);
 
@@ -246,10 +246,10 @@ namespace SmashCourt_BE.Services
             await _refreshTokenRepo.RevokeAllByUserIdAsync(user.Id);
 
             var rawRefreshToken = _tokenService.GenerateRefreshToken();
-            
+
             // Capture session metadata
             var (deviceName, ipAddress, userAgent) = CaptureSessionMetadata();
-            
+
             var refreshToken = new RefreshToken
             {
                 UserId = user.Id,
@@ -329,7 +329,7 @@ namespace SmashCourt_BE.Services
         }
 
         // ===== HELPER METHOD: Capture Session Metadata =====
-        
+
         /// <summary>
         /// Capture session metadata từ HTTP request (UserAgent, IP Address, Device Name)
         /// </summary>
@@ -341,13 +341,13 @@ namespace SmashCourt_BE.Services
 
             // Lấy User-Agent từ header
             var userAgent = httpContext.Request.Headers["User-Agent"].ToString();
-            
+
             // Truncate UserAgent nếu quá dài (max 500 chars)
-            var truncatedUserAgent = Helpers.UserAgentParser.TruncateUserAgent(userAgent);
-            
+            var truncatedUserAgent = SmashCourt_BE.Helpers.UserAgentParser.TruncateUserAgent(userAgent);
+
             // Parse UserAgent thành DeviceName dễ đọc
-            var deviceName = Helpers.UserAgentParser.ParseToDeviceName(userAgent);
-            
+            var deviceName = SmashCourt_BE.Helpers.UserAgentParser.ParseToDeviceName(userAgent);
+
             // Lấy IP Address
             var ipAddress = httpContext.Connection.RemoteIpAddress?.ToString();
 
@@ -367,5 +367,5 @@ namespace SmashCourt_BE.Services
         };
     }
 
-    
+
 }

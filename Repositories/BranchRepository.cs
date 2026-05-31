@@ -227,16 +227,29 @@ namespace SmashCourt_BE.Repositories
         }
 
         // lấy danh sách dịch vụ của chi nhánh , chỉ lấy ACTIVE
-        public async Task<List<BranchService>> GetServicesAsync(Guid branchId)
+        public async Task<PagedResult<BranchService>> GetServicesAsync(Guid branchId, int page, int pageSize)
         {
-            return await _context.BranchServices
+            var query = _context.BranchServices
                 .Include(bs => bs.Service)
                 .Where(bs =>
                     bs.BranchId == branchId &&
                     bs.Status == BranchServiceStatus.ENABLED &&
                     bs.Service.Status == ServiceStatus.ACTIVE)
-                .OrderBy(bs => bs.Service.Name)
+                .OrderBy(bs => bs.Service.Name);
+
+            var totalItems = await query.CountAsync();
+            var items = await query
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
                 .ToListAsync();
+
+            return new PagedResult<BranchService>
+            {
+                Items = items,
+                TotalItems = totalItems,
+                Page = page,
+                PageSize = pageSize
+            };
         }
 
         // lấy thông tin dịch vụ của chi nhánh theo serviceId

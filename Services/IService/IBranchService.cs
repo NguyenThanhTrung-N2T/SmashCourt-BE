@@ -41,16 +41,16 @@ namespace SmashCourt_BE.Services.IService
         // Xóa loại sân khỏi chi nhánh
         Task RemoveCourtTypeAsync(Guid branchId, Guid courtTypeId, Guid currentUserId, string currentUserRole);
 
-        // Lấy danh sách dịch vụ của chi nhánh
-        Task<List<BranchServiceDto>> GetServicesAsync(Guid branchId);
+        // Lấy danh sách dịch vụ của chi nhánh kèm phân trang và phân quyền theo requester
+        Task<PagedResult<BranchServiceDto>> GetServicesAsync(Guid? requestedBranchId, PaginationQuery query, Guid currentUserId, string currentUserRole);
 
         // Thêm dịch vụ cho chi nhánh
-        Task<BranchServiceDto> AddServiceAsync(Guid branchId, AddServiceToBranchDto dto,Guid currentUserId, string currentUserRole);
+        Task<BranchServiceDto> AddServiceAsync(Guid? requestedBranchId, AddServiceToBranchDto dto, Guid currentUserId, string currentUserRole);
 
         // Cập nhật giá dịch vụ của chi nhánh
-        Task<BranchServiceDto> UpdateServicePriceAsync(Guid branchId, Guid serviceId,UpdateBranchServiceDto dto,Guid currentUserId, string currentUserRole);
+        Task<BranchServiceDto> UpdateServicePriceAsync(Guid? requestedBranchId, Guid serviceId, UpdateBranchServiceDto dto, Guid currentUserId, string currentUserRole);
 
         // Xóa dịch vụ khỏi chi nhánh
-        Task DisableServiceAsync(Guid branchId, Guid serviceId,Guid currentUserId, string currentUserRole);
+        Task DisableServiceAsync(Guid? requestedBranchId, Guid serviceId, Guid currentUserId, string currentUserRole);
     }
 }

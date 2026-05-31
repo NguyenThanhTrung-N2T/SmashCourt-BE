@@ -5,9 +5,11 @@ using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
 using SmashCourt_BE.Services.IService;
+using SmashCourt_BE.Services.Helpers;
 
 namespace SmashCourt_BE.Services
 {
+
     public class BranchService : IBranchService
     {
         private readonly IBranchRepository _repo;
@@ -17,9 +19,11 @@ namespace SmashCourt_BE.Services
         private readonly ICourtTypeRepository _courtTypeRepo;
         private readonly IServiceRepository _serviceRepo;
         private readonly ICourtRepository _courtRepo;
+        private readonly IBranchScopeResolver _branchScopeResolver;
 
         public BranchService(IBranchRepository repo, IUserRepository userRepo,
-        IUserBranchRepository userBranchRepo, ILogger<BranchService> logger, ICourtTypeRepository courtTypeRepo, IServiceRepository serviceRepo, ICourtRepository courtRepo)
+        IUserBranchRepository userBranchRepo, ILogger<BranchService> logger, ICourtTypeRepository courtTypeRepo, IServiceRepository serviceRepo, ICourtRepository courtRepo,
+            IBranchScopeResolver branchScopeResolver)
         {
             _repo = repo;
             _userRepo = userRepo;
@@ -28,6 +32,7 @@ namespace SmashCourt_BE.Services
             _serviceRepo = serviceRepo;
             _courtTypeRepo = courtTypeRepo;
             _courtRepo = courtRepo;
+            _branchScopeResolver = branchScopeResolver;
         }
 
         // Kiểm tra quyền truy cập chi nhánh cho MANAGER
@@ -415,40 +420,33 @@ namespace SmashCourt_BE.Services
             await _repo.UpdateBranchCourtTypeAsync(branchCourtType);
         }
 
-        // Lấy danh sách dịch vụ được cung cấp tại chi nhánh, kèm giá (giá chi nhánh nếu có, không thì giá mặc định)
-        public async Task<List<BranchServiceDto>> GetServicesAsync(Guid branchId)
+        // Scoped + paged version: resolve branch and apply pagination
+        public async Task<PagedResult<BranchServiceDto>> GetServicesAsync(Guid? requestedBranchId, PaginationQuery query, Guid currentUserId, string currentUserRole)
         {
-            var branch = await _repo.GetByIdAsync(branchId);
-            if (branch == null)
-                throw new AppException(404, "Không tìm thấy chi nhánh", ErrorCodes.NotFound);
+            var branchId = await _branchScopeResolver.ResolveBranchIdAsync(requestedBranchId, currentUserId, currentUserRole);
 
-            var services = await _repo.GetServicesAsync(branchId);
-            return services.Select(MapToServiceDto).ToList();
+            var pagedResult = await _repo.GetServicesAsync(branchId, query.Page, query.PageSize);
+
+            return new PagedResult<BranchServiceDto>
+            {
+                Items = pagedResult.Items.Select(MapToServiceDto),
+                TotalItems = pagedResult.TotalItems,
+                Page = pagedResult.Page,
+                PageSize = pagedResult.PageSize
+            };
         }
 
         // Thêm dịch vụ vào chi nhánh (bật dịch vụ), có thể kèm giá override
-        public async Task<BranchServiceDto> AddServiceAsync(Guid branchId, AddServiceToBranchDto dto, Guid currentUserId, string currentUserRole)
+        public async Task<BranchServiceDto> AddServiceAsync(Guid? requestedBranchId, AddServiceToBranchDto dto, Guid currentUserId, string currentUserRole)
         {
             // 1. Tìm branch
+            var branchId = await _branchScopeResolver.ResolveBranchIdAsync(requestedBranchId, currentUserId, currentUserRole);
             var branch = await _repo.GetByIdAsync(branchId);
-            if (branch == null)
-                throw new AppException(404, "Không tìm thấy chi nhánh", ErrorCodes.NotFound);
             // Check chi nhánh đang hoạt động
-            if (branch.Status != BranchStatus.ACTIVE)
+            if (branch == null || branch.Status != BranchStatus.ACTIVE)
                 throw new AppException(400,
                     "Chi nhánh không đang hoạt động, không thể thêm dịch vụ",
                     ErrorCodes.BadRequest);
-
-            // 2. MANAGER chỉ thao tác chi nhánh mình
-            if (currentUserRole == UserRole.BRANCH_MANAGER.ToString())
-            {
-                var isInBranch = await _userBranchRepo.IsUserInBranchAsync(
-                    currentUserId, branchId);
-                if (!isInBranch)
-                    throw new AppException(403,
-                        "Bạn không có quyền thao tác chi nhánh này",
-                        ErrorCodes.Forbidden);
-            }
 
             // 3. Tìm service
             var service = await _serviceRepo.GetByIdAsync(dto.ServiceId);
@@ -502,10 +500,10 @@ namespace SmashCourt_BE.Services
         }
 
         // Cập nhật giá dịch vụ của chi nhánh, chỉ update giá và bật lại nếu đang tắt
-        public async Task<BranchServiceDto> UpdateServicePriceAsync(Guid branchId, Guid serviceId, UpdateBranchServiceDto dto, Guid currentUserId, string currentUserRole)
+        public async Task<BranchServiceDto> UpdateServicePriceAsync(Guid? requestedBranchId, Guid serviceId, UpdateBranchServiceDto dto, Guid currentUserId, string currentUserRole)
         {
             // 1. Validate branch + quyền
-            await ValidateBranchAccessAsync(branchId, currentUserId, currentUserRole);
+            var branchId = await _branchScopeResolver.ResolveBranchIdAsync(requestedBranchId, currentUserId, currentUserRole);
 
             // 2. Kiểm tra tình trạng chi nhánh và tìm BranchService
             var branch = await _repo.GetByIdAsync(branchId);
@@ -532,10 +530,10 @@ namespace SmashCourt_BE.Services
         }
 
         // Tắt dịch vụ tại chi nhánh, không xóa hẳn để giữ lịch sử booking
-        public async Task DisableServiceAsync(Guid branchId, Guid serviceId, Guid currentUserId, string currentUserRole)
+        public async Task DisableServiceAsync(Guid? requestedBranchId, Guid serviceId, Guid currentUserId, string currentUserRole)
         {
             // 1. Validate branch + quyền
-            await ValidateBranchAccessAsync(branchId, currentUserId, currentUserRole);
+            var branchId = await _branchScopeResolver.ResolveBranchIdAsync(requestedBranchId, currentUserId, currentUserRole);
 
             // 2. Tìm BranchService
             var branchService = await _repo.GetBranchServiceAsync(branchId, serviceId);
@@ -563,6 +561,7 @@ namespace SmashCourt_BE.Services
             DefaultPrice = bs.Service.DefaultPrice,
             // Giá thực tế = giá chi nhánh nếu có, không thì dùng giá mặc định
             EffectivePrice = bs.Price != bs.Service.DefaultPrice ? bs.Price : bs.Service.DefaultPrice,
+            ServiceDisplayUrl = bs.Service.ServiceDisplayUrl,
             Status = bs.Status,
             CreatedAt = bs.CreatedAt,
             UpdatedAt = bs.UpdatedAt
