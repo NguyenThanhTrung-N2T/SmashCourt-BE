@@ -11,34 +11,32 @@ using System.Diagnostics;
 namespace SmashCourt_BE.Jobs
 {
     /// <summary>
-    /// All scheduled booking maintenance jobs.
+    /// Tất cả các tác vụ (Job) bảo trì đơn đặt sân theo lịch trình.
     ///
-    /// Idempotency contract:
-    ///   Every job filters strictly on status + time predicates, so re-running
-    ///   an already-processed batch is a no-op (rows no longer match the WHERE).
+    /// Cơ chế Idempotency (Không trùng lặp):
+    ///   Mỗi tác vụ lọc nghiêm ngặt theo trạng thái và thời gian, vì vậy việc chạy lại
+    ///   một lô đã xử lý sẽ không gây tác dụng phụ (dữ liệu không còn khớp với điều kiện WHERE).
     ///
-    /// Concurrency contract:
-    ///   Each job method carries [DisableConcurrentExecution] so Hangfire's
-    ///   distributed lock prevents two app instances running the same job
-    ///   simultaneously. The timeout (10 s) is intentionally short — if a lock
-    ///   cannot be acquired the attempt is dropped; the next scheduled tick wins.
+    /// Cơ chế Concurrency (Tránh chạy đồng thời):
+    ///   Mỗi tác vụ được đánh dấu [DisableConcurrentExecution] để cơ chế khóa phân tán của Hangfire
+    ///   ngăn chặn hai thực thể ứng dụng chạy cùng một tác vụ đồng thời. Thời gian chờ (10 giây)
+    ///   được cấu hình ngắn — nếu không lấy được khóa, tác vụ sẽ bị bỏ qua và chờ lượt quét tiếp theo.
     ///
-    /// Court-release contract:
-    ///   A court is set AVAILABLE only when no other active booking still holds it.
-    ///   "Active" = CONFIRMED | PAID_ONLINE | IN_PROGRESS.
-    ///   The booking being processed is excluded from the busy-court check so it
-    ///   does not block its own release.
+    /// Cơ chế giải phóng sân:
+    ///   Sân chỉ được đặt về AVAILABLE khi không còn đơn đặt sân hoạt động nào khác giữ sân đó.
+    ///   "Hoạt động" bao gồm: CONFIRMED | PAID_ONLINE | IN_PROGRESS.
+    ///   Đơn đặt sân đang được xử lý sẽ bị loại trừ khỏi kiểm tra sân bận để tránh tự khóa chính nó.
     /// </summary>
     public class BookingJob : IBookingJob
     {
-        // ── Dependencies ────────────────────────────────────────────────────
+        // ── Khai báo Dependencies ───────────────────────────────────────────
         private readonly SmashCourtContext _db;
         private readonly ISlotInterestRepository _slotInterestRepo;
         private readonly ILogger<BookingJob> _logger;
 
-        // ── Constants ───────────────────────────────────────────────────────
+        // ── Khai báo hằng số ────────────────────────────────────────────────
 
-        /// <summary>Statuses that keep a court occupied.</summary>
+        /// <summary>Các trạng thái xác định sân đang được sử dụng.</summary>
         private static readonly BookingStatus[] ActiveStatuses =
         [
             BookingStatus.CONFIRMED,
@@ -47,8 +45,8 @@ namespace SmashCourt_BE.Jobs
         ];
 
         /// <summary>
-        /// Grace period before a confirmed-but-unchecked-in booking is
-        /// declared NO_SHOW.
+        /// Thời gian ân hạn (phút) trước khi đơn đặt sân đã xác nhận nhưng
+        /// không check-in bị đánh dấu là NO_SHOW.
         /// </summary>
         private const int NoShowGraceMinutes = 15;
 
@@ -64,29 +62,27 @@ namespace SmashCourt_BE.Jobs
         }
 
         // ════════════════════════════════════════════════════════════════════
-        // Job-01 · Cancel expired PENDING bookings  (every 1 min)
+        // Tác vụ 01 · Hủy các đơn PENDING quá hạn thanh toán (quét mỗi 1 phút)
         // ════════════════════════════════════════════════════════════════════
 
         /// <summary>
-        /// Cancels PENDING bookings whose hold window has expired.
+        /// Tác vụ hủy các đơn PENDING có hóa đơn quá hạn thanh toán.
         ///
-        /// Covered cases:
-        ///   • PENDING + ExpiresAt elapsed  → CANCELLED, courts released
-        ///   • PENDING + ExpiresAt not yet  → skipped (not in query)
-        ///   • Court held by another booking → court left as-is (busy guard)
-        ///
-        /// Idempotent: cancelled bookings no longer match Status == PENDING.
+        /// Các trường hợp xử lý:
+        ///   • Trạng thái PENDING + Hóa đơn quá hạn → CANCELLED, giải phóng sân.
+        ///   • Trạng thái PENDING + Chưa quá hạn → Bỏ qua không quét.
+        ///   • Sân đang bị giữ bởi đơn khác → Giữ nguyên trạng thái sân (tránh giải phóng nhầm).
         /// </summary>
         [DisableConcurrentExecution(timeoutInSeconds: 10)]
         public async Task CancelExpiredPendingBookingsAsync()
         {
             var sw = Stopwatch.StartNew();
-            _logger.LogInformation("[Job-01] Starting");
+            _logger.LogInformation("[Job-01] Bắt đầu quét đơn PENDING quá hạn.");
 
             try
             {
                 var now = DateTimeHelper.GetUtcNow();
-                // 1. Query invoices that have expired and are still unpaid
+                // 1. Tìm các hóa đơn quá hạn và chưa thanh toán
                 var expiredInvoices = await _db.Invoices
                     .Include(i => i.Booking)
                         .ThenInclude(b => b.BookingCourts)
@@ -98,10 +94,11 @@ namespace SmashCourt_BE.Jobs
 
                 if (expiredInvoices.Count == 0)
                 {
-                    _logger.LogInformation("[Job-01] No expired PENDING bookings. Elapsed: {Ms}ms", sw.ElapsedMilliseconds);
+                    _logger.LogInformation("[Job-01] Không có đơn PENDING nào quá hạn. Thời gian chạy: {Ms}ms", sw.ElapsedMilliseconds);
                     return;
                 }
-                // Pull the booking entities out for slot processing
+
+                // Trích xuất danh sách các đơn đặt sân quá hạn để xử lý
                 var expiredBookings = expiredInvoices.Select(i => i.Booking).ToList();
 
                 var cancelledCourtIds = expiredBookings
@@ -116,14 +113,14 @@ namespace SmashCourt_BE.Jobs
 
                 var busyCourtIds = await GetBusyCourtIdsAsync(cancelledCourtIds, cancelledBookingIds);
 
-                // 2. Loop through the invoices to update both the invoice and related booking
+                // 2. Duyệt qua hóa đơn để cập nhật hóa đơn và đơn đặt sân tương ứng
                 foreach (var invoice in expiredInvoices)
                 {
-                    // Update Invoice Status
+                    // Cập nhật trạng thái hóa đơn
                     invoice.PaymentStatus = InvoicePaymentStatus.EXPIRED;
                     invoice.UpdatedAt = now;
 
-                    // Update Booking Status
+                    // Cập nhật trạng thái đơn đặt sân
                     var booking = invoice.Booking;
                     if (booking != null)
                     {
@@ -136,7 +133,7 @@ namespace SmashCourt_BE.Jobs
                     }
                 }
 
-                // Purge any stale slot locks in the same transaction
+                // Xóa các khóa slot tạm thời đã hết hạn trong cùng một transaction
                 await _db.SlotLocks
                     .Where(sl => sl.ExpiresAt <= now)
                     .ExecuteDeleteAsync();
@@ -144,49 +141,41 @@ namespace SmashCourt_BE.Jobs
                 await _db.SaveChangesAsync();
 
                 _logger.LogInformation(
-                    "[Job-01] Cancelled {Count} expired PENDING bookings. Elapsed: {Ms}ms",
+                    "[Job-01] Đã hủy {Count} đơn PENDING quá hạn thanh toán. Thời gian chạy: {Ms}ms",
                     expiredBookings.Count, sw.ElapsedMilliseconds);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[Job-01] Unhandled error. Elapsed: {Ms}ms", sw.ElapsedMilliseconds);
+                _logger.LogError(ex, "[Job-01] Gặp lỗi không mong muốn. Thời gian chạy: {Ms}ms", sw.ElapsedMilliseconds);
             }
         }
 
         // ════════════════════════════════════════════════════════════════════
-        // Job-02 · Finalize expired active bookings  (every 1 min)
+        // Tác vụ 02 · Hoàn tất các đơn đặt sân đã kết thúc giờ chơi (quét mỗi 1 phút)
         // ════════════════════════════════════════════════════════════════════
 
         /// <summary>
-        /// Finalizes bookings whose court time has elapsed.
+        /// Tác vụ xử lý hoàn tất các đơn đặt sân khi hết giờ chơi.
         ///
-        /// Covered cases:
+        /// Các trường hợp xử lý:
         /// ┌────────────────┬──────────────────────────┬────────────────────────────────┐
-        /// │ Status         │ Condition                │ Outcome                        │
+        /// │ Trạng thái     │ Điều kiện hóa đơn        │ Kết quả trạng thái mới         │
         /// ├────────────────┼──────────────────────────┼────────────────────────────────┤
-        /// │ IN_PROGRESS    │ invoice == PAID          │ → COMPLETED                    │
-        /// │ IN_PROGRESS    │ invoice != PAID          │ → PENDING_PAYMENT              │
-        /// │ PAID_ONLINE    │ CheckedInAt == null      │ skipped → Job-04 (NO_SHOW)     │
-        /// │ PAID_ONLINE    │ checked-in + PAID        │ → COMPLETED                    │
-        /// │ PAID_ONLINE    │ checked-in + PARTIALLY   │ → PENDING_PAYMENT (intentional;|
-        /// │                │                          │   service fee still due)       │
-        /// │ PAID_ONLINE    │ checked-in + null invoice│ → PENDING_PAYMENT + WARNING    │
-        /// │ CONFIRMED      │ CheckedInAt == null      │ skipped → Job-04 (NO_SHOW)     │
-        /// │ CONFIRMED      │ checked-in + PAID        │ → COMPLETED                    │
-        /// │ CONFIRMED      │ checked-in + != PAID     │ → PENDING_PAYMENT              │
+        /// │ IN_PROGRESS    │ Hóa đơn đã PAID          │ → COMPLETED                    │
+        /// │ IN_PROGRESS    │ Hóa đơn khác PAID        │ → PENDING_PAYMENT              │
+        /// │ PAID_ONLINE    │ Chưa check-in            │ Bỏ qua (Do Job-04 xử lý)       │
+        /// │ PAID_ONLINE    │ Đã check-in + PAID       │ → COMPLETED                    │
+        /// │ PAID_ONLINE    │ Đã check-in + PARTIALLY  │ → PENDING_PAYMENT              │
+        /// │ CONFIRMED      │ Chưa check-in            │ Bỏ qua (Do Job-04 xử lý)       │
+        /// │ CONFIRMED      │ Đã check-in + PAID       │ → COMPLETED                    │
+        /// │ CONFIRMED      │ Đã check-in + khác PAID  │ → PENDING_PAYMENT              │
         /// └────────────────┴──────────────────────────┴────────────────────────────────┘
-        ///
-        /// Court release:
-        ///   COMPLETED     → IsActive = false; Court = AVAILABLE (if not busy)
-        ///   PENDING_PAYMENT → same; staff will re-confirm after checkout
-        ///
-        /// Idempotent: processed bookings leave the query's status filter.
         /// </summary>
         [DisableConcurrentExecution(timeoutInSeconds: 10)]
         public async Task ProcessExpiredActiveBookingsAsync()
         {
             var sw = Stopwatch.StartNew();
-            _logger.LogInformation("[Job-02] Starting");
+            _logger.LogInformation("[Job-02] Bắt đầu quét đơn hoạt động hết giờ.");
 
             try
             {
@@ -204,12 +193,11 @@ namespace SmashCourt_BE.Jobs
 
                 if (activeBookings.Count == 0)
                 {
-                    _logger.LogInformation("[Job-02] No active bookings to process. Elapsed: {Ms}ms", sw.ElapsedMilliseconds);
+                    _logger.LogInformation("[Job-02] Không có đơn hoạt động nào cần xử lý. Thời gian chạy: {Ms}ms", sw.ElapsedMilliseconds);
                     return;
                 }
 
-                // Filter to only time-elapsed bookings in memory —
-                // avoids a DB computed-column or complex EF expression.
+                // Lọc danh sách các đơn đã hết giờ chơi trong bộ nhớ
                 var expiredBookings = activeBookings
                     .Where(b => b.BookingCourts.Any() &&
                                 ToUtcFromVietnam(
@@ -223,7 +211,7 @@ namespace SmashCourt_BE.Jobs
 
                 if (expiredBookings.Count == 0)
                 {
-                    _logger.LogInformation("[Job-02] No time-elapsed bookings. Elapsed: {Ms}ms", sw.ElapsedMilliseconds);
+                    _logger.LogInformation("[Job-02] Không có đơn nào hết giờ chơi. Thời gian chạy: {Ms}ms", sw.ElapsedMilliseconds);
                     return;
                 }
 
@@ -261,10 +249,9 @@ namespace SmashCourt_BE.Jobs
                     {
                         errors++;
                         _logger.LogError(ex,
-                            "[Job-02] Failed to finalize booking {BookingId} (Status={Status}). Skipping.",
+                            "[Job-02] Thất bại khi hoàn tất đơn {BookingId} (Trạng thái={Status}). Bỏ qua.",
                             booking.Id, booking.Status);
-                        // Roll back in-memory changes on this booking to avoid
-                        // persisting a partial state.
+                        // Khôi phục lại trạng thái trong bộ nhớ để tránh lưu lỗi dữ liệu một phần
                         _db.Entry(booking).State = EntityState.Unchanged;
                         foreach (var bc in booking.BookingCourts)
                             _db.Entry(bc).State = EntityState.Unchanged;
@@ -276,27 +263,22 @@ namespace SmashCourt_BE.Jobs
                 await _db.SaveChangesAsync();
 
                 _logger.LogInformation(
-                    "[Job-02] Done. Completed={Completed} PendingPayment={PendingPayment} " +
-                    "Skipped={Skipped} Errors={Errors} Elapsed={Ms}ms",
+                    "[Job-02] Hoàn tất quét. Đã xong={Completed} Chờ thanh toán={PendingPayment} " +
+                    "Bỏ qua={Skipped} Lỗi={Errors} Thời gian chạy: {Ms}ms",
                     completed, pendingPayment, skipped, errors, sw.ElapsedMilliseconds);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[Job-02] Unhandled error. Elapsed: {Ms}ms", sw.ElapsedMilliseconds);
+                _logger.LogError(ex, "[Job-02] Gặp lỗi không mong muốn. Thời gian chạy: {Ms}ms", sw.ElapsedMilliseconds);
             }
         }
 
         // ════════════════════════════════════════════════════════════════════
-        // Job-03 · Purge expired slot locks  (every 30 s)
+        // Tác vụ 03 · Dọn dẹp các slot tạm khóa đã hết hiệu lực (quét mỗi 30 giây)
         // ════════════════════════════════════════════════════════════════════
 
         /// <summary>
-        /// Deletes SlotLock rows whose expiry has passed.
-        ///
-        /// Court status is NOT updated here — Job-01 handles the linked
-        /// PENDING booking and its courts at the same ExpiresAt boundary.
-        ///
-        /// Idempotent: already-deleted rows are gone.
+        /// Tác vụ xóa các bản ghi SlotLock đã hết hạn giữ sân.
         /// </summary>
         [DisableConcurrentExecution(timeoutInSeconds: 10)]
         public async Task CleanupExpiredSlotLocksAsync()
@@ -311,41 +293,28 @@ namespace SmashCourt_BE.Jobs
 
                 if (deleted > 0)
                     _logger.LogInformation(
-                        "[Job-03] Deleted {Count} expired slot locks. Elapsed: {Ms}ms",
+                        "[Job-03] Đã dọn dẹp {Count} slot tạm khóa hết hạn. Thời gian chạy: {Ms}ms",
                         deleted, sw.ElapsedMilliseconds);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[Job-03] Error. Elapsed: {Ms}ms", sw.ElapsedMilliseconds);
+                _logger.LogError(ex, "[Job-03] Lỗi khi dọn dẹp slot tạm khóa. Thời gian chạy: {Ms}ms", sw.ElapsedMilliseconds);
             }
         }
 
         // ════════════════════════════════════════════════════════════════════
-        // Job-04 · Detect NO_SHOW bookings  (every 5 min)
+        // Tác vụ 04 · Tự động phát hiện đơn không đến nhận sân (quét mỗi 5 phút)
         // ════════════════════════════════════════════════════════════════════
 
         /// <summary>
-        /// Marks CONFIRMED / PAID_ONLINE bookings as NO_SHOW when the
-        /// customer did not check in within the grace period.
-        ///
-        /// Covered cases:
-        ///   • CONFIRMED  + no check-in + StartTime+15min elapsed → NO_SHOW
-        ///   • PAID_ONLINE + no check-in + StartTime+15min elapsed → NO_SHOW
-        ///   • Either status + check-in present → status already IN_PROGRESS; not in query
-        ///   • Within grace window → skipped
-        ///   • Court SUSPENDED / INACTIVE → court status left unchanged
-        ///
-        /// Note: PAID_ONLINE bookings past EndTime with no check-in are also
-        /// caught here (Job-02 defers them). The NO_SHOW outcome is correct
-        /// even when EndTime has passed — the customer simply never showed.
-        ///
-        /// Idempotent: NO_SHOW bookings leave the status filter.
+        /// Tác vụ quét các đơn CONFIRMED / PAID_ONLINE không check-in trong thời gian ân hạn.
+        /// Chuyển trạng thái sang NO_SHOW và giải phóng sân trống.
         /// </summary>
         [DisableConcurrentExecution(timeoutInSeconds: 10)]
         public async Task DetectNoShowBookingsAsync()
         {
             var sw = Stopwatch.StartNew();
-            _logger.LogInformation("[Job-04] Starting NO_SHOW detection");
+            _logger.LogInformation("[Job-04] Bắt đầu quét phát hiện NO_SHOW.");
 
             try
             {
@@ -361,7 +330,7 @@ namespace SmashCourt_BE.Jobs
 
                 if (candidates.Count == 0)
                 {
-                    _logger.LogInformation("[Job-04] No NO_SHOW candidates. Elapsed: {Ms}ms", sw.ElapsedMilliseconds);
+                    _logger.LogInformation("[Job-04] Không phát hiện đơn tiềm năng NO_SHOW. Thời gian chạy: {Ms}ms", sw.ElapsedMilliseconds);
                     return;
                 }
 
@@ -380,7 +349,7 @@ namespace SmashCourt_BE.Jobs
 
                 if (noShowBookings.Count == 0)
                 {
-                    _logger.LogInformation("[Job-04] No bookings past grace window. Elapsed: {Ms}ms", sw.ElapsedMilliseconds);
+                    _logger.LogInformation("[Job-04] Không có đơn nào vượt quá thời gian ân hạn. Thời gian chạy: {Ms}ms", sw.ElapsedMilliseconds);
                     return;
                 }
 
@@ -426,9 +395,9 @@ namespace SmashCourt_BE.Jobs
                         var courtIdList = string.Join(", ", booking.BookingCourts.Select(bc => bc.CourtId));
 
                         _logger.LogWarning(
-                            "[Job-04] NO_SHOW — BookingId={BookingId} CustomerId={CustomerId} " +
-                            "Courts=[{CourtIds}] Date={Date} StartTime={Start} " +
-                            "PaymentTiming={Timing} Amount={Amount}",
+                            "[Job-04] CẢNH BÁO NO_SHOW — BookingId={BookingId} CustomerId={CustomerId} " +
+                            "Courts=[{CourtIds}] Ngày={Date} Giờ Bắt Đầu={Start} " +
+                            "Phương thức TT={Timing} Số tiền={Amount}",
                             booking.Id,
                             booking.CustomerId ?? Guid.Empty,
                             courtIdList,
@@ -441,7 +410,7 @@ namespace SmashCourt_BE.Jobs
                     {
                         errors++;
                         _logger.LogError(ex,
-                            "[Job-04] Failed to mark booking {BookingId} as NO_SHOW. Skipping.",
+                            "[Job-04] Lỗi khi đánh dấu đơn {BookingId} là NO_SHOW. Bỏ qua.",
                             booking.Id);
                         _db.Entry(booking).State = EntityState.Unchanged;
                         foreach (var bc in booking.BookingCourts)
@@ -452,17 +421,17 @@ namespace SmashCourt_BE.Jobs
                 await _db.SaveChangesAsync();
 
                 _logger.LogInformation(
-                    "[Job-04] Marked={Marked} Errors={Errors} Elapsed={Ms}ms",
+                    "[Job-04] Kết thúc. Đã xử lý NO_SHOW={Marked} Lỗi={Errors} Thời gian chạy: {Ms}ms",
                     marked, errors, sw.ElapsedMilliseconds);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[Job-04] Unhandled error. Elapsed: {Ms}ms", sw.ElapsedMilliseconds);
+                _logger.LogError(ex, "[Job-04] Gặp lỗi không mong muốn. Thời gian chạy: {Ms}ms", sw.ElapsedMilliseconds);
             }
         }
 
         // ════════════════════════════════════════════════════════════════════
-        // Job-05 · Purge expired slot interests  (every 1 h)
+        // Tác vụ 05 · Dọn dẹp đăng ký chờ slot sân hết hạn (quét mỗi 1 giờ)
         // ════════════════════════════════════════════════════════════════════
 
         [DisableConcurrentExecution(timeoutInSeconds: 10)]
@@ -472,22 +441,21 @@ namespace SmashCourt_BE.Jobs
             {
                 var deleted = await _slotInterestRepo.DeleteExpiredAsync();
                 if (deleted > 0)
-                    _logger.LogInformation("[Job-05] Deleted {Count} expired slot interests", deleted);
+                    _logger.LogInformation("[Job-05] Đã dọn dẹp {Count} bản đăng ký chờ slot hết hạn.", deleted);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[Job-05] Error in slot interest cleanup");
+                _logger.LogError(ex, "[Job-05] Lỗi dọn dẹp slot interest.");
             }
         }
 
         // ════════════════════════════════════════════════════════════════════
-        // Private helpers
+        // Private helpers (Các hàm phụ trợ nội bộ)
         // ════════════════════════════════════════════════════════════════════
 
         /// <summary>
-        /// Returns court IDs that are currently held by another active booking
-        /// (i.e. not the batch being processed).
-        /// Single shared query used by Jobs 01, 02, and 04.
+        /// Trả về danh sách ID sân hiện đang bận bởi các đơn đặt sân đang hoạt động khác.
+        /// Tránh giải phóng nhầm sân khi kết thúc một đơn nhưng sân đang được đặt tiếp.
         /// </summary>
         private async Task<HashSet<Guid>> GetBusyCourtIdsAsync(
             HashSet<Guid> candidateCourtIds,
@@ -509,8 +477,7 @@ namespace SmashCourt_BE.Jobs
         }
 
         /// <summary>
-        /// Deactivates BookingCourt slots and, where safe, sets the court AVAILABLE.
-        /// Used by Job-01 (full release on cancellation).
+        /// Hủy kích hoạt BookingCourt và đặt trạng thái sân về trống (AVAILABLE) nếu an toàn.
         /// </summary>
         private static void ReleaseCourtSlots(
             IEnumerable<BookingCourt> slots,
@@ -534,22 +501,17 @@ namespace SmashCourt_BE.Jobs
         }
 
         /// <summary>
-        /// Core finalization logic for Job-02.
-        /// Each booking is processed independently; exceptions bubble to the
-        /// caller which rolls back in-memory state for that booking only.
-        ///
-        /// Returns the outcome so the caller can aggregate counters.
+        /// Logic lõi xử lý hoàn tất cho từng đơn hết giờ của Job-02.
         /// </summary>
         private FinalizeResult FinalizeExpiredBooking(
             Booking booking,
             HashSet<Guid> busyCourtIds,
             DateTime now)
         {
-            // Bookings with no courts are data anomalies — skip and warn.
             if (!booking.BookingCourts.Any())
             {
                 _logger.LogWarning(
-                    "[Job-02] Booking {BookingId} has no BookingCourts. Skipping.",
+                    "[Job-02] Đơn đặt {BookingId} không chứa BookingCourts. Bỏ qua.",
                     booking.Id);
                 return FinalizeResult.Skipped;
             }
@@ -558,9 +520,6 @@ namespace SmashCourt_BE.Jobs
 
             switch (booking.Status)
             {
-                // ── PAID_ONLINE / CONFIRMED ─────────────────────────────
-                // Both follow the same rule: if the customer never checked in,
-                // Job-04 owns the NO_SHOW transition; we skip here.
                 case BookingStatus.PAID_ONLINE:
                 case BookingStatus.CONFIRMED:
                     {
@@ -570,31 +529,21 @@ namespace SmashCourt_BE.Jobs
                         return CompleteOrPendPayment(booking, invoice, busyCourtIds, now);
                     }
 
-                // ── IN_PROGRESS ─────────────────────────────────────────
-                // Staff already checked the customer in; always finalize.
                 case BookingStatus.IN_PROGRESS:
                     {
                         return CompleteOrPendPayment(booking, invoice, busyCourtIds, now);
                     }
 
                 default:
-                    // Should never reach here given the query filter,
-                    // but guard defensively.
                     _logger.LogWarning(
-                        "[Job-02] Unexpected status {Status} on booking {BookingId}.",
+                        "[Job-02] Trạng thái không mong muốn {Status} trên đơn {BookingId}.",
                         booking.Status, booking.Id);
                     return FinalizeResult.Skipped;
             }
         }
 
         /// <summary>
-        /// Decides COMPLETED vs PENDING_PAYMENT based on invoice state,
-        /// then releases courts consistently for both outcomes.
-        ///
-        /// PARTIALLY_PAID intentionally → PENDING_PAYMENT:
-        ///   The court fee was pre-paid online (VNPay IPN sets PARTIALLY_PAID),
-        ///   but a service fee added at check-in may still be outstanding.
-        ///   Staff completes the checkout to settle the remainder.
+        /// Chuyển đơn sang COMPLETED hoặc PENDING_PAYMENT dựa trên hóa đơn, sau đó giải phóng sân.
         /// </summary>
         private FinalizeResult CompleteOrPendPayment(
             Booking booking,
@@ -605,8 +554,8 @@ namespace SmashCourt_BE.Jobs
             if (invoice == null)
             {
                 _logger.LogWarning(
-                    "[Job-02] Booking {BookingId} (Status={Status}) has no invoice. " +
-                    "Defaulting to PENDING_PAYMENT.",
+                    "[Job-02] Đơn đặt {BookingId} (Trạng thái={Status}) không có hóa đơn. " +
+                    "Mặc định chuyển về PENDING_PAYMENT.",
                     booking.Id, booking.Status);
             }
 
@@ -617,9 +566,6 @@ namespace SmashCourt_BE.Jobs
 
             if (invoice != null) invoice.UpdatedAt = now;
 
-            // Release courts for both outcomes:
-            //   COMPLETED        — booking is truly done
-            //   PENDING_PAYMENT  — slot is freed; staff re-books if needed after checkout
             foreach (var bc in booking.BookingCourts)
             {
                 bc.IsActive = false;
@@ -638,12 +584,7 @@ namespace SmashCourt_BE.Jobs
         }
 
         /// <summary>
-        /// Converts a Vietnam-local date+time pair to UTC.
-        ///
-        /// BookingCourt.Date and StartTime/EndTime are stored in VN local time.
-        /// Using SpecifyKind(Utc) would misrepresent them as already-UTC,
-        /// causing a 7-hour offset against DateTime.UtcNow.
-        /// ConvertTimeToUtc performs the correct zone conversion.
+        /// Chuyển đổi cặp ngày+giờ từ múi giờ Việt Nam sang UTC.
         /// </summary>
         private static DateTime ToUtcFromVietnam(DateOnly date, TimeOnly time)
         {
@@ -654,11 +595,7 @@ namespace SmashCourt_BE.Jobs
         }
     }
 
-    // ════════════════════════════════════════════════════════════════════════
-    // Supporting enum (internal to this file; move to Enums/ if reused)
-    // ════════════════════════════════════════════════════════════════════════
-
-    /// <summary>Result returned by FinalizeExpiredBooking for counter aggregation.</summary>
+    /// <summary>Kết quả xử lý hoàn tất để tổng hợp báo cáo log.</summary>
     internal enum FinalizeResult
     {
         Completed,

@@ -54,7 +54,11 @@ namespace SmashCourt_BE.Services
             Guid branchId;
             if (isStaffOrAbove)
             {
-                branchId = await _branchScopeResolver.ResolveBranchIdAsync(requestedBranchId, currentUserId!.Value, currentUserRole!);
+                if (!Enum.TryParse<UserRole>(currentUserRole, true, out var roleEnum))
+                {
+                    throw new AppException(403, "Role không hợp lệ", ErrorCodes.Forbidden);
+                }
+                branchId = await _branchScopeResolver.ResolveRequiredBranchIdAsync(requestedBranchId, currentUserId!.Value, roleEnum);
             }
             else
             {
@@ -88,9 +92,10 @@ namespace SmashCourt_BE.Services
             Guid? branchId = null;
             if (isStaffOrAbove || requestedBranchId.HasValue)
             {
-                branchId = await _branchScopeResolver.ResolveBranchIdAsync(requestedBranchId,
+                var roleEnum = Enum.TryParse<UserRole>(currentUserRole, true, out var r) ? r : UserRole.CUSTOMER;
+                branchId = await _branchScopeResolver.ResolveRequiredBranchIdAsync(requestedBranchId,
                    currentUserId ?? Guid.Empty,
-                   currentUserRole ?? "");
+                   roleEnum);
             }
 
             var court = await _repo.GetByIdAsync(id, branchId);
@@ -112,7 +117,11 @@ namespace SmashCourt_BE.Services
 
         public async Task<CourtDto> CreateAsync(Guid? requestedBranchId, CreateCourtDto dto, Guid currentUserId, string currentUserRole)
         {
-            var branchId = await _branchScopeResolver.ResolveBranchIdAsync(requestedBranchId, currentUserId, currentUserRole);
+            if (!Enum.TryParse<UserRole>(currentUserRole, true, out var roleEnum))
+            {
+                throw new AppException(403, "Role không hợp lệ", ErrorCodes.Forbidden);
+            }
+            var branchId = await _branchScopeResolver.ResolveRequiredBranchIdAsync(requestedBranchId, currentUserId, roleEnum);
             var branch = await _branchRepo.GetByIdAsync(branchId);
             if (branch == null || branch.Status != BranchStatus.ACTIVE)
                 throw new AppException(400, "Chi nhánh không khả dụng", ErrorCodes.BadRequest);
@@ -148,7 +157,11 @@ namespace SmashCourt_BE.Services
 
         public async Task<CourtDto> UpdateAsync(Guid id, Guid? requestedBranchId, UpdateCourtDto dto, Guid currentUserId, string currentUserRole)
         {
-            var branchId = await _branchScopeResolver.ResolveBranchIdAsync(requestedBranchId, currentUserId, currentUserRole);
+            if (!Enum.TryParse<UserRole>(currentUserRole, true, out var roleEnum))
+            {
+                throw new AppException(403, "Role không hợp lệ", ErrorCodes.Forbidden);
+            }
+            var branchId = await _branchScopeResolver.ResolveRequiredBranchIdAsync(requestedBranchId, currentUserId, roleEnum);
             var court = await _repo.GetByIdAsync(id, branchId);
             if (court == null)
                 throw new AppException(404, "Không tìm thấy sân", ErrorCodes.NotFound);
@@ -178,7 +191,11 @@ namespace SmashCourt_BE.Services
 
         public async Task SuspendAsync(Guid id, Guid? requestedBranchId, Guid currentUserId, string currentUserRole)
         {
-            var branchId = await _branchScopeResolver.ResolveBranchIdAsync(requestedBranchId, currentUserId, currentUserRole);
+            if (!Enum.TryParse<UserRole>(currentUserRole, true, out var roleEnum))
+            {
+                throw new AppException(403, "Role không hợp lệ", ErrorCodes.Forbidden);
+            }
+            var branchId = await _branchScopeResolver.ResolveRequiredBranchIdAsync(requestedBranchId, currentUserId, roleEnum);
             var court = await _repo.GetByIdAsync(id, branchId);
             if (court == null) throw new AppException(404, "Không tìm thấy sân", ErrorCodes.NotFound);
 
@@ -198,7 +215,11 @@ namespace SmashCourt_BE.Services
 
         public async Task ActivateAsync(Guid id, Guid? requestedBranchId, Guid currentUserId, string currentUserRole)
         {
-            var branchId = await _branchScopeResolver.ResolveBranchIdAsync(requestedBranchId, currentUserId, currentUserRole);
+            if (!Enum.TryParse<UserRole>(currentUserRole, true, out var roleEnum))
+            {
+                throw new AppException(403, "Role không hợp lệ", ErrorCodes.Forbidden);
+            }
+            var branchId = await _branchScopeResolver.ResolveRequiredBranchIdAsync(requestedBranchId, currentUserId, roleEnum);
             var court = await _repo.GetByIdAsync(id, branchId);
             if (court == null) throw new AppException(404, "Không tìm thấy sân", ErrorCodes.NotFound);
 
@@ -212,7 +233,11 @@ namespace SmashCourt_BE.Services
 
         public async Task DeleteAsync(Guid id, Guid? requestedBranchId, Guid currentUserId, string currentUserRole)
         {
-            var branchId = await _branchScopeResolver.ResolveBranchIdAsync(requestedBranchId, currentUserId, currentUserRole);
+            if (!Enum.TryParse<UserRole>(currentUserRole, true, out var roleEnum))
+            {
+                throw new AppException(403, "Role không hợp lệ", ErrorCodes.Forbidden);
+            }
+            var branchId = await _branchScopeResolver.ResolveRequiredBranchIdAsync(requestedBranchId, currentUserId, roleEnum);
             var court = await _repo.GetByIdAsync(id, branchId);
             if (court == null) throw new AppException(404, "Không tìm thấy sân", ErrorCodes.NotFound);
 
@@ -231,7 +256,11 @@ namespace SmashCourt_BE.Services
             Guid? requestedBranchId, DateOnly? date,
             Guid currentUserId, string currentUserRole)
         {
-            var branchId = await _branchScopeResolver.ResolveBranchIdAsync(requestedBranchId, currentUserId, currentUserRole);
+            if (!Enum.TryParse<UserRole>(currentUserRole, true, out var roleEnum))
+            {
+                throw new AppException(403, "Role không hợp lệ", ErrorCodes.Forbidden);
+            }
+            var branchId = await _branchScopeResolver.ResolveRequiredBranchIdAsync(requestedBranchId, currentUserId, roleEnum);
             var targetDate = date ?? DateTimeHelper.GetTodayInVietnam();
             var data = await _repo.GetManagementDashboardDataAsync(branchId, targetDate, null, null);
 
@@ -261,7 +290,11 @@ namespace SmashCourt_BE.Services
             int page, int pageSize,
             Guid currentUserId, string currentUserRole)
         {
-            var branchId = await _branchScopeResolver.ResolveBranchIdAsync(requestedBranchId, currentUserId, currentUserRole);
+            if (!Enum.TryParse<UserRole>(currentUserRole, true, out var roleEnum))
+            {
+                throw new AppException(403, "Role không hợp lệ", ErrorCodes.Forbidden);
+            }
+            var branchId = await _branchScopeResolver.ResolveRequiredBranchIdAsync(requestedBranchId, currentUserId, roleEnum);
             var targetDate = date ?? DateTimeHelper.GetTodayInVietnam();
             var data = await _repo.GetManagementDashboardDataAsync(branchId, targetDate, search, typeId);
 
@@ -317,7 +350,11 @@ namespace SmashCourt_BE.Services
             Guid? requestedBranchId, DateOnly date, Guid? typeId,
             Guid currentUserId, string currentUserRole)
         {
-            var branchId = await _branchScopeResolver.ResolveBranchIdAsync(requestedBranchId, currentUserId, currentUserRole);
+            if (!Enum.TryParse<UserRole>(currentUserRole, true, out var roleEnum))
+            {
+                throw new AppException(403, "Role không hợp lệ", ErrorCodes.Forbidden);
+            }
+            var branchId = await _branchScopeResolver.ResolveRequiredBranchIdAsync(requestedBranchId, currentUserId, roleEnum);
             var data = await _repo.GetManagementTimelineDataAsync(branchId, date, typeId);
 
             var branch = data.Branch;
@@ -366,7 +403,11 @@ namespace SmashCourt_BE.Services
             if (court == null) throw new AppException(404, "Không tìm thấy sân", ErrorCodes.NotFound);
 
             // Scope resolution for the court's branch
-            await _branchScopeResolver.ResolveBranchIdAsync(court.BranchId, currentUserId, currentUserRole);
+            if (!Enum.TryParse<UserRole>(currentUserRole, true, out var roleEnum))
+            {
+                throw new AppException(403, "Role không hợp lệ", ErrorCodes.Forbidden);
+            }
+            await _branchScopeResolver.ResolveRequiredBranchIdAsync(court.BranchId, currentUserId, roleEnum);
 
             var branch = await _branchRepo.GetByIdAsync(court.BranchId)
                 ?? throw new AppException(404, "Không tìm thấy chi nhánh", ErrorCodes.NotFound);
