@@ -91,7 +91,9 @@ namespace SmashCourt_BE.Jobs
                     .Include(i => i.Booking)
                         .ThenInclude(b => b.BookingCourts)
                             .ThenInclude(bc => bc.Court)
-                    .Where(i => i.PaymentStatus == InvoicePaymentStatus.UNPAID && i.ExpiresAt < now)
+                    .Where(i => i.PaymentStatus == InvoicePaymentStatus.UNPAID 
+                             && i.ExpiresAt < now
+                             && i.Booking.Status == BookingStatus.PENDING)
                     .ToListAsync();
 
                 if (expiredInvoices.Count == 0)
