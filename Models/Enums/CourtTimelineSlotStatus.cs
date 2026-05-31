@@ -6,7 +6,9 @@ namespace SmashCourt_BE.Models.Enums
     public enum CourtTimelineSlotStatus
     {
         AVAILABLE = 0,
-        BOOKED = 1,
-        PLAYING = 2
+        COMPLETED = 1,
+        BOOKED = 2,
+        PLAYING = 3
+
     }
 }

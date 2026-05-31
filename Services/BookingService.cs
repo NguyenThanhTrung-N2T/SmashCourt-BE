@@ -1307,7 +1307,6 @@ namespace SmashCourt_BE.Services
             var date = booking.BookingDate;
 
             var startLocal = date.ToDateTime(bookingCourt.StartTime);
-            var endLocal = date.ToDateTime(bookingCourt.EndTime);
 
             var startDateTime = TimeZoneInfo.ConvertTimeToUtc(startLocal, DateTimeHelper.VNTimezone);
 
@@ -1454,6 +1453,14 @@ namespace SmashCourt_BE.Services
                 latestInvoice.UpdatedAt = now;
                 await _invoiceRepo.UpdateAsync(latestInvoice);
 
+                // 3.1. Trường hợp check-out sớm, cập nhật actual_end_play_time
+                // After fetching booking courts
+                var nowTime = TimeOnly.FromDateTime(DateTimeHelper.GetVietnamNow());
+                var isEarlyCheckout = booking.BookingCourts
+                    .Any(bc => bc.IsActive && nowTime < bc.EndTime);
+                if (isEarlyCheckout)
+                    await _bookingRepo.SetActualEndPlayTimeAsync(booking.Id, nowTime);
+
                 // 4. Deactivate booking courts khi COMPLETED
                 await _bookingRepo.UpdateCourtActiveStatusAsync(booking.Id, false);
 
@@ -1576,6 +1583,7 @@ namespace SmashCourt_BE.Services
                                    - latestInvoice.PromotionDiscountAmount
                                    + serviceFeeTotal;
                 latestInvoice.UpdatedAt = DateTime.UtcNow;
+                await RecalculatePaymentStatusAsync(latestInvoice);
                 await _invoiceRepo.UpdateAsync(latestInvoice);
 
                 // Commit transaction
@@ -1621,7 +1629,7 @@ namespace SmashCourt_BE.Services
                     "Không thể xóa dịch vụ ở trạng thái hiện tại", ErrorCodes.BadRequest);
 
             var bookingService = booking.BookingServices
-                .FirstOrDefault(bs => bs.Id == serviceId);
+                .FirstOrDefault(bs => bs.ServiceId == serviceId);
 
             // IDEMPOTENCY: Nếu service đã bị xóa rồi → return success (không throw 404)
             // Lý do: Client có thể retry request do network issue
@@ -1669,6 +1677,7 @@ namespace SmashCourt_BE.Services
                                    - latestInvoice.PromotionDiscountAmount
                                    + remainingServiceFee;
                 latestInvoice.UpdatedAt = DateTime.UtcNow;
+                await RecalculatePaymentStatusAsync(latestInvoice);
                 await _invoiceRepo.UpdateAsync(latestInvoice);
 
                 // Commit transaction
@@ -1830,10 +1839,6 @@ namespace SmashCourt_BE.Services
         /// </remarks>
         private bool CanModifyServices(Booking booking, Invoice invoice)
         {
-            // Rule 1: Đã thanh toán đủ → KHÔNG cho phép chỉnh sửa
-            if (invoice.PaymentStatus == InvoicePaymentStatus.PAID)
-                return false;
-
             // Rule 2: Chỉ cho phép khi khách đã đến sân
             // IN_PROGRESS: Khách đang chơi → cho phép add service
             // PENDING_PAYMENT: Hết giờ, chờ checkout → vẫn cho phép add service nếu cần
@@ -1858,16 +1863,6 @@ namespace SmashCourt_BE.Services
         /// </remarks>
         private void EnsureBookingModifiable(BookingStatus status, InvoicePaymentStatus paymentStatus)
         {
-            // 🔴 PRIORITY 1: Financial Truth (Payment Status Check)
-            // CRITICAL: Check này PHẢI đi trước vì PaymentStatus là source of truth cuối cùng
-            // Ngăn modify sau khi đã thu tiền - quan trọng nhất về mặt tài chính
-            // Case: Status = PENDING_PAYMENT + PaymentStatus = PAID → PHẢI block (đã thu tiền rồi)
-            if (paymentStatus == InvoicePaymentStatus.PAID)
-            {
-                throw new AppException(400,
-                    "Không thể thêm/xóa dịch vụ - hóa đơn đã thanh toán",
-                    ErrorCodes.BadRequest);
-            }
 
             // 🟡 PRIORITY 2: Workflow State (Booking Status Check)
             // Check workflow state - quan trọng nhưng ít hơn PaymentStatus
@@ -2330,6 +2325,23 @@ namespace SmashCourt_BE.Services
             });
 
             return invoice;
+        }
+        private async Task RecalculatePaymentStatusAsync(Invoice invoice)
+        {
+            var collected =
+                await _paymentRepo.GetCollectedAmountAsync(invoice.Id);
+
+            invoice.PaymentStatus =
+                collected switch
+                {
+                    <= 0 => InvoicePaymentStatus.UNPAID,
+
+                    _ when collected < invoice.FinalTotal =>
+                        InvoicePaymentStatus.PARTIALLY_PAID,
+
+                    _ =>
+                        InvoicePaymentStatus.PAID
+                };
         }
 
         /// <summary>

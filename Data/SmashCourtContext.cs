@@ -477,6 +477,7 @@ namespace SmashCourt_BE.Data
                 e.Property(x => x.Date).HasColumnName("date");
                 e.Property(x => x.StartTime).HasColumnName("start_time");
                 e.Property(x => x.EndTime).HasColumnName("end_time");
+                e.Property(x => x.ActualEndPlayTime).HasColumnName("actual_end_play_time");
                 e.Property(x => x.IsActive).HasColumnName("is_active").HasDefaultValue(true);
                 e.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()");
 

@@ -1,5 +1,6 @@
 using SmashCourt_BE.Data;
 using SmashCourt_BE.Models.Entities;
+using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
 using Microsoft.EntityFrameworkCore;
 
@@ -65,7 +66,14 @@ namespace SmashCourt_BE.Repositories
             _context.Payments.Update(payment);
             await _context.SaveChangesAsync();
         }
-
+        public async Task<decimal> GetCollectedAmountAsync(Guid invoiceId)
+        {
+            return await _context.Payments
+                .Where(p =>
+                    p.InvoiceId == invoiceId &&
+                    p.Status == PaymentTxStatus.SUCCESS)
+                .SumAsync(p => p.Amount - p.RefundedAmount);
+        }
         public async Task CreateIpnLogAsync(PaymentIpnLog log)
         {
             _context.PaymentIpnLogs.Add(log);

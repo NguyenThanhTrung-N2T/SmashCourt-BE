@@ -54,6 +54,7 @@ namespace SmashCourt_BE.DTOs.Court
     {
         public string StartTime { get; set; } = null!;
         public string EndTime { get; set; } = null!;
+        public bool IsEarlyCheckout { get; set; }
 
         /// <summary>Available / Booked / Playing</summary>
         public CourtTimelineSlotStatus Status { get; set; } = CourtTimelineSlotStatus.AVAILABLE;

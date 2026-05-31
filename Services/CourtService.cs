@@ -423,7 +423,7 @@ namespace SmashCourt_BE.Services
 
             // Current player: only meaningful when viewing today's date
             var currentBc = isToday
-                ? courtBcs.FirstOrDefault(bc => bc.StartTime <= now && bc.EndTime > now && bc.Booking.Status == BookingStatus.IN_PROGRESS)
+                ? courtBcs.FirstOrDefault(bc => bc.StartTime <= now && (bc.ActualEndPlayTime ?? bc.EndTime) > now && bc.Booking.Status == BookingStatus.IN_PROGRESS)
                 : null;
 
             // Upcoming bookings: all future slots today; all bookings when browsing another date
@@ -467,7 +467,7 @@ namespace SmashCourt_BE.Services
 
             // Current overlapping bookings
             var overlappingNowStatuses = courtBcs
-                .Where(bc => bc.StartTime <= now && bc.EndTime > now)
+                .Where(bc => bc.StartTime <= now && (bc.ActualEndPlayTime ?? bc.EndTime) > now)
                 .Select(bc => bc.Booking.Status)
                 .ToList();
 
@@ -494,18 +494,21 @@ namespace SmashCourt_BE.Services
             var perSlot = slots.Select(slot =>
             {
                 var overlapping = courtBcs
-                    .Where(bc => bc.StartTime < slot.EndTime && bc.EndTime > slot.StartTime)
+                    .Where(bc => bc.StartTime < slot.EndTime && (bc.ActualEndPlayTime ?? bc.EndTime) > slot.StartTime)
                     .ToList();
 
                 var status = CourtTimelineSlotStatus.AVAILABLE;
                 Models.Entities.BookingCourt? representativeBc = null;
+
                 if (overlapping.Count > 0)
                 {
-                    var inProgress = overlapping.FirstOrDefault(bc => bc.Booking.Status == BookingStatus.IN_PROGRESS);
-                    var active = overlapping.FirstOrDefault(bc => IsBookingConsideredActive(bc.Booking.Status));
-                    representativeBc = inProgress ?? active;
-                    if (inProgress != null) status = CourtTimelineSlotStatus.PLAYING;
-                    else if (active != null) status = CourtTimelineSlotStatus.BOOKED;
+                    representativeBc = overlapping
+                        .OrderByDescending(bc => (int)MapTimelineStatus(bc.Booking.Status))
+                        .FirstOrDefault();
+
+                    status = representativeBc == null
+                        ? CourtTimelineSlotStatus.AVAILABLE
+                        : MapTimelineStatus(representativeBc.Booking.Status);
                 }
 
                 return new { Start = slot.StartTime, End = slot.EndTime, Status = status, Bc = representativeBc };
@@ -547,44 +550,49 @@ namespace SmashCourt_BE.Services
                 Status = status,
                 BookingId = bc?.BookingId,
                 PlayerName = bc == null ? null : (bc.Booking.Customer?.FullName ?? bc.Booking.GuestName ?? "Khách vãng lai"),
-                BookingStatus = bc?.Booking.Status.ToString()
+                BookingStatus = bc?.Booking.Status.ToString(),
+                IsEarlyCheckout = bc?.ActualEndPlayTime != null,
+                ActualEndTime = bc?.ActualEndPlayTime?.ToString("HH:mm")
             };
 
         private static List<CourtTimelineSlotDto> BuildTimeline(List<Models.Entities.BookingCourt> courtBcs, List<TimeSlot> slots)
         {
-            // Compute raw status per slot
             var perSlot = slots.Select(slot =>
             {
-                var overlappingStatuses = courtBcs
-                    .Where(bc => bc.StartTime < slot.EndTime && bc.EndTime > slot.StartTime)
-                    .Select(bc => bc.Booking.Status)
+                var overlapping = courtBcs
+                    .Where(bc => bc.StartTime < slot.EndTime && (bc.ActualEndPlayTime ?? bc.EndTime) > slot.StartTime)
                     .ToList();
 
                 var status = CourtTimelineSlotStatus.AVAILABLE;
-                if (overlappingStatuses.Count > 0)
+                Models.Entities.BookingCourt? representativeBc = null;
+
+                if (overlapping.Any())
                 {
-                    if (overlappingStatuses.Contains(BookingStatus.IN_PROGRESS)) status = CourtTimelineSlotStatus.PLAYING;
-                    else if (overlappingStatuses.Any(s => IsBookingConsideredActive(s))) status = CourtTimelineSlotStatus.BOOKED;
+                    representativeBc = overlapping
+                        .OrderByDescending(bc => (int)MapTimelineStatus(bc.Booking.Status))
+                        .First();
+
+                    status = MapTimelineStatus(representativeBc.Booking.Status);
                 }
 
-                return new { Start = slot.StartTime, End = slot.EndTime, Status = status };
+                return new { Start = slot.StartTime, End = slot.EndTime, Status = status, Bc = representativeBc };
             }).ToList();
 
             var result = new List<CourtTimelineSlotDto>();
             if (!perSlot.Any()) return result;
 
-            // Merge contiguous slots with identical status
             var curStart = perSlot[0].Start;
             var curEnd = perSlot[0].End;
             var curStatus = perSlot[0].Status;
+            var curBc = perSlot[0].Bc;
 
             for (int i = 1; i < perSlot.Count; i++)
             {
                 var s = perSlot[i];
                 if (s.Status == curStatus && s.Start == curEnd)
                 {
-                    // extend current merged segment
                     curEnd = s.End;
+                    // keep curBc as-is, same segment
                 }
                 else
                 {
@@ -592,21 +600,23 @@ namespace SmashCourt_BE.Services
                     {
                         StartTime = curStart.ToString("HH:mm"),
                         EndTime = curEnd.ToString("HH:mm"),
-                        Status = curStatus
+                        Status = curStatus,
+                        IsEarlyCheckout = curBc?.ActualEndPlayTime != null
                     });
 
                     curStart = s.Start;
                     curEnd = s.End;
                     curStatus = s.Status;
+                    curBc = s.Bc;
                 }
             }
 
-            // push final segment
             result.Add(new CourtTimelineSlotDto
             {
                 StartTime = curStart.ToString("HH:mm"),
                 EndTime = curEnd.ToString("HH:mm"),
-                Status = curStatus
+                Status = curStatus,
+                IsEarlyCheckout = curBc?.ActualEndPlayTime != null
             });
 
             return result;
@@ -700,14 +710,31 @@ namespace SmashCourt_BE.Services
             BookingStatus.PENDING_PAYMENT => "Chờ TT",
             BookingStatus.IN_PROGRESS => "Đang chơi",
             BookingStatus.PENDING => "Chờ XN",
-            BookingStatus.COMPLETED => "Hoàn thành",
+            BookingStatus.COMPLETED => "Hoàn tất",
             BookingStatus.CANCELLED => "Đã hủy",
-            BookingStatus.CANCELLED_PENDING_REFUND => "Chờ hoàn tiền",
-            BookingStatus.CANCELLED_REFUNDED => "Đã hoàn tiền",
+            BookingStatus.CANCELLED_PENDING_REFUND => "Chờ hoàn",
+            BookingStatus.CANCELLED_REFUNDED => "Đã hoàn",
             BookingStatus.NO_SHOW => "Không đến",
             _ => status.ToString()
         };
+        private static CourtTimelineSlotStatus MapTimelineStatus(BookingStatus status)
+        {
+            return status switch
+            {
+                BookingStatus.IN_PROGRESS => CourtTimelineSlotStatus.PLAYING,
 
+                BookingStatus.PENDING
+                or BookingStatus.CONFIRMED
+                or BookingStatus.PAID_ONLINE
+                or BookingStatus.PENDING_PAYMENT
+                    => CourtTimelineSlotStatus.BOOKED,
+
+                BookingStatus.COMPLETED
+                    => CourtTimelineSlotStatus.COMPLETED,
+
+                _ => CourtTimelineSlotStatus.AVAILABLE
+            };
+        }
         private static CourtDto MapToDto(Court c) => new()
         {
             Id = c.Id,

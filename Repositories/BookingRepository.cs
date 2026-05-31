@@ -842,5 +842,12 @@ namespace SmashCourt_BE.Repositories
                 .Where(b => b.CustomerId == customerId && b.Status == BookingStatus.COMPLETED)
                 .CountAsync();
         }
+        public async Task SetActualEndPlayTimeAsync(Guid bookingId, TimeOnly actualEnd)
+        {
+            await _context.BookingCourts
+                .Where(bc => bc.BookingId == bookingId && bc.IsActive && bc.EndTime > actualEnd)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(bc => bc.ActualEndPlayTime, actualEnd));
+        }
     }
 }

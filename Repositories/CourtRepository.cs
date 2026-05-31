@@ -160,7 +160,7 @@ namespace SmashCourt_BE.Repositories
 
             // Query 3: All active BookingCourts for the given date for courts in this branch
             var courtIds = courts.Select(c => c.Id).ToList();
-            var activeStatuses = Helpers.BookingStatusTransition.GetActiveStatuses();
+            var activeStatuses = GetTimelineStatuses();
 
             var bookingCourts = await _context.BookingCourts
                 .AsNoTracking()
@@ -205,7 +205,7 @@ namespace SmashCourt_BE.Repositories
             var courts = await courtQuery.OrderBy(c => c.Name).ToListAsync();
             var courtIds = courts.Select(c => c.Id).ToList();
 
-            var activeStatuses = Helpers.BookingStatusTransition.GetActiveStatuses();
+            var activeStatuses = GetTimelineStatuses();
 
             var bookingCourts = await _context.BookingCourts
                 .AsNoTracking()
@@ -226,5 +226,14 @@ namespace SmashCourt_BE.Repositories
                 TodayBookingCourts = bookingCourts
             };
         }
+        private static BookingStatus[] GetTimelineStatuses() =>
+        [
+            BookingStatus.PENDING,
+            BookingStatus.CONFIRMED,
+            BookingStatus.PAID_ONLINE,
+            BookingStatus.PENDING_PAYMENT,
+            BookingStatus.IN_PROGRESS,
+            BookingStatus.COMPLETED,
+        ];
     }
 }

@@ -5,7 +5,7 @@ namespace SmashCourt_BE.Repositories.IRepository
     public interface IPaymentRepository
     {
         Task<Payment?> GetByTransactionRefAsync(string transactionRef);
-        
+
         /// <summary>
         /// Lấy payment theo transaction ref với option AsNoTracking
         /// Dùng cho idempotency check để tránh EF Core tracking conflict
@@ -17,6 +17,7 @@ namespace SmashCourt_BE.Repositories.IRepository
 
         // cập nhật payment
         Task UpdateAsync(Payment payment);
+        Task<decimal> GetCollectedAmountAsync(Guid invoiceId);
         Task CreateIpnLogAsync(PaymentIpnLog log);
     }
 }

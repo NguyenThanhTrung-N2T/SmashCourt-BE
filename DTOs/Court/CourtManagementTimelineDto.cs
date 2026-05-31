@@ -40,5 +40,7 @@ namespace SmashCourt_BE.DTOs.Court
         public Guid? BookingId { get; set; }
         public string? PlayerName { get; set; }
         public string? BookingStatus { get; set; }
+        public string? ActualEndTime { get; set; }    // non-null = early checkout
+        public bool IsEarlyCheckout { get; set; }
     }
 }

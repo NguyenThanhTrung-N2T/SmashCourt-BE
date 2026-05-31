@@ -90,10 +90,10 @@ namespace SmashCourt_BE.Repositories.IRepository
         /// <param name="now">Timestamp hiện tại</param>
         /// <returns>Số rows affected (1 = thành công, 0 = conflict)</returns>
         Task<int> AtomicUpdatePaymentSuccessAsync(
-            Guid bookingId, 
+            Guid bookingId,
             BookingStatus expectedStatus,
-            string cancelTokenHash, 
-            DateTime cancelTokenExpiry, 
+            string cancelTokenHash,
+            DateTime cancelTokenExpiry,
             DateTime now);
 
         /// <summary>
@@ -102,5 +102,6 @@ namespace SmashCourt_BE.Repositories.IRepository
         /// <param name="customerId">ID của khách hàng</param>
         /// <returns>Số lượng booking đã hoàn thành</returns>
         Task<int> GetCompletedBookingCountAsync(Guid customerId);
+        Task SetActualEndPlayTimeAsync(Guid bookingId, TimeOnly actualEnd);
     }
 }
