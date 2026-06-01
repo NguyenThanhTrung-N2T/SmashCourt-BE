@@ -69,10 +69,10 @@ public class ReportRepository : IReportRepository
             .Select(g => new { Status = g.Key, Count = g.Count() })
             .ToListAsync();
 
-        var totalBookings      = bookingStatusCounts.Sum(s => s.Count);
-        var completedBookings  = bookingStatusCounts.FirstOrDefault(s => s.Status == BookingStatus.COMPLETED)?.Count ?? 0;
-        var cancelledBookings  = bookingStatusCounts.FirstOrDefault(s => s.Status == BookingStatus.CANCELLED)?.Count ?? 0;
-        var noShowBookings     = bookingStatusCounts.FirstOrDefault(s => s.Status == BookingStatus.NO_SHOW)?.Count ?? 0;
+        var totalBookings = bookingStatusCounts.Sum(s => s.Count);
+        var completedBookings = bookingStatusCounts.FirstOrDefault(s => s.Status == BookingStatus.COMPLETED)?.Count ?? 0;
+        var cancelledBookings = bookingStatusCounts.FirstOrDefault(s => s.Status == BookingStatus.CANCELLED)?.Count ?? 0;
+        var noShowBookings = bookingStatusCounts.FirstOrDefault(s => s.Status == BookingStatus.NO_SHOW)?.Count ?? 0;
 
         // Logic đếm khách hàng mới
         int newCustomers;
@@ -100,7 +100,7 @@ public class ReportRepository : IReportRepository
             {
                 // PostgreSQL yêu cầu DateTime phải có Kind = UTC cho timestamp with time zone
                 var fromDateTime = fromDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
-                var toDateTime   = toDate.ToDateTime(TimeOnly.MaxValue,   DateTimeKind.Utc);
+                var toDateTime = toDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc);
                 userQuery = userQuery.Where(u => u.CreatedAt >= fromDateTime && u.CreatedAt <= toDateTime);
             }
 
@@ -133,15 +133,15 @@ public class ReportRepository : IReportRepository
 
         return new DashboardSummaryDto
         {
-            TotalRevenue         = totalRevenue,
-            TotalBookings        = totalBookings,
-            CompletedBookings    = completedBookings,
-            CancelledBookings    = cancelledBookings,
-            NoShowBookings       = noShowBookings,
-            NewCustomers         = newCustomers,
-            OccupancyRate        = occupancyRate,
+            TotalRevenue = totalRevenue,
+            TotalBookings = totalBookings,
+            CompletedBookings = completedBookings,
+            CancelledBookings = cancelledBookings,
+            NoShowBookings = noShowBookings,
+            NewCustomers = newCustomers,
+            OccupancyRate = occupancyRate,
             OnlinePaymentRevenue = onlineRevenue,
-            CashPaymentRevenue   = cashRevenue
+            CashPaymentRevenue = cashRevenue
         };
     }
 
@@ -217,7 +217,7 @@ public class ReportRepository : IReportRepository
     /// <param name="branchId">ID chi nhánh để filter (nullable)</param>
     /// <returns>Danh sách doanh thu và số booking theo từng ngày, được sắp xếp theo thứ tự thời gian</returns>
     public async Task<List<RevenueTrendDto>> GetRevenueTrendAsync(
-        DateOnly fromDate, DateOnly toDate, Guid? branchId, string? groupBy = "day", bool isAllTime = false) 
+        DateOnly fromDate, DateOnly toDate, Guid? branchId, string? groupBy = "day", bool isAllTime = false)
     {
         var invoicesQuery = GetInvoicesQuery(fromDate, toDate, branchId, isAllTime);
 
@@ -337,7 +337,7 @@ public class ReportRepository : IReportRepository
     }
 
     public async Task<List<LiveCourtAttentionDto>> GetManagerDashboardLiveCourtsAsync(
-        Guid branchId, DateOnly today, DateTime now, int minCards = 6, int maxCards = 8)
+        Guid branchId, DateOnly today, DateTime now, int fixedCards = 8)
     {
         var nowTime = TimeOnly.FromDateTime(now);
         var upcomingLimit = TimeOnly.FromDateTime(now.AddMinutes(30));
@@ -371,10 +371,10 @@ public class ReportRepository : IReportRepository
             .OrderBy(GetLiveCourtPriority)
             .ThenBy(card => card.StartTime ?? DateTime.MaxValue)
             .ThenBy(card => card.CourtName)
-            .Take(maxCards)
+            .Take(fixedCards)
             .ToList();
 
-        if (attentionCards.Count >= minCards)
+        if (attentionCards.Count >= fixedCards)
             return attentionCards;
 
         var selectedCourtIds = attentionCards.Select(card => card.CourtId).ToHashSet();
@@ -393,7 +393,7 @@ public class ReportRepository : IReportRepository
                 CourtStatus = court.Status.ToString(),
                 AttentionStatus = "AVAILABLE"
             })
-            .Take(Math.Min(maxCards, minCards) - attentionCards.Count)
+            .Take(fixedCards - attentionCards.Count)
             .ToList();
 
         attentionCards.AddRange(fillerCards);
@@ -449,7 +449,7 @@ public class ReportRepository : IReportRepository
     }
 
     public async Task<List<OccupancyForecastPointDto>> GetManagerDashboardOccupancyForecastAsync(
-        Guid branchId, DateOnly today, DateTime now, int hours = 8)
+    Guid branchId, DateOnly today, DateTime now, int hours = 8)
     {
         var totalCourts = await _context.Courts
             .AsNoTracking()
@@ -458,51 +458,61 @@ public class ReportRepository : IReportRepository
                         c.Status != CourtStatus.SUSPENDED)
             .CountAsync();
 
-        var firstBucketStart = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0);
-        var lastBucketEnd = firstBucketStart.AddHours(hours);
-        var fromDate = DateOnly.FromDateTime(firstBucketStart);
-        var toDate = DateOnly.FromDateTime(lastBucketEnd);
+        // Vietnam time (single source of truth)
+        var vnNow = DateTimeHelper.GetVietnamNow();
 
+        var firstBucketStart = new DateTime(
+            vnNow.Year, vnNow.Month, vnNow.Day,
+            vnNow.Hour, 0, 0
+        );
+
+        var lastBucketEnd = firstBucketStart.AddHours(hours);
+
+        var fromDateTime = firstBucketStart;
+        var toDateTime = lastBucketEnd;
+
+        // Load bookings (no Date filtering here anymore)
         var bookingCourts = await _context.BookingCourts
             .AsNoTracking()
             .Where(bc => bc.Booking.BranchId == branchId &&
-                         bc.Date >= fromDate &&
-                         bc.Date <= toDate &&
                          GetForecastBookingStatuses().Contains(bc.Booking.Status))
             .Select(bc => new
             {
                 bc.CourtId,
                 bc.BookingId,
-                bc.Date,
-                bc.StartTime,
-                EndTime = bc.ActualEndPlayTime ?? bc.EndTime
+                Start = bc.Date.ToDateTime(bc.StartTime),
+                End = bc.Date.ToDateTime(bc.ActualEndPlayTime ?? bc.EndTime)
             })
             .ToListAsync();
 
-        var result = new List<OccupancyForecastPointDto>();
+        var result = new List<OccupancyForecastPointDto>(hours);
+
         for (var i = 0; i < hours; i++)
         {
             var bucketStart = firstBucketStart.AddHours(i);
             var bucketEnd = bucketStart.AddHours(1);
 
             var overlapping = bookingCourts
-                .Where(bc =>
-                {
-                    var start = ToDateTime(bc.Date, bc.StartTime);
-                    var end = ToDateTime(bc.Date, bc.EndTime);
-                    return start < bucketEnd && end > bucketStart;
-                })
+                .Where(bc => bc.Start < bucketEnd && bc.End > bucketStart)
                 .ToList();
 
-            var occupiedCourts = overlapping.Select(bc => bc.CourtId).Distinct().Count();
-            var bookingCount = overlapping.Select(bc => bc.BookingId).Distinct().Count();
+            var occupiedCourts = overlapping
+                .Select(x => x.CourtId)
+                .Distinct()
+                .Count();
+
+            var bookingCount = overlapping
+                .Select(x => x.BookingId)
+                .Distinct()
+                .Count();
+
             var occupancyRate = totalCourts > 0
                 ? Math.Round((decimal)occupiedCourts / totalCourts * 100, 1)
                 : 0;
 
             result.Add(new OccupancyForecastPointDto
             {
-                Time = bucketStart,
+                Time = bucketStart.ToString("yyyy-MM-ddTHH:mm:ss"),
                 TotalCourts = totalCourts,
                 OccupiedCourts = occupiedCourts,
                 AvailableCourts = Math.Max(totalCourts - occupiedCourts, 0),
@@ -514,7 +524,6 @@ public class ReportRepository : IReportRepository
 
         return result;
     }
-
     #endregion Dashboard & Overview Reports
 
     #region Revenue & Booking Reports

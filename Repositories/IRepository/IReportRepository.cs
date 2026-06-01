@@ -19,7 +19,7 @@ public interface IReportRepository
     // Manager operational dashboard
     Task<ManagerDashboardBranchInfoDto> GetManagerDashboardBranchInfoAsync(Guid branchId);
     Task<ManagerDashboardKpiDto> GetManagerDashboardKpisAsync(Guid branchId, DateOnly today, DateTime now);
-    Task<List<LiveCourtAttentionDto>> GetManagerDashboardLiveCourtsAsync(Guid branchId, DateOnly today, DateTime now, int minCards = 6, int maxCards = 8);
+    Task<List<LiveCourtAttentionDto>> GetManagerDashboardLiveCourtsAsync(Guid branchId, DateOnly today, DateTime now, int fixedCards = 8);
     Task<List<UpcomingBookingDashboardItemDto>> GetManagerDashboardUpcomingBookingsAsync(Guid branchId, DateOnly today, DateTime now, int limit = 10);
     Task<List<ManagerDashboardActionItemDto>> GetManagerDashboardActionQueueAsync(Guid branchId, DateOnly today);
     Task<List<OccupancyForecastPointDto>> GetManagerDashboardOccupancyForecastAsync(Guid branchId, DateOnly today, DateTime now, int hours = 8);

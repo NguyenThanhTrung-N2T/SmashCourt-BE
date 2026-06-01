@@ -221,7 +221,7 @@ public class ManagerDashboardActionItemDto
 /// </summary>
 public class OccupancyForecastPointDto
 {
-    public DateTime Time { get; set; }
+    public string Time { get; set; } = default!;
     public int TotalCourts { get; set; }
     public int OccupiedCourts { get; set; }
     public int AvailableCourts { get; set; }
