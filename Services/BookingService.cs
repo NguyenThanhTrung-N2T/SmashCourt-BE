@@ -251,9 +251,9 @@ namespace SmashCourt_BE.Services
                     throw new AppException(400,
                         $"Sân {court.Name} đang tạm ngưng hoạt động", ErrorCodes.BadRequest);
 
-                if (court.Status == CourtStatus.IN_USE)
+                if (court.Status == CourtStatus.INACTIVE)
                     throw new AppException(400,
-                        $"Sân {court.Name} đang có khách chơi", ErrorCodes.BadRequest);
+                        $"Sân {court.Name} không còn hoạt động", ErrorCodes.BadRequest);
 
                 // Tất cả courts phải cùng branch
                 if (courtEntities.Any() &&
@@ -471,9 +471,9 @@ namespace SmashCourt_BE.Services
                     throw new AppException(400,
                         $"Sân {court.Name} đang tạm ngưng hoạt động", ErrorCodes.BadRequest);
 
-                if (court.Status == CourtStatus.IN_USE)
+                if (court.Status == CourtStatus.INACTIVE)
                     throw new AppException(400,
-                        $"Sân {court.Name} đang có khách chơi", ErrorCodes.BadRequest);
+                        $"Sân {court.Name} không còn hoạt động", ErrorCodes.BadRequest);
 
                 if (courtEntities.Any() &&
                     court.BranchId != courtEntities.First().Court.BranchId)
