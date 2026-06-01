@@ -34,6 +34,9 @@ namespace SmashCourt_BE.DTOs.Booking
 
         // Services
         public List<BookingServiceDto> Services { get; set; } = [];
+
+        //Refund
+        public decimal? RefundAmount { get; set; }
     }
 
     public class BookingCourtDto

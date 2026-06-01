@@ -2194,6 +2194,9 @@ namespace SmashCourt_BE.Services
             PromotionDiscountAmount = b.Invoice?.PromotionDiscountAmount ?? 0,
             FinalTotal = b.Invoice?.FinalTotal ?? 0,
             PaymentStatus = b.Invoice?.PaymentStatus.ToString() ?? "",
+            RefundAmount = b.Invoice?.Payments?
+                .SelectMany(p => p.Refunds ?? Enumerable.Empty<Refund>())
+                .Sum(r => (decimal?)r.Amount),
             Courts = b.BookingCourts?.Select(bc => new BookingCourtDto
             {
                 CourtId = bc.CourtId,

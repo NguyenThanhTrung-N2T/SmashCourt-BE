@@ -45,6 +45,8 @@ namespace SmashCourt_BE.Repositories
                 .Include(b => b.BookingCourts)
                     .ThenInclude(bc => bc.Court)
                 .Include(b => b.Invoice)
+                    .ThenInclude(i => i!.Payments)
+                        .ThenInclude(p => p.Refunds)
                 .AsQueryable();
 
             // OWNER → thấy tất cả
@@ -454,6 +456,8 @@ namespace SmashCourt_BE.Repositories
                 .Include(b => b.BookingCourts)
                     .ThenInclude(bc => bc.BookingPriceItems) // ✅ ADDED: Include BookingPriceItems
                 .Include(b => b.Invoice)
+                    .ThenInclude(i => i!.Payments)
+                        .ThenInclude(p => p.Refunds)
                 .Where(b => b.CustomerId == customerId);
 
             // Apply filters
@@ -541,6 +545,7 @@ namespace SmashCourt_BE.Repositories
                 .Include(b => b.BookingServices)
                 .Include(b => b.Invoice)
                     .ThenInclude(i => i!.Payments)   // cần để tạo refund record khi hủy
+                        .ThenInclude(p => p.Refunds)  // cần để tính tổng refund amount
                 .Include(b => b.BookingPromotion)
                 .FirstOrDefaultAsync(b => b.Id == id);
         }
@@ -570,6 +575,7 @@ namespace SmashCourt_BE.Repositories
                     .ThenInclude(bc => bc.Court)
                 .Include(b => b.Invoice)
                     .ThenInclude(i => i!.Payments)   // cần để tạo refund record khi hủy
+                        .ThenInclude(p => p.Refunds)  // cần để tính tổng refund amount
                 .FirstOrDefaultAsync(b => b.CancelTokenHash == tokenHash);
         }
 
