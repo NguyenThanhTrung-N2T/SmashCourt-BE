@@ -16,6 +16,14 @@ public interface IReportRepository
     Task<List<RevenueTrendDto>> GetRevenueTrendAsync(DateOnly fromDate, DateOnly toDate, Guid? branchId, string? groupBy, bool isAllTime = false);
     Task<List<BookingTrendDto>> GetBookingTrendAsync(DateOnly fromDate, DateOnly toDate, Guid? branchId, bool isAllTime = false);
 
+    // Manager operational dashboard
+    Task<ManagerDashboardBranchInfoDto> GetManagerDashboardBranchInfoAsync(Guid branchId);
+    Task<ManagerDashboardKpiDto> GetManagerDashboardKpisAsync(Guid branchId, DateOnly today, DateTime now);
+    Task<List<LiveCourtAttentionDto>> GetManagerDashboardLiveCourtsAsync(Guid branchId, DateOnly today, DateTime now, int minCards = 6, int maxCards = 8);
+    Task<List<UpcomingBookingDashboardItemDto>> GetManagerDashboardUpcomingBookingsAsync(Guid branchId, DateOnly today, DateTime now, int limit = 10);
+    Task<List<ManagerDashboardActionItemDto>> GetManagerDashboardActionQueueAsync(Guid branchId, DateOnly today);
+    Task<List<OccupancyForecastPointDto>> GetManagerDashboardOccupancyForecastAsync(Guid branchId, DateOnly today, DateTime now, int hours = 8);
+
     // lấy báo cáo doanh thu
     Task<RevenueReportDto> GetRevenueReportAsync(DateOnly fromDate, DateOnly toDate, Guid? branchId, string? groupBy);
 

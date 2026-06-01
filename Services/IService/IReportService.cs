@@ -10,9 +10,9 @@ public interface IReportService
     // Dashboard
     // OWNER: Dashboard tổng quan toàn hệ thống
     Task<OwnerDashboardDto> GetOwnerDashboardAsync(ReportFilterDto filter, Guid currentUserId);
-
-    // MANAGER: Dashboard tổng quan chi nhánh
     Task<ManagerDashboardDto> GetManagerDashboardAsync(ReportFilterDto filter, Guid currentUserId);
+    // MANAGER: Dashboard tổng quan chi nhánh
+    Task<OperationalManagerDashboardDto> GetOperationalManagerDashboardAsync(ReportFilterDto filter, Guid currentUserId);
 
     // Lấy báo cáo doanh thu theo filter
     Task<RevenueReportDto> GetRevenueReportAsync(ReportFilterDto filter, Guid currentUserId, string currentUserRole);

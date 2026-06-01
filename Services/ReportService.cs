@@ -1,8 +1,10 @@
 using Microsoft.Extensions.Caching.Memory;
 using SmashCourt_BE.Common;
 using SmashCourt_BE.DTOs.Report;
+using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
+using SmashCourt_BE.Services.Helpers;
 using SmashCourt_BE.Services.IService;
 
 namespace SmashCourt_BE.Services;
@@ -11,17 +13,20 @@ public class ReportService : IReportService
 {
     private readonly IReportRepository _reportRepo;
     private readonly IUserBranchRepository _userBranchRepo;
+    private readonly IBranchScopeResolver _branchScopeResolver;
     private readonly IMemoryCache _cache;
     private readonly ILogger<ReportService> _logger;
 
     public ReportService(
         IReportRepository reportRepo,
         IUserBranchRepository userBranchRepo,
+        IBranchScopeResolver branchScopeResolver,
         IMemoryCache cache,
         ILogger<ReportService> logger)
     {
         _reportRepo = reportRepo;
         _userBranchRepo = userBranchRepo;
+        _branchScopeResolver = branchScopeResolver;
         _cache = cache;
         _logger = logger;
     }
@@ -37,7 +42,7 @@ public class ReportService : IReportService
     /// </summary>
     private (DateOnly fromDate, DateOnly toDate) ValidateDateRange(ReportFilterDto filter)
     {
-        var toDate   = filter.ToDate   ?? DateOnly.FromDateTime(DateTime.UtcNow);
+        var toDate = filter.ToDate ?? DateOnly.FromDateTime(DateTime.UtcNow);
         var fromDate = filter.FromDate ?? toDate.AddDays(-30);
 
         // Validate FromDate <= ToDate
@@ -63,11 +68,11 @@ public class ReportService : IReportService
     ) GetComparisonPeriods(ReportFilterDto filter)
     {
         var currentStart = filter.FromDate!.Value.ToDateTime(TimeOnly.MinValue);
-        var currentEnd   = filter.ToDate!.Value.ToDateTime(TimeOnly.MaxValue);
+        var currentEnd = filter.ToDate!.Value.ToDateTime(TimeOnly.MaxValue);
 
-        var durationDays  = (currentEnd - currentStart).TotalDays + 1;
+        var durationDays = (currentEnd - currentStart).TotalDays + 1;
         var previousStart = currentStart.AddDays(-durationDays);
-        var previousEnd   = currentStart.AddSeconds(-1);
+        var previousEnd = currentStart.AddSeconds(-1);
 
         return (currentStart, currentEnd, previousStart, previousEnd);
     }
@@ -135,7 +140,7 @@ public class ReportService : IReportService
         if (isAllTime)
         {
             fromDate = DateOnly.MinValue;
-            toDate   = DateOnly.MaxValue;
+            toDate = DateOnly.MaxValue;
         }
         else
         {
@@ -162,15 +167,15 @@ public class ReportService : IReportService
         {
             var (_, _, prevStart, prevEnd) = GetComparisonPeriods(filter);
             var prevFromDate = DateOnly.FromDateTime(prevStart);
-            var prevToDate   = DateOnly.FromDateTime(prevEnd.Date);
+            var prevToDate = DateOnly.FromDateTime(prevEnd.Date);
 
             var prev = await _reportRepo.GetDashboardSummaryAsync(
                 prevFromDate, prevToDate, filter.BranchId, isAllTime: false);
 
-            summary.RevenueChangePercent      = CalculatePercentageChange(summary.TotalRevenue,   prev.TotalRevenue);
-            summary.BookingChangePercent       = CalculatePercentageChange(summary.TotalBookings,  prev.TotalBookings);
-            summary.OccupancyChangePercent     = CalculatePercentageChange(summary.OccupancyRate,  prev.OccupancyRate);
-            summary.NewCustomerChangePercent   = CalculatePercentageChange(summary.NewCustomers,   prev.NewCustomers);
+            summary.RevenueChangePercent = CalculatePercentageChange(summary.TotalRevenue, prev.TotalRevenue);
+            summary.BookingChangePercent = CalculatePercentageChange(summary.TotalBookings, prev.TotalBookings);
+            summary.OccupancyChangePercent = CalculatePercentageChange(summary.OccupancyRate, prev.OccupancyRate);
+            summary.NewCustomerChangePercent = CalculatePercentageChange(summary.NewCustomers, prev.NewCustomers);
         }
 
         // TopBranches: Chỉ hiển thị khi KHÔNG filter theo branch cụ thể
@@ -184,7 +189,7 @@ public class ReportService : IReportService
 
         var dashboard = new OwnerDashboardDto
         {
-            Summary     = summary,
+            Summary = summary,
             TopBranches = topBranches,
             TopCustomers = topCustomers,
             RevenueTrend = revenueTrend,
@@ -200,8 +205,39 @@ public class ReportService : IReportService
     /// <summary>
     /// Lấy dashboard cho BRANCH_MANAGER (chỉ chi nhánh mình)
     /// </summary>
-    public async Task<ManagerDashboardDto> GetManagerDashboardAsync(
+    public async Task<OperationalManagerDashboardDto> GetOperationalManagerDashboardAsync(
         ReportFilterDto filter, Guid currentUserId)
+    {
+        var resolvedBranchId = await _branchScopeResolver.ResolveRequiredBranchIdAsync(
+            filter.BranchId,
+            currentUserId,
+            UserRole.BRANCH_MANAGER);
+
+        var now = DateTimeHelper.GetVietnamNow();
+        var today = DateTimeHelper.GetTodayInVietnam();
+
+        var branchInfo = await _reportRepo.GetManagerDashboardBranchInfoAsync(resolvedBranchId);
+        var kpis = await _reportRepo.GetManagerDashboardKpisAsync(resolvedBranchId, today, now);
+        var liveCourts = await _reportRepo.GetManagerDashboardLiveCourtsAsync(resolvedBranchId, today, now);
+        var upcomingBookings = await _reportRepo.GetManagerDashboardUpcomingBookingsAsync(resolvedBranchId, today, now);
+        var actionQueue = await _reportRepo.GetManagerDashboardActionQueueAsync(resolvedBranchId, today);
+        var occupancyForecast = await _reportRepo.GetManagerDashboardOccupancyForecastAsync(resolvedBranchId, today, now);
+
+        return new OperationalManagerDashboardDto
+        {
+            BranchId = branchInfo.BranchId,
+            BranchName = branchInfo.BranchName,
+            GeneratedAt = now,
+            Kpis = kpis,
+            LiveCourts = liveCourts,
+            TotalCourts = branchInfo.TotalCourts,
+            UpcomingBookings = upcomingBookings,
+            ActionQueue = actionQueue,
+            OccupancyForecast = occupancyForecast
+        };
+    }
+    public async Task<ManagerDashboardDto> GetManagerDashboardAsync(
+    ReportFilterDto filter, Guid currentUserId)
     {
         // Lấy branchId của manager (bắt buộc)
         var managerBranch = await _userBranchRepo.GetActiveByUserIdAsync(currentUserId);
@@ -217,7 +253,7 @@ public class ReportService : IReportService
         if (isAllTime)
         {
             fromDate = DateOnly.MinValue;
-            toDate   = DateOnly.MaxValue;
+            toDate = DateOnly.MaxValue;
         }
         else
         {
@@ -244,15 +280,15 @@ public class ReportService : IReportService
         {
             var (_, _, prevStart, prevEnd) = GetComparisonPeriods(filter);
             var prevFromDate = DateOnly.FromDateTime(prevStart);
-            var prevToDate   = DateOnly.FromDateTime(prevEnd.Date);
+            var prevToDate = DateOnly.FromDateTime(prevEnd.Date);
 
             var prev = await _reportRepo.GetDashboardSummaryAsync(
                 prevFromDate, prevToDate, branchId, isAllTime: false);
 
-            summary.RevenueChangePercent      = CalculatePercentageChange(summary.TotalRevenue,   prev.TotalRevenue);
-            summary.BookingChangePercent       = CalculatePercentageChange(summary.TotalBookings,  prev.TotalBookings);
-            summary.OccupancyChangePercent     = CalculatePercentageChange(summary.OccupancyRate,  prev.OccupancyRate);
-            summary.NewCustomerChangePercent   = CalculatePercentageChange(summary.NewCustomers,   prev.NewCustomers);
+            summary.RevenueChangePercent = CalculatePercentageChange(summary.TotalRevenue, prev.TotalRevenue);
+            summary.BookingChangePercent = CalculatePercentageChange(summary.TotalBookings, prev.TotalBookings);
+            summary.OccupancyChangePercent = CalculatePercentageChange(summary.OccupancyRate, prev.OccupancyRate);
+            summary.NewCustomerChangePercent = CalculatePercentageChange(summary.NewCustomers, prev.NewCustomers);
         }
 
         var topCustomers = await _reportRepo.GetTopCustomersAsync(fromDate, toDate, branchId, 5);
@@ -261,7 +297,7 @@ public class ReportService : IReportService
 
         var dashboard = new ManagerDashboardDto
         {
-            Summary      = summary,
+            Summary = summary,
             TopCustomers = topCustomers,
             RevenueTrend = revenueTrend,
             BookingTrend = bookingTrend

@@ -47,11 +47,11 @@ public class ReportController : ControllerBase
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
-    public async Task<IActionResult> GetManagerDashboard([FromQuery] ReportFilterDto filter)
+    public async Task<IActionResult> GetOperationalManagerDashboard([FromQuery] ReportFilterDto filter)
     {
         var currentUserId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-        var result = await _service.GetManagerDashboardAsync(filter, currentUserId);
-        return Ok(ApiResponse<ManagerDashboardDto>.Ok(result, "Lấy dashboard thành công"));
+        var result = await _service.GetOperationalManagerDashboardAsync(filter, currentUserId);
+        return Ok(ApiResponse<OperationalManagerDashboardDto>.Ok(result, "Lấy dashboard thành công"));
     }
 
     /// <summary>
@@ -67,7 +67,7 @@ public class ReportController : ControllerBase
     {
         var currentUserId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
         var currentUserRole = User.FindFirstValue(ClaimTypes.Role)!;
-        
+
         var result = await _service.GetRevenueReportAsync(filter, currentUserId, currentUserRole);
         return Ok(ApiResponse<RevenueReportDto>.Ok(result, "Lấy báo cáo doanh thu thành công"));
     }
@@ -85,7 +85,7 @@ public class ReportController : ControllerBase
     {
         var currentUserId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
         var currentUserRole = User.FindFirstValue(ClaimTypes.Role)!;
-        
+
         var result = await _service.GetBookingReportAsync(filter, currentUserId, currentUserRole);
         return Ok(ApiResponse<BookingReportDto>.Ok(result, "Lấy báo cáo booking thành công"));
     }
@@ -103,7 +103,7 @@ public class ReportController : ControllerBase
     {
         var currentUserId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
         var currentUserRole = User.FindFirstValue(ClaimTypes.Role)!;
-        
+
         var result = await _service.GetCourtUtilizationReportAsync(filter, currentUserId, currentUserRole);
         return Ok(ApiResponse<CourtUtilizationReportDto>.Ok(result, "Lấy báo cáo sử dụng sân thành công"));
     }
@@ -121,7 +121,7 @@ public class ReportController : ControllerBase
     {
         var currentUserId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
         var currentUserRole = User.FindFirstValue(ClaimTypes.Role)!;
-        
+
         var result = await _service.GetCustomerStatisticsReportAsync(filter, currentUserId, currentUserRole);
         return Ok(ApiResponse<CustomerStatisticsReportDto>.Ok(result, "Lấy báo cáo khách hàng thành công"));
     }
@@ -142,7 +142,7 @@ public class ReportController : ControllerBase
     {
         var currentUserId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
         var currentUserRole = User.FindFirstValue(ClaimTypes.Role)!;
-        
+
         var result = await _service.GetTopSpendersReportAsync(filter, currentUserId, currentUserRole, page, pageSize);
         return Ok(ApiResponse<TopSpendersReportDto>.Ok(result, "Lấy báo cáo top khách hàng thành công"));
     }
@@ -160,7 +160,7 @@ public class ReportController : ControllerBase
     {
         var currentUserId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
         var currentUserRole = User.FindFirstValue(ClaimTypes.Role)!;
-        
+
         var result = await _service.GetServicePerformanceReportAsync(filter, currentUserId, currentUserRole);
         return Ok(ApiResponse<ServicePerformanceReportDto>.Ok(result, "Lấy báo cáo dịch vụ thành công"));
     }
@@ -178,7 +178,7 @@ public class ReportController : ControllerBase
     {
         var currentUserId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
         var currentUserRole = User.FindFirstValue(ClaimTypes.Role)!;
-        
+
         var result = await _service.GetPromotionEffectivenessReportAsync(filter, currentUserId, currentUserRole);
         return Ok(ApiResponse<PromotionEffectivenessReportDto>.Ok(result, "Lấy báo cáo khuyến mãi thành công"));
     }

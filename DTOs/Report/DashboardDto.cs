@@ -1,64 +1,237 @@
 namespace SmashCourt_BE.DTOs.Report;
 
 /// <summary>
-/// DTO dashboard cho OWNER (toàn hệ thống)
+/// Dashboard DTO for OWNER across the whole system.
 /// </summary>
 public class OwnerDashboardDto
 {
     /// <summary>
-    /// Tổng quan metrics
+    /// Shared analytics summary.
     /// </summary>
     public DashboardSummaryDto Summary { get; set; } = null!;
-    
+
     /// <summary>
-    /// Top 5 chi nhánh theo doanh thu
+    /// Top 5 branches by revenue.
     /// </summary>
     public List<TopBranchDto> TopBranches { get; set; } = [];
-    
+
     /// <summary>
-    /// Top 5 khách hàng theo doanh thu
+    /// Top 5 customers by revenue.
     /// </summary>
     public List<TopCustomerDto> TopCustomers { get; set; } = [];
-    
+
     /// <summary>
-    /// Xu hướng doanh thu theo ngày
+    /// Revenue trend by period.
     /// </summary>
     public List<RevenueTrendDto> RevenueTrend { get; set; } = [];
-    
+
     /// <summary>
-    /// Xu hướng booking theo ngày
+    /// Booking trend by period.
     /// </summary>
     public List<BookingTrendDto> BookingTrend { get; set; } = [];
 }
+/// <summary>
+/// Operational dashboard DTO for BRANCH_MANAGER.
+/// </summary>
+public class OperationalManagerDashboardDto
+{
+    /// <summary>
+    /// Branch this dashboard belongs to.
+    /// </summary>
+    public Guid BranchId { get; set; }
+
+    /// <summary>
+    /// Branch display name.
+    /// </summary>
+    public string BranchName { get; set; } = null!;
+
+    /// <summary>
+    /// Time when this dashboard snapshot was generated.
+    /// </summary>
+    public DateTime GeneratedAt { get; set; }
+
+    /// <summary>
+    /// KPI cards shown at the top of the manager dashboard.
+    /// </summary>
+    public ManagerDashboardKpiDto Kpis { get; set; } = new();
+
+    /// <summary>
+    /// Live court cards ordered by attention priority.
+    /// Expected page size: 6-8 cards.
+    /// </summary>
+    public List<LiveCourtAttentionDto> LiveCourts { get; set; } = [];
+
+    /// <summary>
+    /// Total number of courts in the branch, used by the "View all N courts" link.
+    /// </summary>
+    public int TotalCourts { get; set; }
+
+    /// <summary>
+    /// Next 10 bookings from now until the end of today.
+    /// </summary>
+    public List<UpcomingBookingDashboardItemDto> UpcomingBookings { get; set; } = [];
+
+    /// <summary>
+    /// Operational queue for actions the manager must handle.
+    /// Only action types: PENDING_PAYMENT and CANCELLED_PENDING_REFUND.
+    /// </summary>
+    public List<ManagerDashboardActionItemDto> ActionQueue { get; set; } = [];
+
+    /// <summary>
+    /// Occupancy forecast for the next 8 hours.
+    /// </summary>
+    public List<OccupancyForecastPointDto> OccupancyForecast { get; set; } = [];
+
+    /// <summary>
+    /// TODO: Broadcast dashboard changes to managers after the query contract is implemented.
+    /// </summary>
+    // public bool BroadcastEnabled { get; set; }
+}
 
 /// <summary>
-/// DTO dashboard cho BRANCH_MANAGER (chỉ chi nhánh mình)
+/// Analytics dashboard DTO for BRANCH_MANAGER.
 /// </summary>
 public class ManagerDashboardDto
 {
+
     /// <summary>
-    /// Tổng quan metrics
+    /// Legacy analytics summary kept temporarily while the manager dashboard service is migrated.
     /// </summary>
-    public DashboardSummaryDto Summary { get; set; } = null!;
-    
+    public DashboardSummaryDto Summary { get; set; } = new();
+
     /// <summary>
-    /// Top 5 khách hàng theo doanh thu
+    /// Legacy manager analytics field kept temporarily while the manager dashboard service is migrated.
     /// </summary>
     public List<TopCustomerDto> TopCustomers { get; set; } = [];
-    
+
     /// <summary>
-    /// Xu hướng doanh thu theo ngày
+    /// Legacy manager analytics field kept temporarily while the manager dashboard service is migrated.
     /// </summary>
     public List<RevenueTrendDto> RevenueTrend { get; set; } = [];
-    
+
     /// <summary>
-    /// Xu hướng booking theo ngày
+    /// Legacy manager analytics field kept temporarily while the manager dashboard service is migrated.
     /// </summary>
     public List<BookingTrendDto> BookingTrend { get; set; } = [];
 }
 
 /// <summary>
-/// Tổng quan metrics chung
+/// KPI cards for the branch manager dashboard.
+/// </summary>
+public class ManagerDashboardKpiDto
+{
+    public decimal RevenueToday { get; set; }
+    public int CourtsInUse { get; set; }
+    public int TodayBookingsCount { get; set; }
+    public int UpcomingCheckInsCount { get; set; }
+    public int NeedsActionCount { get; set; }
+    public int PendingPaymentCount { get; set; }
+    public int PendingRefundCount { get; set; }
+}
+
+/// <summary>
+/// Branch metadata for the manager dashboard.
+/// </summary>
+public class ManagerDashboardBranchInfoDto
+{
+    public Guid BranchId { get; set; }
+    public string BranchName { get; set; } = null!;
+    public int TotalCourts { get; set; }
+}
+
+/// <summary>
+/// Live court card shown in the manager dashboard.
+/// </summary>
+public class LiveCourtAttentionDto
+{
+    public Guid CourtId { get; set; }
+    public string CourtName { get; set; } = null!;
+    public string CourtStatus { get; set; } = null!;
+
+    /// <summary>
+    /// Priority status for display.
+    /// Values: PENDING_PAYMENT, UPCOMING_CHECK_IN, NO_SHOW_RISK, PLAYING, AVAILABLE.
+    /// </summary>
+    public string AttentionStatus { get; set; } = null!;
+
+    public Guid? BookingId { get; set; }
+    public string? BookingCode { get; set; }
+    public string? CustomerName { get; set; }
+    public string? CustomerPhone { get; set; }
+    public DateTime? StartTime { get; set; }
+    public DateTime? EndTime { get; set; }
+    public int? MinutesUntilStart { get; set; }
+    public int? MinutesSinceStart { get; set; }
+    public decimal? AmountDue { get; set; }
+    public string? PaymentStatus { get; set; }
+}
+
+/// <summary>
+/// Upcoming booking item shown in the next-bookings panel.
+/// </summary>
+public class UpcomingBookingDashboardItemDto
+{
+    public Guid BookingId { get; set; }
+    public string BookingCode { get; set; } = null!;
+    public string CustomerName { get; set; } = null!;
+    public string? CustomerPhone { get; set; }
+    public List<DashboardCourtSlotDto> Courts { get; set; } = [];
+    public DateTime StartTime { get; set; }
+    public DateTime EndTime { get; set; }
+    public string BookingStatus { get; set; } = null!;
+    public string PaymentStatus { get; set; } = null!;
+    public decimal FinalTotal { get; set; }
+}
+
+/// <summary>
+/// Court slot summary used by dashboard booking cards.
+/// </summary>
+public class DashboardCourtSlotDto
+{
+    public Guid CourtId { get; set; }
+    public string CourtName { get; set; } = null!;
+    public DateTime StartTime { get; set; }
+    public DateTime EndTime { get; set; }
+}
+
+/// <summary>
+/// Action item that requires manager handling.
+/// </summary>
+public class ManagerDashboardActionItemDto
+{
+    public Guid BookingId { get; set; }
+    public string BookingCode { get; set; } = null!;
+
+    /// <summary>
+    /// Values: PENDING_PAYMENT, CANCELLED_PENDING_REFUND.
+    /// </summary>
+    public string ActionType { get; set; } = null!;
+
+    public string CustomerName { get; set; } = null!;
+    public string? CustomerPhone { get; set; }
+    public List<DashboardCourtSlotDto> Courts { get; set; } = [];
+    public DateTime? StartTime { get; set; }
+    public DateTime? EndTime { get; set; }
+    public decimal Amount { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
+/// <summary>
+/// Forecast point for branch occupancy in the next 8 hours.
+/// </summary>
+public class OccupancyForecastPointDto
+{
+    public DateTime Time { get; set; }
+    public int TotalCourts { get; set; }
+    public int OccupiedCourts { get; set; }
+    public int AvailableCourts { get; set; }
+    public int BookingCount { get; set; }
+    public decimal OccupancyRate { get; set; }
+    public bool IsPeakRisk { get; set; }
+}
+
+/// <summary>
+/// Shared analytics summary.
 /// </summary>
 public class DashboardSummaryDto
 {
@@ -83,7 +256,7 @@ public class DashboardSummaryDto
 }
 
 /// <summary>
-/// Top chi nhánh
+/// Top branch.
 /// </summary>
 public class TopBranchDto
 {
@@ -94,7 +267,7 @@ public class TopBranchDto
 }
 
 /// <summary>
-/// Top khách hàng
+/// Top customer.
 /// </summary>
 public class TopCustomerDto
 {
@@ -106,7 +279,7 @@ public class TopCustomerDto
 }
 
 /// <summary>
-/// Xu hướng doanh thu theo thời gian
+/// Revenue trend by period.
 /// </summary>
 public class RevenueTrendDto
 {
@@ -116,7 +289,7 @@ public class RevenueTrendDto
 }
 
 /// <summary>
-/// Xu hướng booking theo thời gian
+/// Booking trend by period.
 /// </summary>
 public class BookingTrendDto
 {

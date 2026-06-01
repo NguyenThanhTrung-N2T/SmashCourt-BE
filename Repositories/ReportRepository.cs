@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using SmashCourt_BE.Common;
 using SmashCourt_BE.Data;
 using SmashCourt_BE.DTOs.Report;
+using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
@@ -246,6 +247,272 @@ public class ReportRepository : IReportRepository
             TotalCount = i.BookingCount,
             CompletedCount = i.CompletedCount
         }).ToList();
+    }
+
+    public async Task<ManagerDashboardBranchInfoDto> GetManagerDashboardBranchInfoAsync(Guid branchId)
+    {
+        var branch = await _context.Branches
+            .AsNoTracking()
+            .Where(b => b.Id == branchId)
+            .Select(b => new ManagerDashboardBranchInfoDto
+            {
+                BranchId = b.Id,
+                BranchName = b.Name,
+                TotalCourts = b.Courts.Count(c => c.Status != CourtStatus.INACTIVE && c.Status != CourtStatus.SUSPENDED)
+            })
+            .FirstOrDefaultAsync();
+
+        if (branch == null)
+            throw new AppException(404, "KhÃ´ng tÃ¬m tháº¥y chi nhÃ¡nh", ErrorCodes.NotFound);
+
+        return branch;
+    }
+
+    public async Task<ManagerDashboardKpiDto> GetManagerDashboardKpisAsync(
+        Guid branchId, DateOnly today, DateTime now)
+    {
+        var nowTime = TimeOnly.FromDateTime(now);
+        var upcomingLimit = TimeOnly.FromDateTime(now.AddMinutes(30));
+
+        var revenueToday = await _context.Invoices
+            .AsNoTracking()
+            .Where(i => i.Booking.BranchId == branchId &&
+                        i.Booking.BookingDate == today &&
+                        i.PaymentStatus == InvoicePaymentStatus.PAID &&
+                        !GetCancelledOrRefundedStatuses().Contains(i.Booking.Status))
+            .SumAsync(i => i.FinalTotal);
+
+        var courtsInUse = await _context.BookingCourts
+            .AsNoTracking()
+            .Where(bc => bc.Booking.BranchId == branchId &&
+                         bc.Date == today &&
+                         bc.Booking.Status == BookingStatus.IN_PROGRESS &&
+                         bc.StartTime <= nowTime &&
+                         (bc.ActualEndPlayTime ?? bc.EndTime) > nowTime)
+            .Select(bc => bc.CourtId)
+            .Distinct()
+            .CountAsync();
+
+        var todayBookingsCount = await _context.Bookings
+            .AsNoTracking()
+            .Where(b => b.BranchId == branchId &&
+                        b.BookingDate == today &&
+                        !GetCancelledOrRefundedStatuses().Contains(b.Status))
+            .CountAsync();
+
+        var upcomingCheckInsCount = await _context.BookingCourts
+            .AsNoTracking()
+            .Where(bc => bc.Booking.BranchId == branchId &&
+                         bc.Date == today &&
+                         GetCheckInWaitingStatuses().Contains(bc.Booking.Status) &&
+                         bc.Booking.CheckedInAt == null &&
+                         bc.StartTime > nowTime &&
+                         bc.StartTime <= upcomingLimit)
+            .Select(bc => bc.BookingId)
+            .Distinct()
+            .CountAsync();
+
+        var actionCounts = await _context.Bookings
+            .AsNoTracking()
+            .Where(b => b.BranchId == branchId &&
+                        b.BookingDate <= today &&
+                        GetManagerActionStatuses().Contains(b.Status))
+            .GroupBy(b => b.Status)
+            .Select(g => new { Status = g.Key, Count = g.Count() })
+            .ToListAsync();
+
+        var pendingPaymentCount = actionCounts.FirstOrDefault(x => x.Status == BookingStatus.PENDING_PAYMENT)?.Count ?? 0;
+        var pendingRefundCount = actionCounts.FirstOrDefault(x => x.Status == BookingStatus.CANCELLED_PENDING_REFUND)?.Count ?? 0;
+
+        return new ManagerDashboardKpiDto
+        {
+            RevenueToday = revenueToday,
+            CourtsInUse = courtsInUse,
+            TodayBookingsCount = todayBookingsCount,
+            UpcomingCheckInsCount = upcomingCheckInsCount,
+            NeedsActionCount = pendingPaymentCount + pendingRefundCount,
+            PendingPaymentCount = pendingPaymentCount,
+            PendingRefundCount = pendingRefundCount
+        };
+    }
+
+    public async Task<List<LiveCourtAttentionDto>> GetManagerDashboardLiveCourtsAsync(
+        Guid branchId, DateOnly today, DateTime now, int minCards = 6, int maxCards = 8)
+    {
+        var nowTime = TimeOnly.FromDateTime(now);
+        var upcomingLimit = TimeOnly.FromDateTime(now.AddMinutes(30));
+
+        var courts = await _context.Courts
+            .AsNoTracking()
+            .Where(c => c.BranchId == branchId &&
+                        c.Status != CourtStatus.INACTIVE &&
+                        c.Status != CourtStatus.SUSPENDED)
+            .OrderBy(c => c.Name)
+            .ToListAsync();
+
+        var courtIds = courts.Select(c => c.Id).ToList();
+        var bookingCourts = await _context.BookingCourts
+            .AsNoTracking()
+            .Include(bc => bc.Court)
+            .Include(bc => bc.Booking)
+                .ThenInclude(b => b.Customer)
+            .Include(bc => bc.Booking)
+                .ThenInclude(b => b.Invoice!)
+                    .ThenInclude(i => i.Payments)
+            .Where(bc => courtIds.Contains(bc.CourtId) &&
+                         bc.Date == today &&
+                         GetLiveCourtBookingStatuses().Contains(bc.Booking.Status))
+            .OrderBy(bc => bc.StartTime)
+            .ToListAsync();
+
+        var attentionCards = courts
+            .Select(court => BuildLiveCourtCard(court, bookingCourts.Where(bc => bc.CourtId == court.Id).ToList(), now, nowTime, upcomingLimit))
+            .Where(card => card.AttentionStatus != "AVAILABLE")
+            .OrderBy(GetLiveCourtPriority)
+            .ThenBy(card => card.StartTime ?? DateTime.MaxValue)
+            .ThenBy(card => card.CourtName)
+            .Take(maxCards)
+            .ToList();
+
+        if (attentionCards.Count >= minCards)
+            return attentionCards;
+
+        var selectedCourtIds = attentionCards.Select(card => card.CourtId).ToHashSet();
+        var fillerCards = courts
+            .Where(court => !selectedCourtIds.Contains(court.Id) &&
+                            court.Status == CourtStatus.AVAILABLE &&
+                            !bookingCourts.Any(bc => bc.CourtId == court.Id &&
+                                                     bc.StartTime <= nowTime &&
+                                                     (bc.ActualEndPlayTime ?? bc.EndTime) > nowTime &&
+                                                     bc.Booking.Status == BookingStatus.IN_PROGRESS))
+            .OrderBy(court => court.Name)
+            .Select(court => new LiveCourtAttentionDto
+            {
+                CourtId = court.Id,
+                CourtName = court.Name,
+                CourtStatus = court.Status.ToString(),
+                AttentionStatus = "AVAILABLE"
+            })
+            .Take(Math.Min(maxCards, minCards) - attentionCards.Count)
+            .ToList();
+
+        attentionCards.AddRange(fillerCards);
+        return attentionCards;
+    }
+
+    public async Task<List<UpcomingBookingDashboardItemDto>> GetManagerDashboardUpcomingBookingsAsync(
+        Guid branchId, DateOnly today, DateTime now, int limit = 10)
+    {
+        var nowTime = TimeOnly.FromDateTime(now);
+
+        var bookings = await _context.Bookings
+            .AsNoTracking()
+            .Include(b => b.Customer)
+            .Include(b => b.Invoice)
+            .Include(b => b.BookingCourts)
+                .ThenInclude(bc => bc.Court)
+            .Where(b => b.BranchId == branchId &&
+                        b.BookingDate == today &&
+                        GetCheckInWaitingStatuses().Contains(b.Status) &&
+                        b.BookingCourts.Any(bc => bc.Date == today && bc.StartTime >= nowTime))
+            .OrderBy(b => b.BookingCourts
+                .Where(bc => bc.Date == today && bc.StartTime >= nowTime)
+                .Min(bc => bc.StartTime))
+            .Take(limit)
+            .ToListAsync();
+
+        return bookings
+            .Select(ToUpcomingBookingDashboardItem)
+            .OrderBy(item => item.StartTime)
+            .ToList();
+    }
+
+    public async Task<List<ManagerDashboardActionItemDto>> GetManagerDashboardActionQueueAsync(
+        Guid branchId, DateOnly today)
+    {
+        var bookings = await _context.Bookings
+            .AsNoTracking()
+            .Include(b => b.Customer)
+            .Include(b => b.Invoice)
+                .ThenInclude(i => i!.Payments)
+                    .ThenInclude(p => p.Refunds)
+            .Include(b => b.BookingCourts)
+                .ThenInclude(bc => bc.Court)
+            .Where(b => b.BranchId == branchId &&
+                        b.BookingDate <= today &&
+                        GetManagerActionStatuses().Contains(b.Status))
+            .OrderBy(b => b.BookingDate)
+            .ThenBy(b => b.BookingCourts.Min(bc => bc.StartTime))
+            .ToListAsync();
+
+        return bookings.Select(ToManagerDashboardActionItem).ToList();
+    }
+
+    public async Task<List<OccupancyForecastPointDto>> GetManagerDashboardOccupancyForecastAsync(
+        Guid branchId, DateOnly today, DateTime now, int hours = 8)
+    {
+        var totalCourts = await _context.Courts
+            .AsNoTracking()
+            .Where(c => c.BranchId == branchId &&
+                        c.Status != CourtStatus.INACTIVE &&
+                        c.Status != CourtStatus.SUSPENDED)
+            .CountAsync();
+
+        var firstBucketStart = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0);
+        var lastBucketEnd = firstBucketStart.AddHours(hours);
+        var fromDate = DateOnly.FromDateTime(firstBucketStart);
+        var toDate = DateOnly.FromDateTime(lastBucketEnd);
+
+        var bookingCourts = await _context.BookingCourts
+            .AsNoTracking()
+            .Where(bc => bc.Booking.BranchId == branchId &&
+                         bc.Date >= fromDate &&
+                         bc.Date <= toDate &&
+                         GetForecastBookingStatuses().Contains(bc.Booking.Status))
+            .Select(bc => new
+            {
+                bc.CourtId,
+                bc.BookingId,
+                bc.Date,
+                bc.StartTime,
+                EndTime = bc.ActualEndPlayTime ?? bc.EndTime
+            })
+            .ToListAsync();
+
+        var result = new List<OccupancyForecastPointDto>();
+        for (var i = 0; i < hours; i++)
+        {
+            var bucketStart = firstBucketStart.AddHours(i);
+            var bucketEnd = bucketStart.AddHours(1);
+
+            var overlapping = bookingCourts
+                .Where(bc =>
+                {
+                    var start = ToDateTime(bc.Date, bc.StartTime);
+                    var end = ToDateTime(bc.Date, bc.EndTime);
+                    return start < bucketEnd && end > bucketStart;
+                })
+                .ToList();
+
+            var occupiedCourts = overlapping.Select(bc => bc.CourtId).Distinct().Count();
+            var bookingCount = overlapping.Select(bc => bc.BookingId).Distinct().Count();
+            var occupancyRate = totalCourts > 0
+                ? Math.Round((decimal)occupiedCourts / totalCourts * 100, 1)
+                : 0;
+
+            result.Add(new OccupancyForecastPointDto
+            {
+                Time = bucketStart,
+                TotalCourts = totalCourts,
+                OccupiedCourts = occupiedCourts,
+                AvailableCourts = Math.Max(totalCourts - occupiedCourts, 0),
+                BookingCount = bookingCount,
+                OccupancyRate = occupancyRate,
+                IsPeakRisk = occupancyRate >= 80
+            });
+        }
+
+        return result;
     }
 
     #endregion Dashboard & Overview Reports
@@ -1326,6 +1593,235 @@ public class ReportRepository : IReportRepository
             TotalDiscount = d.TotalDiscount
         }).ToList();
     }
+    #endregion
+
+    #region Manager Dashboard Helpers
+
+    private static BookingStatus[] GetCancelledOrRefundedStatuses() =>
+    [
+        BookingStatus.CANCELLED,
+        BookingStatus.CANCELLED_PENDING_REFUND,
+        BookingStatus.CANCELLED_REFUNDED
+    ];
+
+    private static BookingStatus[] GetCheckInWaitingStatuses() =>
+    [
+        BookingStatus.PENDING,
+        BookingStatus.CONFIRMED,
+        BookingStatus.PAID_ONLINE
+    ];
+
+    private static BookingStatus[] GetManagerActionStatuses() =>
+    [
+        BookingStatus.PENDING_PAYMENT,
+        BookingStatus.CANCELLED_PENDING_REFUND
+    ];
+
+    private static BookingStatus[] GetLiveCourtBookingStatuses() =>
+    [
+        BookingStatus.PENDING,
+        BookingStatus.CONFIRMED,
+        BookingStatus.PAID_ONLINE,
+        BookingStatus.PENDING_PAYMENT,
+        BookingStatus.IN_PROGRESS
+    ];
+
+    private static BookingStatus[] GetForecastBookingStatuses() =>
+    [
+        BookingStatus.PENDING,
+        BookingStatus.CONFIRMED,
+        BookingStatus.PAID_ONLINE,
+        BookingStatus.IN_PROGRESS
+    ];
+
+    private static LiveCourtAttentionDto BuildLiveCourtCard(
+        Court court,
+        List<BookingCourt> courtBookingCourts,
+        DateTime now,
+        TimeOnly nowTime,
+        TimeOnly upcomingLimit)
+    {
+        var pendingPayment = courtBookingCourts
+            .Where(bc => bc.Booking.Status == BookingStatus.PENDING_PAYMENT)
+            .OrderBy(bc => bc.StartTime)
+            .FirstOrDefault();
+
+        if (pendingPayment != null)
+            return ToLiveCourtAttentionDto(court, pendingPayment, "PENDING_PAYMENT", now, nowTime);
+
+        var upcomingCheckIn = courtBookingCourts
+            .Where(bc => GetCheckInWaitingStatuses().Contains(bc.Booking.Status) &&
+                         bc.Booking.CheckedInAt == null &&
+                         bc.StartTime > nowTime &&
+                         bc.StartTime <= upcomingLimit)
+            .OrderBy(bc => bc.StartTime)
+            .FirstOrDefault();
+
+        if (upcomingCheckIn != null)
+            return ToLiveCourtAttentionDto(court, upcomingCheckIn, "UPCOMING_CHECK_IN", now, nowTime);
+
+        var noShowRisk = courtBookingCourts
+            .Where(bc => GetCheckInWaitingStatuses().Contains(bc.Booking.Status) &&
+                         bc.Booking.CheckedInAt == null &&
+                         bc.StartTime <= nowTime &&
+                         bc.StartTime.AddMinutes(15) >= nowTime)
+            .OrderBy(bc => bc.StartTime)
+            .FirstOrDefault();
+
+        if (noShowRisk != null)
+            return ToLiveCourtAttentionDto(court, noShowRisk, "NO_SHOW_RISK", now, nowTime);
+
+        var playing = courtBookingCourts
+            .Where(bc => bc.Booking.Status == BookingStatus.IN_PROGRESS &&
+                         bc.StartTime <= nowTime &&
+                         (bc.ActualEndPlayTime ?? bc.EndTime) > nowTime)
+            .OrderBy(bc => bc.StartTime)
+            .FirstOrDefault();
+
+        if (playing != null)
+            return ToLiveCourtAttentionDto(court, playing, "PLAYING", now, nowTime);
+
+        return new LiveCourtAttentionDto
+        {
+            CourtId = court.Id,
+            CourtName = court.Name,
+            CourtStatus = court.Status.ToString(),
+            AttentionStatus = "AVAILABLE"
+        };
+    }
+
+    private static LiveCourtAttentionDto ToLiveCourtAttentionDto(
+        Court court,
+        BookingCourt bookingCourt,
+        string attentionStatus,
+        DateTime now,
+        TimeOnly nowTime)
+    {
+        var booking = bookingCourt.Booking;
+        var startTime = ToDateTime(bookingCourt.Date, bookingCourt.StartTime);
+        var endTime = ToDateTime(bookingCourt.Date, bookingCourt.ActualEndPlayTime ?? bookingCourt.EndTime);
+
+        return new LiveCourtAttentionDto
+        {
+            CourtId = court.Id,
+            CourtName = court.Name,
+            CourtStatus = court.Status.ToString(),
+            AttentionStatus = attentionStatus,
+            BookingId = booking.Id,
+            BookingCode = booking.BookingCode,
+            CustomerName = GetCustomerName(booking),
+            CustomerPhone = GetCustomerPhone(booking),
+            StartTime = startTime,
+            EndTime = endTime,
+            MinutesUntilStart = bookingCourt.StartTime > nowTime
+                ? (int)Math.Round((startTime - now).TotalMinutes)
+                : null,
+            MinutesSinceStart = bookingCourt.StartTime <= nowTime
+                ? Math.Max((int)Math.Round((now - startTime).TotalMinutes), 0)
+                : null,
+            AmountDue = booking.Invoice == null ? null : CalculateAmountDue(booking.Invoice),
+            PaymentStatus = booking.Invoice?.PaymentStatus.ToString()
+        };
+    }
+
+    private static UpcomingBookingDashboardItemDto ToUpcomingBookingDashboardItem(Booking booking)
+    {
+        var courts = ToDashboardCourtSlots(booking);
+        return new UpcomingBookingDashboardItemDto
+        {
+            BookingId = booking.Id,
+            BookingCode = booking.BookingCode,
+            CustomerName = GetCustomerName(booking),
+            CustomerPhone = GetCustomerPhone(booking),
+            Courts = courts,
+            StartTime = courts.Min(c => c.StartTime),
+            EndTime = courts.Max(c => c.EndTime),
+            BookingStatus = booking.Status.ToString(),
+            PaymentStatus = booking.Invoice?.PaymentStatus.ToString() ?? "",
+            FinalTotal = booking.Invoice?.FinalTotal ?? 0
+        };
+    }
+
+    private static ManagerDashboardActionItemDto ToManagerDashboardActionItem(Booking booking)
+    {
+        var courts = ToDashboardCourtSlots(booking);
+        return new ManagerDashboardActionItemDto
+        {
+            BookingId = booking.Id,
+            BookingCode = booking.BookingCode,
+            ActionType = booking.Status.ToString(),
+            CustomerName = GetCustomerName(booking),
+            CustomerPhone = GetCustomerPhone(booking),
+            Courts = courts,
+            StartTime = courts.Count == 0 ? null : courts.Min(c => c.StartTime),
+            EndTime = courts.Count == 0 ? null : courts.Max(c => c.EndTime),
+            Amount = CalculateActionAmount(booking),
+            CreatedAt = booking.CreatedAt
+        };
+    }
+
+    private static List<DashboardCourtSlotDto> ToDashboardCourtSlots(Booking booking)
+    {
+        return booking.BookingCourts
+            .OrderBy(bc => bc.Date)
+            .ThenBy(bc => bc.StartTime)
+            .Select(bc => new DashboardCourtSlotDto
+            {
+                CourtId = bc.CourtId,
+                CourtName = bc.Court.Name,
+                StartTime = ToDateTime(bc.Date, bc.StartTime),
+                EndTime = ToDateTime(bc.Date, bc.ActualEndPlayTime ?? bc.EndTime)
+            })
+            .ToList();
+    }
+
+    private static int GetLiveCourtPriority(LiveCourtAttentionDto card) =>
+        card.AttentionStatus switch
+        {
+            "PENDING_PAYMENT" => 0,
+            "UPCOMING_CHECK_IN" => 1,
+            "NO_SHOW_RISK" => 2,
+            "PLAYING" => 3,
+            _ => 4
+        };
+
+    private static decimal CalculateActionAmount(Booking booking)
+    {
+        if (booking.Invoice == null)
+            return 0;
+
+        if (booking.Status == BookingStatus.CANCELLED_PENDING_REFUND)
+        {
+            var pendingRefund = booking.Invoice.Payments
+                .SelectMany(p => p.Refunds)
+                .Where(r => r.Status == RefundStatus.PENDING)
+                .OrderByDescending(r => r.CreatedAt)
+                .FirstOrDefault();
+
+            return pendingRefund?.Amount ?? booking.Invoice.FinalTotal;
+        }
+
+        return CalculateAmountDue(booking.Invoice);
+    }
+
+    private static decimal CalculateAmountDue(Invoice invoice)
+    {
+        var paidAmount = invoice.Payments
+            .Where(p => p.Status == PaymentTxStatus.SUCCESS)
+            .Sum(p => p.Amount - p.RefundedAmount);
+
+        return Math.Max(invoice.FinalTotal - paidAmount, 0);
+    }
+
+    private static string GetCustomerName(Booking booking) =>
+        booking.Customer?.FullName ?? booking.GuestName ?? "Khach vang lai";
+
+    private static string? GetCustomerPhone(Booking booking) =>
+        booking.Customer?.Phone ?? booking.GuestPhone;
+
+    private static DateTime ToDateTime(DateOnly date, TimeOnly time) =>
+        date.ToDateTime(time);
+
     #endregion
 
     #region Helper Query Builders
