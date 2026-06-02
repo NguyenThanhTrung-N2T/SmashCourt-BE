@@ -27,7 +27,7 @@ public class CustomerManagementController : ControllerBase
     /// OWNER xem toàn hệ thống; BRANCH_MANAGER chỉ xem khách từng đặt sân tại chi nhánh của mình.
     /// </summary>
     [HttpGet]
-    [Authorize(Policy = AuthorizationPolicies.OwnerOrManager)]
+    [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> GetCustomers([FromQuery] CustomerListQuery query)

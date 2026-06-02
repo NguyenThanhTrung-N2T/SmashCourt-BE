@@ -9,16 +9,18 @@ namespace SmashCourt_BE.Services.Helpers
     public class BranchScopeResolver : IBranchScopeResolver
     {
         private readonly IUserBranchRepository _userBranchRepo;
+        private readonly IBranchRepository _branchRepo;
 
-        public BranchScopeResolver(IUserBranchRepository userBranchRepo)
+        public BranchScopeResolver(IUserBranchRepository userBranchRepo, IBranchRepository branchRepo)
         {
             _userBranchRepo = userBranchRepo;
+            _branchRepo = branchRepo;
         }
 
         /// <inheritdoc />
         public async Task<Guid> ResolveRequiredBranchIdAsync(Guid? requestedBranchId, Guid currentUserId, UserRole currentUserRole)
         {
-            // OWNER: Bắt buộc chọn chi nhánh
+            // OWNER: Bắt buộc chọn chi nhánh (không validate tồn tại - owner có thể xem cả chi nhánh inactive)
             if (currentUserRole == UserRole.OWNER)
             {
                 if (!requestedBranchId.HasValue)
@@ -36,6 +38,14 @@ namespace SmashCourt_BE.Services.Helpers
                 if (requestedBranchId.HasValue && requestedBranchId.Value != assignment.BranchId)
                     throw new AppException(403, "Bạn không có quyền thao tác chi nhánh này", ErrorCodes.Forbidden);
 
+                // Validate branch exists and is active for staff/manager
+                var branch = await _branchRepo.GetByIdAsync(assignment.BranchId);
+                if (branch == null)
+                    throw new AppException(404, "Không tìm thấy chi nhánh", ErrorCodes.NotFound);
+                
+                if (branch.Status != BranchStatus.ACTIVE)
+                    throw new AppException(400, "Chi nhánh không khả dụng", ErrorCodes.BadRequest);
+
                 return assignment.BranchId;
             }
 
@@ -46,7 +56,7 @@ namespace SmashCourt_BE.Services.Helpers
         /// <inheritdoc />
         public async Task<Guid?> ResolveOptionalBranchIdAsync(Guid? requestedBranchId, Guid currentUserId, UserRole currentUserRole)
         {
-            // OWNER: Cho phép null (xem toàn hệ thống) hoặc chọn chi nhánh cụ thể
+            // OWNER: Cho phép null (xem toàn hệ thống) hoặc chọn chi nhánh cụ thể (không validate)
             if (currentUserRole == UserRole.OWNER)
             {
                 return requestedBranchId; // null = all branches, có giá trị = branch cụ thể
@@ -61,6 +71,14 @@ namespace SmashCourt_BE.Services.Helpers
 
                 if (requestedBranchId.HasValue && requestedBranchId.Value != assignment.BranchId)
                     throw new AppException(403, "Bạn không có quyền thao tác chi nhánh này", ErrorCodes.Forbidden);
+
+                // Validate branch exists and is active for staff/manager
+                var branch = await _branchRepo.GetByIdAsync(assignment.BranchId);
+                if (branch == null)
+                    throw new AppException(404, "Không tìm thấy chi nhánh", ErrorCodes.NotFound);
+                
+                if (branch.Status != BranchStatus.ACTIVE)
+                    throw new AppException(400, "Chi nhánh không khả dụng", ErrorCodes.BadRequest);
 
                 return assignment.BranchId;
             }

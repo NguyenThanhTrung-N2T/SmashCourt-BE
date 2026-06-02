@@ -23,37 +23,6 @@ public class ReportController : ControllerBase
     {
         _service = service;
     }
-
-    /// <summary>
-    /// Dashboard cho OWNER (toàn hệ thống)
-    /// </summary>
-    [HttpGet("dashboard/owner")]
-    [Authorize(Policy = AuthorizationPolicies.OwnerOnly)]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status403Forbidden)]
-    public async Task<IActionResult> GetOwnerDashboard([FromQuery] ReportFilterDto filter)
-    {
-        var currentUserId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-        var result = await _service.GetOwnerDashboardAsync(filter, currentUserId);
-        return Ok(ApiResponse<OwnerDashboardDto>.Ok(result, "Lấy dashboard thành công"));
-    }
-
-    /// <summary>
-    /// Dashboard cho BRANCH_MANAGER (chỉ chi nhánh mình)
-    /// </summary>
-    [HttpGet("dashboard/manager")]
-    [Authorize(Policy = AuthorizationPolicies.ManagerOnly)]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status403Forbidden)]
-    public async Task<IActionResult> GetOperationalManagerDashboard([FromQuery] ReportFilterDto filter)
-    {
-        var currentUserId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-        var result = await _service.GetOperationalManagerDashboardAsync(filter, currentUserId);
-        return Ok(ApiResponse<OperationalManagerDashboardDto>.Ok(result, "Lấy dashboard thành công"));
-    }
-
     /// <summary>
     /// Báo cáo doanh thu
     /// OWNER: Xem toàn hệ thống hoặc filter theo branch

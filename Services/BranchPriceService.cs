@@ -5,6 +5,7 @@ using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
 using SmashCourt_BE.Services.IService;
+using SmashCourt_BE.Services.Helpers;
 
 namespace SmashCourt_BE.Services
 {
@@ -15,43 +16,41 @@ namespace SmashCourt_BE.Services
         private readonly ITimeSlotRepository _timeSlotRepo;
         private readonly IBranchRepository _branchRepo;
         private readonly ICourtRepository _courtRepo;
+        private readonly IBranchScopeResolver _branchScopeResolver;
 
         public BranchPriceService(
             IBranchPriceRepository repo,
             ISystemPriceRepository systemPriceRepo,
             ITimeSlotRepository timeSlotRepo,
             IBranchRepository branchRepo,
-            ICourtRepository courtRepo)
+            ICourtRepository courtRepo,
+            IBranchScopeResolver branchScopeResolver)
         {
             _repo = repo;
             _systemPriceRepo = systemPriceRepo;
             _timeSlotRepo = timeSlotRepo;
             _branchRepo = branchRepo;
             _courtRepo = courtRepo;
-        }
-
-        // Lấy tất cả cấu hình giá override của chi nhánh, có thể filter theo courtTypeId
-        public async Task<List<CurrentPriceDto>> GetAllAsync(
-            Guid branchId, Guid? courtTypeId = null)
-        {
-            await ValidateBranchAsync(branchId);
-            var prices = await _repo.GetAllAsync(branchId, courtTypeId);
-            return GroupPrices(prices);
+            _branchScopeResolver = branchScopeResolver;
         }
 
         // Lấy cấu hình giá effective hiện tại (dựa trên ngày hôm nay) của chi nhánh, có thể filter theo courtTypeId
         public async Task<List<EffectivePriceDto>> GetEffectiveCurrentAsync(
-            Guid branchId, Guid? courtTypeId = null)
+            Guid? requestedBranchId, Guid? courtTypeId, Guid currentUserId, string currentUserRole)
         {
             var today = DateTimeHelper.GetTodayInVietnam();
-            return await GetEffectiveResolvedAsync(branchId, today, courtTypeId);
+            return await GetEffectiveResolvedAsync(requestedBranchId, today, courtTypeId, currentUserId, currentUserRole);
         }
 
         // Lấy snapshot giá thực tế cho 1 ngày cụ thể (branch override nếu có, fallback về system price)
         public async Task<List<EffectivePriceDto>> GetEffectiveResolvedAsync(
-            Guid branchId, DateOnly date, Guid? courtTypeId = null)
+            Guid? requestedBranchId, DateOnly date, Guid? courtTypeId, Guid currentUserId, string currentUserRole)
         {
-            await ValidateBranchAsync(branchId);
+            if (!Enum.TryParse<UserRole>(currentUserRole, true, out var roleEnum))
+            {
+                throw new AppException(403, "Role không hợp lệ", ErrorCodes.Forbidden);
+            }
+            var branchId = await _branchScopeResolver.ResolveRequiredBranchIdAsync(requestedBranchId, currentUserId, roleEnum);
 
             var branchPrices = await _repo.GetCurrentForDateAsync(branchId, date, courtTypeId);
             var systemPrices = await _systemPriceRepo.GetCurrentForDateAsync(date, courtTypeId);
@@ -106,13 +105,17 @@ namespace SmashCourt_BE.Services
                 .ThenBy(p => p.StartTime)
                 .ToList();
 
-            return result;
+            return PriceSlotMerger.MergeConsecutiveEffectivePriceSlots(result);
         }
 
         // List branch override price versions by effective date.
-        public async Task<List<PriceVersionListDto>> GetVersionsAsync(Guid branchId, Guid courtTypeId)
+        public async Task<List<PriceVersionListDto>> GetVersionsAsync(Guid? requestedBranchId, Guid courtTypeId, Guid currentUserId, string currentUserRole)
         {
-            await ValidateBranchAsync(branchId);
+            if (!Enum.TryParse<UserRole>(currentUserRole, true, out var roleEnum))
+            {
+                throw new AppException(403, "Role không hợp lệ", ErrorCodes.Forbidden);
+            }
+            var branchId = await _branchScopeResolver.ResolveRequiredBranchIdAsync(requestedBranchId, currentUserId, roleEnum);
 
             var dates = await _repo.GetVersionsAsync(branchId, courtTypeId);
 
@@ -142,9 +145,13 @@ namespace SmashCourt_BE.Services
 
         // Lấy chi tiết một phiên bản giá chi nhánh (override) cho ngày hiệu lực cụ thể
         public async Task<BranchPriceVersionDetailDto?> GetVersionDetailAsync(
-            Guid branchId, Guid courtTypeId, DateOnly effectiveFrom)
+            Guid? requestedBranchId, Guid courtTypeId, DateOnly effectiveFrom, Guid currentUserId, string currentUserRole)
         {
-            await ValidateBranchAsync(branchId);
+            if (!Enum.TryParse<UserRole>(currentUserRole, true, out var roleEnum))
+            {
+                throw new AppException(403, "Role không hợp lệ", ErrorCodes.Forbidden);
+            }
+            var branchId = await _branchScopeResolver.ResolveRequiredBranchIdAsync(requestedBranchId, currentUserId, roleEnum);
 
             var prices = await _repo.GetCurrentForDateAsync(branchId, effectiveFrom, courtTypeId);
 
@@ -172,10 +179,14 @@ namespace SmashCourt_BE.Services
         }
 
         // Tạo mới 1 batch giá override cho 1 court type tại chi nhánh, có thể tạo nhiều khung giờ trong cùng 1 request
-        public async Task CreateBatchAsync(Guid branchId, CreateBranchPriceDto dto)
+        public async Task CreateBatchAsync(Guid? requestedBranchId, CreateBranchPriceDto dto, Guid currentUserId, string currentUserRole)
         {
-            // 1. Validate branch
-            await ValidateBranchAsync(branchId);
+            // 1. Resolve branch scope
+            if (!Enum.TryParse<UserRole>(currentUserRole, true, out var roleEnum))
+            {
+                throw new AppException(403, "Role không hợp lệ", ErrorCodes.Forbidden);
+            }
+            var branchId = await _branchScopeResolver.ResolveRequiredBranchIdAsync(requestedBranchId, currentUserId, roleEnum);
 
             // 2. Convert DateTime → DateOnly
             var effectiveFromDate = DateOnly.FromDateTime(dto.EffectiveFrom);
@@ -269,9 +280,13 @@ namespace SmashCourt_BE.Services
         }
 
         // Xóa 1 cấu hình giá override dựa trên courtTypeId + time slot + effectiveFrom. Chỉ xóa được với cấu hình giá chưa có hiệu lực (ngày hiệu lực > ngày hôm nay)
-        public async Task DeleteAsync(Guid branchId, DeleteBranchPriceDto dto)
+        public async Task DeleteAsync(Guid? requestedBranchId, DeleteBranchPriceDto dto, Guid currentUserId, string currentUserRole)
         {
-            await ValidateBranchAsync(branchId);
+            if (!Enum.TryParse<UserRole>(currentUserRole, true, out var roleEnum))
+            {
+                throw new AppException(403, "Role không hợp lệ", ErrorCodes.Forbidden);
+            }
+            var branchId = await _branchScopeResolver.ResolveRequiredBranchIdAsync(requestedBranchId, currentUserId, roleEnum);
 
             // Convert DateTime → DateOnly và TimeSpan → TimeOnly
             var effectiveFromDate = DateOnly.FromDateTime(dto.EffectiveFrom);
@@ -313,9 +328,6 @@ namespace SmashCourt_BE.Services
             if (bookingDate < today)
                 throw new AppException(400,
                     "Không thể tính giá cho ngày trong quá khứ", ErrorCodes.BadRequest);
-
-            // 3. Validate branch + tìm court → lấy courtTypeId
-            await ValidateBranchAsync(branchId);
 
             var court = await _courtRepo.GetByIdAsync(dto.CourtId, branchId);
             if (court == null)
@@ -407,14 +419,6 @@ namespace SmashCourt_BE.Services
                 CourtFee = courtFee,
                 Breakdown = breakdown
             };
-        }
-
-        // Validate branch tồn tại
-        private async Task ValidateBranchAsync(Guid branchId)
-        {
-            var branch = await _branchRepo.GetByIdAsync(branchId);
-            if (branch == null)
-                throw new AppException(404, "Không tìm thấy chi nhánh", ErrorCodes.NotFound);
         }
 
         // Group giá override theo courtTypeId + time slot để trả về dạng dễ đọc cho frontend (1 record sẽ có weekdayPrice + weekendPrice)

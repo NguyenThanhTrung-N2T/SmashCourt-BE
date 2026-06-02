@@ -9,9 +9,8 @@ using System.Security.Claims;
 
 namespace SmashCourt_BE.Controllers
 {
-    // Controllers/BranchPriceController.cs
     [ApiController]
-    [Route("api/branches/{branchId:guid}/prices")]
+    [Route("api/branches/prices")]
     public class BranchPriceController : ControllerBase
     {
         private readonly IBranchPriceService _service;
@@ -20,20 +19,6 @@ namespace SmashCourt_BE.Controllers
         {
             _service = service;
         }
-
-        /// <summary>
-        /// Lịch sử toàn bộ giá override tại chi nhánh
-        /// </summary>
-        [HttpGet]
-        [Authorize(Policy = AuthorizationPolicies.OwnerOnly)]
-        [ProducesResponseType(StatusCodes.Status200OK)]
-        public async Task<IActionResult> GetAll(
-            Guid branchId, [FromQuery] Guid? courtTypeId = null)
-        {
-            var result = await _service.GetAllAsync(branchId, courtTypeId);
-            return Ok(ApiResponse<List<CurrentPriceDto>>.Ok(result));
-        }
-
         /// <summary>
         /// Giá thực tế đang áp dụng tại chi nhánh (branch override nếu có, fallback về system price)
         /// </summary>
@@ -41,9 +26,13 @@ namespace SmashCourt_BE.Controllers
         [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
         [ProducesResponseType(StatusCodes.Status200OK)]
         public async Task<IActionResult> GetCurrent(
-            Guid branchId, [FromQuery] Guid? courtTypeId = null)
+            [FromQuery] Guid? branchId,
+            [FromQuery] Guid? courtTypeId = null)
         {
-            var result = await _service.GetEffectiveCurrentAsync(branchId, courtTypeId);
+            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var role = User.FindFirstValue(ClaimTypes.Role)!;
+
+            var result = await _service.GetEffectiveCurrentAsync(branchId, courtTypeId, userId, role);
             return Ok(ApiResponse<List<EffectivePriceDto>>.Ok(result));
         }
 
@@ -55,17 +44,20 @@ namespace SmashCourt_BE.Controllers
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         public async Task<IActionResult> GetResolved(
-            Guid branchId,
+            [FromQuery] Guid? branchId,
             [FromQuery] DateTime? date,
             [FromQuery] Guid? courtTypeId = null)
         {
+            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var role = User.FindFirstValue(ClaimTypes.Role)!;
+
             if (date == null)
                 return BadRequest(ApiResponse<object>.Fail(
                     "Vui lòng đưa ngày cần xem.",
                     ErrorCodes.BadRequest));
 
             var parsedDate = DateOnly.FromDateTime(date.Value);
-            var result = await _service.GetEffectiveResolvedAsync(branchId, parsedDate, courtTypeId);
+            var result = await _service.GetEffectiveResolvedAsync(branchId, parsedDate, courtTypeId, userId, role);
             return Ok(ApiResponse<List<EffectivePriceDto>>.Ok(result));
         }
 
@@ -73,13 +65,16 @@ namespace SmashCourt_BE.Controllers
         /// List branch override price versions by effective date.
         /// </summary>
         [HttpGet("versions")]
-        [Authorize(Policy = AuthorizationPolicies.OwnerOnly)]
+        [Authorize(Policy = AuthorizationPolicies.OwnerOrManager)]
         [ProducesResponseType(StatusCodes.Status200OK)]
         public async Task<IActionResult> GetVersions(
-            Guid branchId,
+            [FromQuery] Guid? branchId,
             [FromQuery] Guid courtTypeId)
         {
-            var result = await _service.GetVersionsAsync(branchId, courtTypeId);
+            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var role = User.FindFirstValue(ClaimTypes.Role)!;
+
+            var result = await _service.GetVersionsAsync(branchId, courtTypeId, userId, role);
             return Ok(ApiResponse<List<PriceVersionListDto>>.Ok(result));
         }
 
@@ -87,21 +82,24 @@ namespace SmashCourt_BE.Controllers
         /// Lấy chi tiết một phiên bản giá chi nhánh theo ngày hiệu lực.
         /// </summary>
         [HttpGet("version")]
-        [Authorize(Policy = AuthorizationPolicies.OwnerOnly)]
+        [Authorize(Policy = AuthorizationPolicies.OwnerOrManager)]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         public async Task<IActionResult> GetVersionDetail(
-            Guid branchId,
+            [FromQuery] Guid? branchId,
             [FromQuery] Guid courtTypeId,
             [FromQuery] DateTime? effectiveFrom)
         {
+            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var role = User.FindFirstValue(ClaimTypes.Role)!;
+
             if (effectiveFrom == null)
                 return BadRequest(ApiResponse<object>.Fail(
                     "Vui lòng đưa ngày hiệu lực.",
                     ErrorCodes.BadRequest));
 
             var effectiveFromDate = DateOnly.FromDateTime(effectiveFrom.Value);
-            var result = await _service.GetVersionDetailAsync(branchId, courtTypeId, effectiveFromDate);
+            var result = await _service.GetVersionDetailAsync(branchId, courtTypeId, effectiveFromDate, userId, role);
             if (result == null)
             {
                 return Ok(ApiResponse<object>.Fail(
@@ -116,15 +114,19 @@ namespace SmashCourt_BE.Controllers
         /// Tạo giá override mới — batch WEEKDAY + WEEKEND
         /// </summary>
         [HttpPost]
-        [Authorize(Policy = AuthorizationPolicies.OwnerOnly)]
+        [Authorize(Policy = AuthorizationPolicies.OwnerOrManager)]
         [ProducesResponseType(StatusCodes.Status201Created)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         [ProducesResponseType(StatusCodes.Status409Conflict)]
         public async Task<IActionResult> Create(
-            Guid branchId, [FromBody] CreateBranchPriceDto dto)
+            [FromQuery] Guid? branchId,
+            [FromBody] CreateBranchPriceDto dto)
         {
-            await _service.CreateBatchAsync(branchId, dto);
+            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var role = User.FindFirstValue(ClaimTypes.Role)!;
+
+            await _service.CreateBatchAsync(branchId, dto, userId, role);
             return StatusCode(201,
                 ApiResponse<object>.Ok(null!, "Cấu hình giá chi nhánh thành công"));
         }
@@ -133,13 +135,18 @@ namespace SmashCourt_BE.Controllers
         /// Xóa cấu hình giá override — fallback về system price
         /// </summary>
         [HttpDelete]
-        [Authorize(Policy = AuthorizationPolicies.OwnerOnly)]
+        [Authorize(Policy = AuthorizationPolicies.OwnerOrManager)]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<IActionResult> Delete(Guid branchId, [FromBody] DeleteBranchPriceDto dto)
+        public async Task<IActionResult> Delete(
+            [FromQuery] Guid? branchId,
+            [FromBody] DeleteBranchPriceDto dto)
         {
-            await _service.DeleteAsync(branchId, dto);
+            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var role = User.FindFirstValue(ClaimTypes.Role)!;
+
+            await _service.DeleteAsync(branchId, dto, userId, role);
             return Ok(ApiResponse<object>.Ok(null!, "Xóa cấu hình giá thành công"));
         }
 
@@ -152,7 +159,8 @@ namespace SmashCourt_BE.Controllers
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         public async Task<IActionResult> Calculate(
-            Guid branchId, [FromBody] CalculatePriceDto dto)
+            [FromQuery] Guid branchId,
+            [FromBody] CalculatePriceDto dto)
         {
             var result = await _service.CalculateAsync(branchId, dto);
             return Ok(ApiResponse<CalculatePriceResultDto>.Ok(result));

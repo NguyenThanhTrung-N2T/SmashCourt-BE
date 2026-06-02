@@ -203,15 +203,18 @@ public class ReportService : IReportService
     }
 
     /// <summary>
-    /// Lấy dashboard cho BRANCH_MANAGER (chỉ chi nhánh mình)
+    /// Lấy dashboard cho BRANCH_MANAGER hoac STAFF (chỉ chi nhánh mình)
     /// </summary>
     public async Task<OperationalManagerDashboardDto> GetOperationalManagerDashboardAsync(
-        ReportFilterDto filter, Guid currentUserId)
+        Guid currentUserId, string currentUserRole)
     {
-        var resolvedBranchId = await _branchScopeResolver.ResolveRequiredBranchIdAsync(
-            filter.BranchId,
+        if (!Enum.TryParse<UserRole>(currentUserRole, true, out var roleEnum))
+        {
+            throw new AppException(403, "Role không hợp lệ", ErrorCodes.Forbidden);
+        }
+        var resolvedBranchId = await _branchScopeResolver.ResolveRequiredBranchIdAsync(null,
             currentUserId,
-            UserRole.BRANCH_MANAGER);
+            roleEnum);
 
         var now = DateTimeHelper.GetVietnamNow();
         var today = DateTimeHelper.GetTodayInVietnam();

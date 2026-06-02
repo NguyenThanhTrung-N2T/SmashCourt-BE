@@ -29,7 +29,7 @@ namespace SmashCourt_BE.Controllers
         [HttpGet]
         [ProducesResponseType(StatusCodes.Status200OK)]
         public async Task<IActionResult> GetAll(
-            [FromQuery] Guid? branchId, 
+            [FromQuery] Guid? branchId,
             [FromQuery] Guid? typeId)
         {
             var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier);
@@ -44,6 +44,7 @@ namespace SmashCourt_BE.Controllers
         /// Xem chi tiết 1 sân
         /// </summary>
         [HttpGet("{id:guid}")]
+        [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         public async Task<IActionResult> GetById(Guid id, [FromQuery] Guid? branchId)
@@ -60,14 +61,14 @@ namespace SmashCourt_BE.Controllers
         /// Stats-only dashboard — 4 ô thống kê, có thể poll độc lập mọi 30–60 giây. (todo: signalr)
         /// </summary>
         [HttpGet("management-dashboard/stats")]
-        [Authorize(Policy = AuthorizationPolicies.OwnerOrManager)]
+        [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
         [ProducesResponseType(StatusCodes.Status200OK)]
         public async Task<IActionResult> GetManagementStats(
             [FromQuery] Guid? branchId,
             [FromQuery] DateOnly? date)
         {
             var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            var role   = User.FindFirstValue(ClaimTypes.Role)!;
+            var role = User.FindFirstValue(ClaimTypes.Role)!;
 
             var result = await _service.GetManagementStatsAsync(branchId, date, userId, role);
             return Ok(ApiResponse<CourtManagementStatsDto>.Ok(result, "Lấy thống kê sân thành công"));
@@ -77,13 +78,13 @@ namespace SmashCourt_BE.Controllers
         /// Danh sách card sân (phân trang) kèm timeline ngày được chọn.
         /// </summary>
         [HttpGet("management-dashboard/courts")]
-        [Authorize(Policy = AuthorizationPolicies.OwnerOrManager)]
+        [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
         [ProducesResponseType(StatusCodes.Status200OK)]
         public async Task<IActionResult> GetManagementCourts(
             [FromQuery] CourtManagementDashboardQuery query)
         {
             var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            var role   = User.FindFirstValue(ClaimTypes.Role)!;
+            var role = User.FindFirstValue(ClaimTypes.Role)!;
 
             var result = await _service.GetManagementCourtsAsync(
                 query.BranchId, query.Date, query.Search, query.TypeId,
@@ -96,7 +97,7 @@ namespace SmashCourt_BE.Controllers
         /// Full-detail timeline — tất cả sân trong ngày kèm thông tin đặt sân. (todo: signalr)
         /// </summary>
         [HttpGet("management-timeline")]
-        [Authorize(Policy = AuthorizationPolicies.OwnerOrManager)]
+        [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
         [ProducesResponseType(StatusCodes.Status200OK)]
         public async Task<IActionResult> GetManagementTimeline(
             [FromQuery] Guid? branchId,
@@ -104,7 +105,7 @@ namespace SmashCourt_BE.Controllers
             [FromQuery] Guid? typeId)
         {
             var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            var role   = User.FindFirstValue(ClaimTypes.Role)!;
+            var role = User.FindFirstValue(ClaimTypes.Role)!;
 
             var result = await _service.GetManagementTimelineAsync(branchId, date, typeId, userId, role);
             return Ok(ApiResponse<CourtManagementTimelineDto>.Ok(result, "Lấy timeline quản lý sân thành công"));
@@ -114,13 +115,13 @@ namespace SmashCourt_BE.Controllers
         /// Chi tiết sân cho modal quản lý — giá, khách đang chơi, lịch sắp tới.
         /// </summary>
         [HttpGet("{id:guid}/management-details")]
-        [Authorize(Policy = AuthorizationPolicies.OwnerOrManager)]
+        [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         public async Task<IActionResult> GetManagementDetail(Guid id, [FromQuery] DateOnly? date)
         {
             var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            var role   = User.FindFirstValue(ClaimTypes.Role)!;
+            var role = User.FindFirstValue(ClaimTypes.Role)!;
 
             var result = await _service.GetManagementDetailAsync(id, date, userId, role);
             return Ok(ApiResponse<CourtManagementDetailDto>.Ok(result, "Lấy chi tiết sân thành công"));
@@ -135,7 +136,7 @@ namespace SmashCourt_BE.Controllers
         public async Task<IActionResult> Create([FromQuery] Guid? branchId, [FromBody] CreateCourtDto dto)
         {
             var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            var role   = User.FindFirstValue(ClaimTypes.Role)!;
+            var role = User.FindFirstValue(ClaimTypes.Role)!;
 
             var result = await _service.CreateAsync(branchId, dto, userId, role);
             return StatusCode(201, ApiResponse<CourtDto>.Ok(result, "Tạo sân thành công"));
@@ -150,7 +151,7 @@ namespace SmashCourt_BE.Controllers
         public async Task<IActionResult> Update(Guid id, [FromQuery] Guid? branchId, [FromBody] UpdateCourtDto dto)
         {
             var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            var role   = User.FindFirstValue(ClaimTypes.Role)!;
+            var role = User.FindFirstValue(ClaimTypes.Role)!;
 
             var result = await _service.UpdateAsync(id, branchId, dto, userId, role);
             return Ok(ApiResponse<CourtDto>.Ok(result, "Cập nhật sân thành công"));
@@ -165,7 +166,7 @@ namespace SmashCourt_BE.Controllers
         public async Task<IActionResult> Suspend(Guid id, [FromQuery] Guid? branchId)
         {
             var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            var role   = User.FindFirstValue(ClaimTypes.Role)!;
+            var role = User.FindFirstValue(ClaimTypes.Role)!;
 
             await _service.SuspendAsync(id, branchId, userId, role);
             return Ok(ApiResponse<object>.Ok(null!, "Tạm ngưng sân thành công"));
@@ -180,7 +181,7 @@ namespace SmashCourt_BE.Controllers
         public async Task<IActionResult> Activate(Guid id, [FromQuery] Guid? branchId)
         {
             var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            var role   = User.FindFirstValue(ClaimTypes.Role)!;
+            var role = User.FindFirstValue(ClaimTypes.Role)!;
 
             await _service.ActivateAsync(id, branchId, userId, role);
             return Ok(ApiResponse<object>.Ok(null!, "Mở lại sân thành công"));
@@ -195,7 +196,7 @@ namespace SmashCourt_BE.Controllers
         public async Task<IActionResult> Delete(Guid id, [FromQuery] Guid? branchId)
         {
             var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            var role   = User.FindFirstValue(ClaimTypes.Role)!;
+            var role = User.FindFirstValue(ClaimTypes.Role)!;
 
             await _service.DeleteAsync(id, branchId, userId, role);
             return Ok(ApiResponse<object>.Ok(null!, "Xóa sân thành công"));

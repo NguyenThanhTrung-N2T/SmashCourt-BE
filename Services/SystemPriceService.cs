@@ -5,6 +5,7 @@ using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
 using SmashCourt_BE.Services.IService;
 using SmashCourt_BE.Helpers;
+using SmashCourt_BE.Services.Helpers;
 
 namespace SmashCourt_BE.Services
 {
@@ -28,21 +29,24 @@ namespace SmashCourt_BE.Services
         public async Task<List<CurrentPriceDto>> GetAllAsync(Guid? courtTypeId = null)
         {
             var prices = await _repo.GetAllAsync(courtTypeId);
-            return GroupPrices(prices);
+            var grouped = GroupPrices(prices);
+            return PriceSlotMerger.MergeConsecutivePriceSlots(grouped);
         }
 
         // Giá chung đang có hiệu lực — filter theo court type nếu có
         public async Task<List<CurrentPriceDto>> GetCurrentAsync(Guid? courtTypeId = null)
         {
             var prices = await _repo.GetCurrentAsync(courtTypeId);
-            return GroupPrices(prices);
+            var grouped = GroupPrices(prices);
+            return PriceSlotMerger.MergeConsecutivePriceSlots(grouped);
         }
 
         // Lấy giá chung resolved cho 1 ngày cụ thể
         public async Task<List<CurrentPriceDto>> GetResolvedAsync(DateOnly date, Guid? courtTypeId = null)
         {
             var prices = await _repo.GetCurrentForDateAsync(date, courtTypeId);
-            return GroupPrices(prices);
+            var grouped = GroupPrices(prices);
+            return PriceSlotMerger.MergeConsecutivePriceSlots(grouped);
         }
 
         // Tạo batch giá chung mới cho 1 court type với ngày hiệu lực cụ thể
