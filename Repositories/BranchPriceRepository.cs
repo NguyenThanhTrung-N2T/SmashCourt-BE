@@ -114,6 +114,21 @@ namespace SmashCourt_BE.Repositories
                 .ToListAsync();
         }
 
+        // Get the active version's effective date (max effective_from <= targetDate)
+        // Returns null if no version is active yet
+        public async Task<DateOnly?> GetActiveVersionDateAsync(Guid branchId, Guid courtTypeId, DateOnly targetDate)
+        {
+            return await _context.BranchPriceOverrides
+                .Where(bp =>
+                    bp.BranchId == branchId &&
+                    bp.CourtTypeId == courtTypeId &&
+                    bp.EffectiveFrom <= targetDate)
+                .Select(bp => bp.EffectiveFrom)
+                .Distinct()
+                .OrderByDescending(d => d)
+                .FirstOrDefaultAsync();
+        }
+
         // Kiểm tra đã tồn tại giá override nào cho branch + court type + time slot + effective_from cụ thể chưa
         public async Task<bool> ExistsAsync(
             Guid branchId, Guid courtTypeId, Guid timeSlotId, DateOnly effectiveFrom)
@@ -144,23 +159,16 @@ namespace SmashCourt_BE.Repositories
         }
 
         // Xóa cặp giá override (WEEKDAY + WEEKEND) của 1 branch + court type với ngày hiệu lực và khung giờ cụ thể
-        public async Task<int> DeletePairAsync(
-            Guid branchId, Guid courtTypeId, DateOnly effectiveFrom,
-            TimeOnly startTime, TimeOnly endTime)
+        public async Task<int> DeleteVersionAsync(
+    Guid branchId,
+    Guid courtTypeId,
+    DateOnly effectiveFrom)
         {
-            // Load Id của cả 2 bản ghi (WEEKDAY + WEEKEND) cùng khung giờ
-            var ids = await _context.BranchPriceOverrides
+            return await _context.BranchPriceOverrides
                 .Where(bp =>
                     bp.BranchId == branchId &&
                     bp.CourtTypeId == courtTypeId &&
-                    bp.EffectiveFrom == effectiveFrom &&
-                    bp.TimeSlot.StartTime == startTime &&
-                    bp.TimeSlot.EndTime == endTime)
-                .Select(bp => bp.Id)
-                .ToListAsync();
-
-            return await _context.BranchPriceOverrides
-                .Where(bp => ids.Contains(bp.Id))
+                    bp.EffectiveFrom == effectiveFrom)
                 .ExecuteDeleteAsync();
         }
 
@@ -168,7 +176,11 @@ namespace SmashCourt_BE.Repositories
         public async Task<List<BranchPriceOverride>> GetExactDatePricesAsync(Guid branchId, Guid courtTypeId, DateOnly effectiveFrom)
         {
             return await _context.BranchPriceOverrides
+                .Include(bp => bp.CourtType)
+                .Include(bp => bp.TimeSlot)
                 .Where(bp => bp.BranchId == branchId && bp.CourtTypeId == courtTypeId && bp.EffectiveFrom == effectiveFrom)
+                .OrderBy(bp => bp.TimeSlot.StartTime)
+                .ThenBy(bp => bp.TimeSlot.DayType)
                 .ToListAsync();
         }
 
@@ -182,7 +194,7 @@ namespace SmashCourt_BE.Repositories
                 {
                     _context.BranchPriceOverrides.AddRange(insertPrices);
                 }
-                
+
                 if (updatePrices.Any())
                 {
                     _context.BranchPriceOverrides.UpdateRange(updatePrices);

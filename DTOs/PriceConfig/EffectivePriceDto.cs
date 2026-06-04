@@ -8,7 +8,7 @@ namespace SmashCourt_BE.DTOs.PriceConfig
         public TimeSpan EndTime { get; set; }
         public decimal WeekdayPrice { get; set; }
         public decimal WeekendPrice { get; set; }
-        public DateTime EffectiveFrom { get; set; }
+        public string EffectiveFrom { get; set; } = string.Empty; // yyyy-MM-dd format
         public string PriceSource { get; set; } = null!;
     }
 }

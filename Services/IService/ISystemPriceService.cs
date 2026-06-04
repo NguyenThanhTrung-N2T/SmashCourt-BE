@@ -4,22 +4,28 @@ namespace SmashCourt_BE.Services.IService
 {
     public interface ISystemPriceService
     {
-        // Lịch sử toàn bộ giá chung — filter theo court type nếu có
-        Task<List<CurrentPriceDto>> GetAllAsync(Guid? courtTypeId = null);
+        // GET /api/system-prices/versions
+        // Returns all version dates for a court type with their statuses (ACTIVE, SCHEDULED, EXPIRED)
+        Task<SystemPriceVersionsResponse> GetVersionsAsync(Guid courtTypeId);
 
-        // Giá chung đang áp dụng hiện tại
-        Task<List<CurrentPriceDto>> GetCurrentAsync(Guid? courtTypeId = null);
+        // GET /api/system-prices/versions/{effectiveFrom}
+        // Returns the exact set of slots configured on a specific version date
+        Task<SystemPriceVersionDetailDto> GetVersionDetailAsync(Guid courtTypeId, DateOnly effectiveFrom);
 
-        // Lấy giá chung resolved cho 1 ngày cụ thể
-        Task<List<CurrentPriceDto>> GetResolvedAsync(DateOnly date, Guid? courtTypeId = null);
+        // PATCH /api/system-prices/versions/{effectiveFrom}
+        // Creates or partially updates a system price version
+        // Returns (Response, IsCreated) tuple for proper HTTP status code handling
+        Task<(SystemPriceVersionDetailDto Response, bool IsCreated)> UpsertVersionAsync(
+            Guid courtTypeId,
+            DateOnly effectiveFrom,
+            UpsertPriceRequest request);
 
-        // Tạo mới một batch giá chung (áp dụng từ ngày nào, cho court type nào, giá như thế nào)
-        Task CreateBatchAsync(CreateSystemPriceDto dto);
+        // DELETE /api/system-prices/versions/{effectiveFrom}
+        // Deletes an entire system price version
+        // Only SCHEDULED (future) versions can be deleted
+        Task DeleteVersionAsync(Guid courtTypeId, DateOnly effectiveFrom);
 
-        // Lấy danh sách các ngày hiệu lực (phiên bản giá) của một loại sân cụ thể
-        Task<List<PriceVersionListDto>> GetVersionsAsync(Guid courtTypeId);
-
-        // Lấy chi tiết một phiên bản giá chung cho ngày hiệu lực cụ thể
-        Task<PriceVersionDetailDto?> GetVersionDetailAsync(Guid courtTypeId, DateOnly effectiveFrom);
+        // Lấy giá chung resolved cho 1 ngày cụ thể (used for internal calculations)
+        Task<List<CurrentPriceDto>> GetEffectivePricesAsync(DateOnly date, Guid? courtTypeId = null);
     }
 }

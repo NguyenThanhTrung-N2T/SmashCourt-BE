@@ -16,6 +16,10 @@ namespace SmashCourt_BE.Repositories.IRepository
         // List branch override price versions by effective date.
         Task<List<DateOnly>> GetVersionsAsync(Guid branchId, Guid courtTypeId);
 
+        // Get the active version's effective date (max effective_from <= targetDate)
+        // Returns null if no version is active yet
+        Task<DateOnly?> GetActiveVersionDateAsync(Guid branchId, Guid courtTypeId, DateOnly targetDate);
+
         // Kiểm tra xem đã tồn tại cấu hình giá override nào cho chi nhánh, loại sân, khung giờ và ngày hiệu lực cụ thể chưa
         Task<bool> ExistsAsync(Guid branchId, Guid courtTypeId, Guid timeSlotId, DateOnly effectiveFrom);
 
@@ -23,8 +27,7 @@ namespace SmashCourt_BE.Repositories.IRepository
         Task CreateBatchAsync(List<BranchPriceOverride> prices);
 
         // Xóa cả cặp WEEKDAY + WEEKEND; trả số bản ghi bị xóa (0 = không tìm thấy).
-        Task<int> DeletePairAsync(Guid branchId, Guid courtTypeId, DateOnly effectiveFrom,
-                                  TimeOnly startTime, TimeOnly endTime);
+        Task<int> DeleteVersionAsync(Guid branchId, Guid courtTypeId, DateOnly effectiveFrom);
 
         // Lấy các giá override của 1 chi nhánh + 1 loại sân tại 1 ngày hiệu lực chính xác
         Task<List<BranchPriceOverride>> GetExactDatePricesAsync(Guid branchId, Guid courtTypeId, DateOnly effectiveFrom);

@@ -29,5 +29,6 @@ namespace SmashCourt_BE.Repositories.IRepository
 
         // Upsert batch (Cập nhật nếu đã có, tạo mới nếu chưa)
         Task UpsertBatchAsync(List<SystemPrice> insertPrices, List<SystemPrice> updatePrices);
+        Task<int> DeleteVersionAsync(Guid courtTypeId, DateOnly effectiveFrom);
     }
 }

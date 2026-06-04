@@ -165,7 +165,11 @@ namespace SmashCourt_BE.Repositories
         public async Task<List<SystemPrice>> GetExactDatePricesAsync(Guid courtTypeId, DateOnly effectiveFrom)
         {
             return await _context.SystemPrices
+                .Include(sp => sp.CourtType)
+                .Include(sp => sp.TimeSlot)
                 .Where(sp => sp.CourtTypeId == courtTypeId && sp.EffectiveFrom == effectiveFrom)
+                .OrderBy(sp => sp.TimeSlot.StartTime)
+                .ThenBy(sp => sp.TimeSlot.DayType)
                 .ToListAsync();
         }
 
@@ -179,7 +183,7 @@ namespace SmashCourt_BE.Repositories
                 {
                     _context.SystemPrices.AddRange(insertPrices);
                 }
-                
+
                 if (updatePrices.Any())
                 {
                     _context.SystemPrices.UpdateRange(updatePrices);
@@ -194,6 +198,13 @@ namespace SmashCourt_BE.Repositories
                 throw;
             }
         }
-
+        public async Task<int> DeleteVersionAsync(Guid courtTypeId, DateOnly effectiveFrom)
+        {
+            return await _context.SystemPrices
+                .Where(sp =>
+                    sp.CourtTypeId == courtTypeId &&
+                    sp.EffectiveFrom == effectiveFrom)
+                .ExecuteDeleteAsync();
+        }
     }
 }
