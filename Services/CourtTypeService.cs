@@ -1,21 +1,36 @@
 using Microsoft.EntityFrameworkCore;
 using SmashCourt_BE.Common;
 using SmashCourt_BE.DTOs.CourtType;
+using SmashCourt_BE.DTOs.Branch;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Models.ViewModels;
 using SmashCourt_BE.Repositories.IRepository;
 using SmashCourt_BE.Services.IService;
+using SmashCourt_BE.Services.Helpers;
 
 namespace SmashCourt_BE.Services;
 
 public class CourtTypeService : ICourtTypeService
 {
     private readonly ICourtTypeRepository _repository;
+    private readonly IBranchRepository _branchRepo;
+    private readonly ICourtRepository _courtRepo;
+    private readonly IUserBranchRepository _userBranchRepo;
+    private readonly IBranchScopeResolver _branchScopeResolver;
 
-    public CourtTypeService(ICourtTypeRepository repository)
+    public CourtTypeService(
+        ICourtTypeRepository repository,
+        IBranchRepository branchRepo,
+        ICourtRepository courtRepo,
+        IUserBranchRepository userBranchRepo,
+        IBranchScopeResolver branchScopeResolver)
     {
         _repository = repository;
+        _branchRepo = branchRepo;
+        _courtRepo = courtRepo;
+        _userBranchRepo = userBranchRepo;
+        _branchScopeResolver = branchScopeResolver;
     }
 
     // Lấy danh sách loại sân đang ACTIVE, có phân trang
@@ -126,6 +141,118 @@ public class CourtTypeService : ICourtTypeService
         await _repository.UpdateAsync(courtType);
     }
 
+    // Lấy danh sách TẤT CẢ loại sân (kèm trạng thái bật/tắt và số lượng sân) tại chi nhánh
+    public async Task<List<BranchCourtTypeDto>> GetCourtTypesAsync(Guid? requestedBranchId, Guid currentUserId, string currentUserRole)
+    {
+        if (!Enum.TryParse<UserRole>(currentUserRole, true, out var roleEnum))
+            throw new AppException(403, "Role không hợp lệ", ErrorCodes.Forbidden);
+
+        var branchId = await _branchScopeResolver.ResolveOptionalBranchIdAsync(requestedBranchId, currentUserId, roleEnum);
+        
+        // ResolveOptional can return null for OWNER (all branches), but for court types we usually need a specific branch
+        if (!branchId.HasValue)
+            throw new AppException(400, "Vui lòng chọn chi nhánh", ErrorCodes.BadRequest);
+
+        return await _branchRepo.GetAllCourtTypeDetailsAsync(branchId.Value);
+    }
+
+    // Thêm loại sân vào chi nhánh (bật loại sân)
+    public async Task<BranchCourtTypeDto> AddCourtTypeAsync(Guid? requestedBranchId, AddCourtTypeToBranchDto dto, Guid currentUserId, string currentUserRole)
+    {
+        if (!Enum.TryParse<UserRole>(currentUserRole, true, out var roleEnum))
+            throw new AppException(403, "Role không hợp lệ", ErrorCodes.Forbidden);
+
+        var branchId = await _branchScopeResolver.ResolveRequiredBranchIdAsync(requestedBranchId, currentUserId, roleEnum);
+
+        // 1. Tìm branch
+        var branch = await _branchRepo.GetByIdAsync(branchId);
+        if (branch == null)
+            throw new AppException(404, "Không tìm thấy chi nhánh", ErrorCodes.NotFound);
+        
+        // Check chi nhánh đang hoạt động
+        if (branch.Status != BranchStatus.ACTIVE)
+            throw new AppException(400, "Chi nhánh không đang hoạt động, không thể thêm loại sân", ErrorCodes.BadRequest);
+
+        // 3. Tìm court type
+        var courtType = await _repository.GetByIdAsync(dto.CourtTypeId);
+        if (courtType == null)
+            throw new AppException(404, "Không tìm thấy loại sân", ErrorCodes.NotFound);
+
+        if (courtType.Status != CourtTypeStatus.ACTIVE)
+            throw new AppException(400, "Loại sân không còn hoạt động", ErrorCodes.BadRequest);
+
+        // 4. Kiểm tra đã bật chưa
+        var existing = await _branchRepo.GetBranchCourtTypeAsync(branchId, dto.CourtTypeId);
+        if (existing != null)
+        {
+            // Đã tồn tại nhưng đang tắt → bật lại
+            if (!existing.IsActive)
+            {
+                existing.IsActive = true;
+                await _branchRepo.UpdateBranchCourtTypeAsync(existing);
+
+                // Đếm số sân active của court type này trong chi nhánh
+                var courts = await _courtRepo.GetAllByBranchAsync(branchId, true);
+                var courtCount = courts.Count(c => c.CourtTypeId == dto.CourtTypeId && c.Status != CourtStatus.INACTIVE);
+
+                return MapToCourtTypeDto(existing, courtCount);
+            }
+            // Đang bật rồi → conflict
+            throw new AppException(409, "Loại sân này đã được bật tại chi nhánh", ErrorCodes.Conflict);
+        }
+
+        // 5. Tạo mới
+        var branchCourtType = new BranchCourtType
+        {
+            BranchId = branchId,
+            CourtTypeId = dto.CourtTypeId,
+            IsActive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        var created = await _branchRepo.AddCourtTypeAsync(branchCourtType);
+
+        var reloaded = await _branchRepo.GetBranchCourtTypeAsync(branchId, dto.CourtTypeId)
+            ?? throw new AppException(500, "Lỗi khi tạo loại sân", ErrorCodes.InternalError);
+
+        // Đếm số sân active của court type này trong chi nhánh
+        var reloadedCourts = await _courtRepo.GetAllByBranchAsync(branchId, true);
+        var reloadedCourtCount = reloadedCourts.Count(c => c.CourtTypeId == dto.CourtTypeId && c.Status != CourtStatus.INACTIVE);
+
+        return MapToCourtTypeDto(reloaded, reloadedCourtCount);
+    }
+
+    // Xóa loại sân khỏi chi nhánh (tắt loại sân)
+    public async Task RemoveCourtTypeAsync(Guid? requestedBranchId, Guid courtTypeId, Guid currentUserId, string currentUserRole)
+    {
+        if (!Enum.TryParse<UserRole>(currentUserRole, true, out var roleEnum))
+            throw new AppException(403, "Role không hợp lệ", ErrorCodes.Forbidden);
+
+        var branchId = await _branchScopeResolver.ResolveRequiredBranchIdAsync(requestedBranchId, currentUserId, roleEnum);
+
+        // 1. Tìm branch
+        var branch = await _branchRepo.GetByIdAsync(branchId);
+        if (branch == null)
+            throw new AppException(404, "Không tìm thấy chi nhánh", ErrorCodes.NotFound);
+
+        // 2. Tìm BranchCourtType
+        var branchCourtType = await _branchRepo.GetBranchCourtTypeAsync(branchId, courtTypeId);
+        if (branchCourtType == null)
+            throw new AppException(404, "Loại sân không tồn tại tại chi nhánh này", ErrorCodes.NotFound);
+
+        if (!branchCourtType.IsActive)
+            throw new AppException(400, "Loại sân này đã được tắt trước đó", ErrorCodes.BadRequest);
+
+        // 3. Check có sân nào đang dùng loại sân này không
+        var hasCourts = await _branchRepo.HasCourtsWithTypeAsync(branchId, courtTypeId);
+        if (hasCourts)
+            throw new AppException(400, "Loại sân đang được sử dụng, không thể bỏ", ErrorCodes.ResourceInUse);
+
+        // 4. Soft delete
+        branchCourtType.IsActive = false;
+        await _branchRepo.UpdateBranchCourtTypeAsync(branchCourtType);
+    }
+
     // Mapper
     private static CourtTypeDto MapToDto(CourtTypeWithCount x) => new()
     {
@@ -137,5 +264,16 @@ public class CourtTypeService : ICourtTypeService
         UpdatedAt = x.CourtType.UpdatedAt,
         ActiveBranchCount = x.ActiveBranchCount,
         CourtCount = x.CourtCount
+    };
+
+    private static BranchCourtTypeDto MapToCourtTypeDto(BranchCourtType bct, int courtCount) => new()
+    {
+        Id = bct.Id,
+        CourtTypeId = bct.CourtTypeId,
+        CourtTypeName = bct.CourtType?.Name ?? "N/A",
+        CourtTypeDescription = bct.CourtType?.Description ?? "N/A",
+        IsActive = bct.IsActive,
+        CreatedAt = bct.CreatedAt,
+        CourtCount = courtCount
     };
 }

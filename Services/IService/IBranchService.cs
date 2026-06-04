@@ -32,15 +32,6 @@ namespace SmashCourt_BE.Services.IService
         // Xóa chi nhánh (chuyển trạng thái thành INACTIVE)
         Task DeleteAsync(Guid id);
 
-        // Lấy danh sách loại sân của chi nhánh
-        Task<List<BranchCourtTypeDto>> GetCourtTypesAsync(Guid branchId);
-
-        // thêm loại sân cho chi nhánh
-        Task<BranchCourtTypeDto> AddCourtTypeAsync(Guid branchId, AddCourtTypeToBranchDto dto, Guid currentUserId, string currentUserRole);
-
-        // Xóa loại sân khỏi chi nhánh
-        Task RemoveCourtTypeAsync(Guid branchId, Guid courtTypeId, Guid currentUserId, string currentUserRole);
-
         // Lấy danh sách dịch vụ của chi nhánh kèm phân trang và phân quyền theo requester
         Task<PagedResult<BranchServiceDto>> GetServicesAsync(Guid? requestedBranchId, PaginationQuery query, Guid currentUserId, string currentUserRole);
 

@@ -49,7 +49,21 @@ namespace SmashCourt_BE.Services.Helpers
                 return assignment.BranchId;
             }
 
-            // CUSTOMER / Invalid role: Không được phép thao tác Admin API
+            // CUSTOMER: Phải truyền chi nhánh
+            if (currentUserRole == UserRole.CUSTOMER)
+            {
+                if (!requestedBranchId.HasValue)
+                    throw new AppException(400, "Vui lòng chọn chi nhánh", ErrorCodes.BadRequest);
+                
+                // Validate branch exists and is active for customers
+                var branch = await _branchRepo.GetByIdAsync(requestedBranchId.Value);
+                if (branch == null || branch.Status != BranchStatus.ACTIVE)
+                    throw new AppException(404, "Không tìm thấy chi nhánh", ErrorCodes.NotFound);
+
+                return requestedBranchId.Value;
+            }
+
+            // Invalid role: Không được phép thao tác Admin API
             throw new AppException(403, "Role không được phép sử dụng chức năng này", ErrorCodes.Forbidden);
         }
 
@@ -83,7 +97,21 @@ namespace SmashCourt_BE.Services.Helpers
                 return assignment.BranchId;
             }
 
-            // CUSTOMER / Invalid role: Không được phép thao tác Admin API
+            // CUSTOMER: Phải truyền chi nhánh (không cho phép null)
+            if (currentUserRole == UserRole.CUSTOMER)
+            {
+                if (!requestedBranchId.HasValue)
+                    throw new AppException(400, "Vui lòng chọn chi nhánh", ErrorCodes.BadRequest);
+
+                // Validate branch exists and is active for customers
+                var branch = await _branchRepo.GetByIdAsync(requestedBranchId.Value);
+                if (branch == null || branch.Status != BranchStatus.ACTIVE)
+                    throw new AppException(404, "Không tìm thấy chi nhánh", ErrorCodes.NotFound);
+
+                return requestedBranchId.Value;
+            }
+
+            // Invalid role: Không được phép thao tác Admin API
             throw new AppException(403, "Role không được phép sử dụng chức năng này", ErrorCodes.Forbidden);
         }
 

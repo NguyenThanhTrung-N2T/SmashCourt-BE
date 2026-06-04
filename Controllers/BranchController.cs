@@ -153,65 +153,6 @@ namespace SmashCourt_BE.Controllers
         }
 
         /// <summary>
-        /// Lấy danh sách loại sân tại chi nhánh
-        /// </summary>
-        [HttpGet("{id:guid}/court-types")]
-        [ProducesResponseType(StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status404NotFound)]
-        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-        public async Task<IActionResult> GetCourtTypes(Guid id)
-        {
-            var result = await _service.GetCourtTypesAsync(id);
-            return Ok(ApiResponse<List<BranchCourtTypeDto>>.Ok(result, "Lấy danh sách loại sân thành công"));
-        }
-
-        /// <summary>
-        /// Bật loại sân vào chi nhánh — OWNER hoặc MANAGER chi nhánh đó
-        /// </summary>
-        [HttpPost("{id:guid}/court-types")]
-        [Authorize(Policy = AuthorizationPolicies.OwnerOrManager)]
-        [ProducesResponseType(StatusCodes.Status201Created)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(StatusCodes.Status403Forbidden)]
-        [ProducesResponseType(StatusCodes.Status404NotFound)]
-        [ProducesResponseType(StatusCodes.Status409Conflict)]
-        public async Task<IActionResult> AddCourtType(
-            Guid id, [FromBody] AddCourtTypeToBranchDto dto)
-        {
-            var currentUserId = Guid.Parse(
-                User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            var currentUserRole = User.FindFirstValue(ClaimTypes.Role)!;
-
-            var result = await _service.AddCourtTypeAsync(
-                id, dto, currentUserId, currentUserRole);
-
-            return StatusCode(201,
-                ApiResponse<BranchCourtTypeDto>.Ok(result, "Bật loại sân thành công"));
-        }
-
-
-        /// <summary>
-        /// Tắt loại sân khỏi chi nhánh — OWNER hoặc MANAGER chi nhánh đó
-        /// </summary>
-        [HttpDelete("{id:guid}/court-types/{courtTypeId:guid}")]
-        [Authorize(Policy = AuthorizationPolicies.OwnerOrManager)]
-        [ProducesResponseType(StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(StatusCodes.Status403Forbidden)]
-        [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<IActionResult> RemoveCourtType(Guid id, Guid courtTypeId)
-        {
-            var currentUserId = Guid.Parse(
-                User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            var currentUserRole = User.FindFirstValue(ClaimTypes.Role)!;
-
-            await _service.RemoveCourtTypeAsync(
-                id, courtTypeId, currentUserId, currentUserRole);
-
-            return Ok(ApiResponse<object>.Ok(null!, "Tắt loại sân thành công"));
-        }
-
-        /// <summary>
         /// Lấy thông tin quản lý chi nhánh hiện tại — chỉ OWNER
         /// </summary>
         [HttpGet("{id:guid}/manager")]
