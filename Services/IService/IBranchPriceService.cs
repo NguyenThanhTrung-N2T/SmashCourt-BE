@@ -12,7 +12,7 @@ namespace SmashCourt_BE.Services.IService
             string currentUserRole);
 
         // Tính giá cho 1 booking dựa trên branch override nếu có, fallback về system price.
-        Task<CalculatePriceResultDto> CalculateAsync(Guid branchId, CalculatePriceDto dto);
+        Task<CalculatePriceResultDto> CalculateAsync(Guid? branchId, CalculatePriceDto dto);
 
         // [NEW] GET /api/prices - Lấy snapshot giá effective cho chi nhánh tại một ngày cụ thể
         // Trả về EffectivePricesResponse đã được group theo court type và merge consecutive slots

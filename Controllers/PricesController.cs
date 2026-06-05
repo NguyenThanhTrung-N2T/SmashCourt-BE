@@ -543,7 +543,7 @@ namespace SmashCourt_BE.Controllers
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         public async Task<IActionResult> Calculate(
-            [FromQuery] Guid branchId,
+            [FromQuery] Guid? branchId,
             [FromBody] CalculatePriceDto dto)
         {
             var result = await _service.CalculateAsync(branchId, dto);

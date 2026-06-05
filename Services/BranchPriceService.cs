@@ -392,7 +392,7 @@ namespace SmashCourt_BE.Services
         // Calculates rental fee for a specific court, booking date, and time range.
         // Fetches prices as of the booking date (not today) so future bookings
         // correctly use whatever price version will be active on that date.
-        public async Task<CalculatePriceResultDto> CalculateAsync(Guid branchId, CalculatePriceDto dto)
+        public async Task<CalculatePriceResultDto> CalculateAsync(Guid? branchId, CalculatePriceDto dto)
         {
             // Convert types
             var startTime = TimeOnly.FromTimeSpan(dto.StartTime);
@@ -417,6 +417,9 @@ namespace SmashCourt_BE.Services
             if (court.Status == CourtStatus.SUSPENDED || court.Status == CourtStatus.LOCKED)
                 throw new AppException(400, "Sân hiện đang bị khóa hoặc bảo trì", ErrorCodes.BadRequest);
 
+            // Use court's branch if not provided in query
+            var resolvedBranchId = branchId ?? court.BranchId;
+
             // Determine weekday / weekend
             var dayType = (dto.BookingDate.DayOfWeek == DayOfWeek.Saturday ||
                            dto.BookingDate.DayOfWeek == DayOfWeek.Sunday)
@@ -431,7 +434,7 @@ namespace SmashCourt_BE.Services
 
             // Fetch prices as of bookingDate — not today
             // This ensures a booking made today for next month uses next month's scheduled prices
-            var branchPrices = await _repo.GetCurrentForDateAsync(branchId, bookingDate, court.CourtTypeId);
+            var branchPrices = await _repo.GetCurrentForDateAsync(resolvedBranchId, bookingDate, court.CourtTypeId);
             var systemPrices = await _systemPriceRepo.GetCurrentForDateAsync(bookingDate, court.CourtTypeId);
 
             var breakdown = new List<PriceBreakdownDto>();
