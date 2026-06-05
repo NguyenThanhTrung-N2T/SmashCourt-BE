@@ -134,7 +134,7 @@ public class FastApiClient : IFastApiClient
                     .Handle<TaskCanceledException>()
                     .HandleResult(response => IsTransient(response.StatusCode))
             })
-            .AddTimeout(TimeSpan.FromSeconds(10))
+            .AddTimeout(TimeSpan.FromSeconds(60))
             .Build();
     }
 }

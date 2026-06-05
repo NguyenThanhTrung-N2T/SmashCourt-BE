@@ -1107,18 +1107,200 @@ public class ReportRepository : IReportRepository
     {
         var normalizedGroupBy = string.IsNullOrEmpty(groupBy) ? "court" : groupBy.ToLower();
 
-        if (normalizedGroupBy == "court")
-            return await GetTopCourtsByUsageAsync(fromDate, toDate, branchId, 100);
-
         var validValues = new[] { "court", "branch", "day", "hour" };
         if (!validValues.Contains(normalizedGroupBy))
             throw new AppException(400,
                 $"groupBy '{groupBy}' không hợp lệ. Các giá trị hợp lệ: court, branch, day, hour",
                 ErrorCodes.BadRequest);
 
-        throw new AppException(400,
-            $"groupBy '{groupBy}' chưa được hỗ trợ. Hiện tại chỉ hỗ trợ: court",
-            ErrorCodes.BadRequest);
+        if (normalizedGroupBy == "court")
+            return await GetTopCourtsByUsageAsync(fromDate, toDate, branchId, 100);
+
+        var branchesQuery = _context.Branches.AsNoTracking();
+        if (branchId.HasValue)
+            branchesQuery = branchesQuery.Where(b => b.Id == branchId.Value);
+
+        var branches = await branchesQuery.ToListAsync();
+        if (!branches.Any()) return [];
+
+        var branchIds = branches.Select(b => b.Id).ToList();
+        var courtCounts = await _context.Courts
+            .AsNoTracking()
+            .Where(c => branchIds.Contains(c.BranchId) && c.Status != CourtStatus.SUSPENDED)
+            .GroupBy(c => c.BranchId)
+            .Select(g => new { BranchId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.BranchId, x => x.Count);
+
+        if (normalizedGroupBy == "day")
+        {
+            decimal availableHoursPerDay = 0;
+            foreach (var branch in branches)
+            {
+                var courtCount = courtCounts.GetValueOrDefault(branch.Id, 0);
+                var operatingHours = (branch.CloseTime - branch.OpenTime).TotalHours;
+                availableHoursPerDay += (decimal)(courtCount * operatingHours);
+            }
+
+            var bookedHoursByDay = await _context.BookingCourts
+                .AsNoTracking()
+                .Where(bc => (bc.Booking.Status == BookingStatus.COMPLETED ||
+                              bc.Booking.Status == BookingStatus.IN_PROGRESS) &&
+                             bc.Booking.BookingDate >= fromDate &&
+                             bc.Booking.BookingDate <= toDate &&
+                             (!branchId.HasValue || bc.Booking.BranchId == branchId.Value))
+                .GroupBy(bc => bc.Booking.BookingDate)
+                .Select(g => new
+                {
+                    Date = g.Key,
+                    BookedHours = g.Sum(bc => (decimal)(bc.EndTime - bc.StartTime).TotalHours)
+                })
+                .ToDictionaryAsync(x => x.Date, x => x.BookedHours);
+
+            var result = new List<CourtUtilizationItemDto>();
+            for (var date = fromDate; date <= toDate; date = date.AddDays(1))
+            {
+                var bookedHours = bookedHoursByDay.GetValueOrDefault(date, 0);
+                var rate = availableHoursPerDay > 0
+                    ? Math.Round(bookedHours / availableHoursPerDay * 100, 1)
+                    : 0;
+
+                result.Add(new CourtUtilizationItemDto
+                {
+                    Period = date.ToString("yyyy-MM-dd"),
+                    BookedHours = bookedHours,
+                    AvailableHours = availableHoursPerDay,
+                    OccupancyRate = rate
+                });
+            }
+            return result;
+        }
+
+        if (normalizedGroupBy == "hour")
+        {
+            var days = (toDate.ToDateTime(TimeOnly.MinValue) - fromDate.ToDateTime(TimeOnly.MinValue)).Days + 1;
+            var availableHoursByHour = new decimal[24];
+            for (int h = 0; h < 24; h++)
+            {
+                decimal available = 0;
+                foreach (var branch in branches)
+                {
+                    if (h >= branch.OpenTime.Hour && h < branch.CloseTime.Hour)
+                    {
+                        var courtCount = courtCounts.GetValueOrDefault(branch.Id, 0);
+                        available += courtCount * days * 1;
+                    }
+                }
+                availableHoursByHour[h] = available;
+            }
+
+            var bookingSlots = await _context.BookingCourts
+                .AsNoTracking()
+                .Where(bc => (bc.Booking.Status == BookingStatus.COMPLETED ||
+                              bc.Booking.Status == BookingStatus.IN_PROGRESS) &&
+                             bc.Booking.BookingDate >= fromDate &&
+                             bc.Booking.BookingDate <= toDate &&
+                             (!branchId.HasValue || bc.Booking.BranchId == branchId.Value))
+                .Select(bc => new { bc.StartTime, bc.EndTime })
+                .ToListAsync();
+
+            var bookedHoursByHour = new decimal[24];
+            foreach (var slot in bookingSlots)
+            {
+                var start = slot.StartTime;
+                var end = slot.EndTime;
+
+                decimal startDecimal = start.Hour + (decimal)start.Minute / 60 + (decimal)start.Second / 3600;
+                decimal endDecimal = end.Hour + (decimal)end.Minute / 60 + (decimal)end.Second / 3600;
+
+                if (endDecimal == 0 && startDecimal > 12)
+                {
+                    endDecimal = 24.0m;
+                }
+
+                int startHour = start.Hour;
+                int endHour = end.Hour;
+                if (endDecimal == 24.0m)
+                {
+                    endHour = 24;
+                }
+                else if (end.Minute > 0 || end.Second > 0)
+                {
+                    endHour = endHour + 1;
+                }
+
+                for (int h = startHour; h < endHour; h++)
+                {
+                    if (h < 0 || h >= 24) continue;
+
+                    decimal overlapStart = Math.Max(startDecimal, (decimal)h);
+                    decimal overlapEnd = Math.Min(endDecimal, (decimal)(h + 1));
+
+                    if (overlapEnd > overlapStart)
+                    {
+                        bookedHoursByHour[h] += overlapEnd - overlapStart;
+                    }
+                }
+            }
+
+            var hourResult = new List<CourtUtilizationItemDto>();
+            for (int h = 0; h < 24; h++)
+            {
+                var available = availableHoursByHour[h];
+                if (available == 0) continue;
+
+                var booked = bookedHoursByHour[h];
+                var rate = Math.Round(booked / available * 100, 1);
+
+                hourResult.Add(new CourtUtilizationItemDto
+                {
+                    Period = $"{h:D2}:00",
+                    BookedHours = Math.Round(booked, 2),
+                    AvailableHours = available,
+                    OccupancyRate = rate
+                });
+            }
+            return hourResult;
+        }
+
+        if (normalizedGroupBy == "branch")
+        {
+            var bookedHoursByBranch = await _context.BookingCourts
+                .AsNoTracking()
+                .Where(bc => (bc.Booking.Status == BookingStatus.COMPLETED ||
+                              bc.Booking.Status == BookingStatus.IN_PROGRESS) &&
+                             bc.Booking.BookingDate >= fromDate &&
+                             bc.Booking.BookingDate <= toDate &&
+                             (!branchId.HasValue || bc.Booking.BranchId == branchId.Value))
+                .GroupBy(bc => bc.Booking.BranchId)
+                .Select(g => new
+                {
+                    BranchId = g.Key,
+                    BookedHours = g.Sum(bc => (decimal)(bc.EndTime - bc.StartTime).TotalHours)
+                })
+                .ToDictionaryAsync(x => x.BranchId, x => x.BookedHours);
+
+            var branchResult = new List<CourtUtilizationItemDto>();
+            var daysCount = (toDate.ToDateTime(TimeOnly.MinValue) - fromDate.ToDateTime(TimeOnly.MinValue)).Days + 1;
+            foreach (var branch in branches)
+            {
+                var courtCount = courtCounts.GetValueOrDefault(branch.Id, 0);
+                var operatingHours = (branch.CloseTime - branch.OpenTime).TotalHours;
+                var available = (decimal)(courtCount * operatingHours * daysCount);
+                var booked = bookedHoursByBranch.GetValueOrDefault(branch.Id, 0);
+                var rate = available > 0 ? Math.Round(booked / available * 100, 1) : 0;
+
+                branchResult.Add(new CourtUtilizationItemDto
+                {
+                    Period = branch.Name,
+                    BookedHours = booked,
+                    AvailableHours = available,
+                    OccupancyRate = rate
+                });
+            }
+            return branchResult.OrderByDescending(b => b.BookedHours).ToList();
+        }
+
+        return [];
     }
 
     #endregion

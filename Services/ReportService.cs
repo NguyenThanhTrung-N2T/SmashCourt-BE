@@ -242,12 +242,23 @@ public class ReportService : IReportService
     public async Task<ManagerDashboardDto> GetManagerDashboardAsync(
     ReportFilterDto filter, Guid currentUserId)
     {
-        // Lấy branchId của manager (bắt buộc)
-        var managerBranch = await _userBranchRepo.GetActiveByUserIdAsync(currentUserId);
-        if (managerBranch == null)
-            throw new AppException(403, "Bạn chưa được gán chi nhánh", ErrorCodes.Forbidden);
+        Guid branchId;
+        if (currentUserId == Guid.Empty)
+        {
+            if (!filter.BranchId.HasValue)
+                throw new AppException(400, "BranchId là bắt buộc trong context hệ thống", ErrorCodes.BadRequest);
 
-        var branchId = managerBranch.BranchId;
+            branchId = filter.BranchId.Value;
+        }
+        else
+        {
+            // Lấy branchId của manager (bắt buộc)
+            var managerBranch = await _userBranchRepo.GetActiveByUserIdAsync(currentUserId);
+            if (managerBranch == null)
+                throw new AppException(403, "Bạn chưa được gán chi nhánh", ErrorCodes.Forbidden);
+
+            branchId = managerBranch.BranchId;
+        }
 
         // ALL TIME mode
         var isAllTime = filter.FromDate == null && filter.ToDate == null;
