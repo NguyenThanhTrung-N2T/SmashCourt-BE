@@ -86,6 +86,7 @@ namespace SmashCourt_BE.Services
             {
                 Id = t.Id,
                 BookingId = t.BookingId,
+                BookingCode = t.Booking?.BookingCode ?? "",
                 Points = t.Points,
                 TotalPointsAfter = t.TotalPointsAfter,
                 Type = t.Type.ToString(),

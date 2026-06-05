@@ -20,6 +20,7 @@ namespace SmashCourt_BE.Repositories
             GetByUserIdAsync(Guid userId, int page, int pageSize)
         {
             var query = _db.LoyaltyTransactions
+                .Include(t => t.Booking)
                 .Where(t => t.UserId == userId)
                 .OrderByDescending(t => t.CreatedAt);
 
