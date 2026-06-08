@@ -242,14 +242,14 @@ namespace SmashCourt_BE.Services
             foreach (var slotInput in request.Slots)
             {
                 // Parse time strings
-                if (!TimeOnly.TryParseExact(slotInput.StartTime, "HH:mm:ss", out var startTime))
+                if (!DateTimeHelper.TryParseTimeOnly(slotInput.StartTime, out var startTime))
                     throw new AppException(400,
-                        $"Định dạng giờ bắt đầu không hợp lệ: {slotInput.StartTime}. Sử dụng HH:mm:ss",
+                        $"Định dạng giờ bắt đầu không hợp lệ: {slotInput.StartTime}. Sử dụng HH:mm hoặc HH:mm:ss",
                         ErrorCodes.BadRequest);
 
-                if (!TimeOnly.TryParseExact(slotInput.EndTime, "HH:mm:ss", out var endTime))
+                if (!DateTimeHelper.TryParseTimeOnly(slotInput.EndTime, out var endTime))
                     throw new AppException(400,
-                        $"Định dạng giờ kết thúc không hợp lệ: {slotInput.EndTime}. Sử dụng HH:mm:ss",
+                        $"Định dạng giờ kết thúc không hợp lệ: {slotInput.EndTime}. Sử dụng HH:mm hoặc HH:mm:ss",
                         ErrorCodes.BadRequest);
 
                 // Start must be strictly before end

@@ -64,5 +64,14 @@ namespace SmashCourt_BE.Helpers
                 DateTime.SpecifyKind(vnDateTime, DateTimeKind.Unspecified),
                 VNTimezone);
         }
+
+        /// <summary>
+        /// Thử parse chuỗi thời gian hỗ trợ cả định dạng HH:mm:ss và HH:mm
+        /// </summary>
+        public static bool TryParseTimeOnly(string value, out TimeOnly time)
+        {
+            string[] formats = ["HH:mm:ss", "HH:mm"];
+            return TimeOnly.TryParseExact(value, formats, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out time);
+        }
     }
 }
