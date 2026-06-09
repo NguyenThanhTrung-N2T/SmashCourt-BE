@@ -13,6 +13,7 @@ public class CustomerManagementService : ICustomerManagementService
     private readonly IUserRepository _userRepo;
     private readonly IUserBranchRepository _userBranchRepo;
     private readonly IRefreshTokenRepository _refreshTokenRepo;
+    private readonly ILoyaltyTierRepository _loyaltyTierRepo;
     private readonly ILogger<CustomerManagementService> _logger;
 
     public CustomerManagementService(
@@ -20,12 +21,14 @@ public class CustomerManagementService : ICustomerManagementService
         IUserRepository userRepo,
         IUserBranchRepository userBranchRepo,
         IRefreshTokenRepository refreshTokenRepo,
+        ILoyaltyTierRepository loyaltyTierRepo,
         ILogger<CustomerManagementService> logger)
     {
         _customerRepo = customerRepo;
         _userRepo = userRepo;
         _userBranchRepo = userBranchRepo;
         _refreshTokenRepo = refreshTokenRepo;
+        _loyaltyTierRepo = loyaltyTierRepo;
         _logger = logger;
     }
 
@@ -121,11 +124,25 @@ public class CustomerManagementService : ICustomerManagementService
         if (isOwner)
         {
             dto.Email = customer.Email;
-            dto.TotalPoints = customer.CustomerLoyalty?.TotalPoints ?? 0;
+            var currentTotalPoints = customer.CustomerLoyalty?.TotalPoints ?? 0;
+            dto.TotalPoints = currentTotalPoints;
 
             // Tính điểm cần thêm để lên hạng tiếp theo
-            // TODO: Cần lấy danh sách tiers từ DB để tính chính xác
-            dto.PointsToNextTier = 0; // Placeholder
+            if (loyaltyTier != null)
+            {
+                var nextTier = await _loyaltyTierRepo.GetNextTierAsync(loyaltyTier.MinPoints);
+                dto.PointsToNextTier = nextTier != null
+                    ? Math.Max(0, nextTier.MinPoints - currentTotalPoints)
+                    : null; // Đã đạt hạng cao nhất
+            }
+            else
+            {
+                // Khách hàng chưa có loyalty tier → tính từ tier mặc định
+                var defaultTier = await _loyaltyTierRepo.GetDefaultTierAsync();
+                dto.PointsToNextTier = defaultTier != null
+                    ? Math.Max(0, defaultTier.MinPoints - currentTotalPoints)
+                    : null;
+            }
 
             // Phương thức đăng ký
             var hasOAuth = customer.OAuthAccounts.Any();
