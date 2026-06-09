@@ -5,7 +5,6 @@ using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
 using SmashCourt_BE.Services.IService;
-using SmashCourt_BE.Services.Helpers;
 
 namespace SmashCourt_BE.Services
 {
@@ -28,22 +27,22 @@ namespace SmashCourt_BE.Services
         // ─── Public Methods ──────────────────────────────────────────────────────────
 
         // GET /api/system-prices/versions
-        // Returns all version dates for a court type with their statuses.
-        // Each version is tagged as ACTIVE, SCHEDULED, or EXPIRED.
+        // Lấy toàn bộ danh sách các ngày có phiên bản cấu hình giá hệ thống cho một loại sân kèm theo trạng thái.
+        // Mỗi phiên bản được đánh trạng thái ACTIVE (Đang áp dụng), SCHEDULED (Lên lịch), hoặc EXPIRED (Hết hạn).
         public async Task<SystemPriceVersionsResponse> GetVersionsAsync(Guid courtTypeId)
         {
-            // Validate court type exists
+            // Kiểm tra loại sân có tồn tại không
             var courtType = await _courtTypeRepo.GetByIdAsync(courtTypeId);
             if (courtType == null)
                 throw new AppException(404, "Không tìm thấy loại sân", ErrorCodes.NotFound);
 
-            // Distinct effective_from dates across all slots for this court type, sorted DESC
+            // Lấy danh sách ngày hiệu lực phân biệt của loại sân này, sắp xếp giảm dần
             var effectiveDates = await _repo.GetVersionsAsync(courtTypeId);
 
             var today = DateTimeHelper.GetTodayInVietnam();
 
-            // Active = latest effective_from that is on or before today
-            // Default(DateOnly) means no version has taken effect yet — all are SCHEDULED
+            // Phiên bản hoạt động = ngày hiệu lực mới nhất nhỏ hơn hoặc bằng hôm nay
+            // Nếu mặc định (DateOnly) nghĩa là chưa có phiên bản nào có hiệu lực -> toàn bộ là SCHEDULED
             var activeVersion = effectiveDates
                 .Where(d => d <= today)
                 .OrderByDescending(d => d)
@@ -63,14 +62,14 @@ namespace SmashCourt_BE.Services
         }
 
         // GET /api/system-prices/versions/{effectiveFrom}
-        // Returns the exact set of slots configured on a specific version date.
-        // Uses exact match (effective_from = date), NOT a resolved snapshot.
-        // "What did the admin set on this date?" — not "What price applies on this date?"
+        // Lấy thông tin cấu hình chi tiết của một phiên bản giá hệ thống vào một ngày hiệu lực chính xác.
+        // So khớp chính xác ngày hiệu lực (effective_from = date), không phải dạng lấy snapshot đang áp dụng.
+        // Trả lời câu hỏi: "Admin đã cấu hình giá hệ thống gì cho ngày này?" - không phải "Giá nào đang áp dụng cho ngày này?"
         public async Task<SystemPriceVersionDetailDto> GetVersionDetailAsync(
             Guid courtTypeId,
             DateOnly effectiveFrom)
         {
-            // Validate court type exists
+            // Kiểm tra loại sân có tồn tại không
             var courtType = await _courtTypeRepo.GetByIdAsync(courtTypeId);
             if (courtType == null)
                 throw new AppException(404, "Không tìm thấy loại sân", ErrorCodes.NotFound);
@@ -79,44 +78,65 @@ namespace SmashCourt_BE.Services
         }
 
         // PATCH /api/system-prices/versions/{effectiveFrom}
-        // Creates or partially updates a system price version.
+        // Tạo mới hoặc cập nhật một phần phiên bản giá hệ thống.
         //
-        // PATCH semantics: only submitted slots are touched — other slots in the version
-        // are left unchanged. This allows an admin to change just one time range
-        // without having to re-submit the entire version.
+        // Cơ chế PATCH: chỉ những khung giờ được gửi lên mới bị tác động - các khung giờ khác trong phiên bản giữ nguyên.
+        // Điều này cho phép admin chỉ sửa một khoảng thời gian mà không cần gửi lại toàn bộ cấu hình ngày đó.
         //
-        // Supports large time spans: a single slot input (e.g. 06:00–12:00) is
-        // automatically expanded into all constituent DB time slots.
+        // Hỗ trợ khoảng thời gian lớn: Một khoảng thời gian lớn (ví dụ: 06:00 - 12:00) sẽ tự động
+        // được phân tách thành các khung giờ nhỏ hơn cấu hình trong DB.
         public async Task<(SystemPriceVersionDetailDto Response, bool IsCreated)> UpsertVersionAsync(
             Guid courtTypeId,
             DateOnly effectiveFrom,
             UpsertPriceRequest request)
         {
-            // 1. Validate court type exists
+            // 1. Kiểm tra loại sân có tồn tại không
             var courtType = await _courtTypeRepo.GetByIdAsync(courtTypeId);
             if (courtType == null)
                 throw new AppException(404, "Không tìm thấy loại sân", ErrorCodes.NotFound);
 
-            // 2. Cannot modify past versions
+            // 2. Xác thực ngày hiệu lực
+            ValidateEffectiveDate(effectiveFrom);
+
+            // 3. Tải tất cả khung giờ của hệ thống
+            var allTimeSlots = await _timeSlotRepo.GetAllAsync();
+
+            // 4. Mở rộng các slot nhập vào và kiểm tra khoảng cách/trùng lấp
+            var expandedSlots = ExpandAndValidateInputSlots(request.Slots, allTimeSlots);
+
+            // 5. Kiểm tra cấu hình giá hệ thống hiện có của ngày này
+            var existingPrices = await _repo.GetExactDatePricesAsync(courtTypeId, effectiveFrom);
+            var isCreated = !existingPrices.Any();
+
+            // 6. Lập danh sách các bản ghi cần thêm mới và cập nhật
+            var (inserts, updates) = BuildSystemPrices(courtTypeId, effectiveFrom, expandedSlots, existingPrices);
+
+            // 7. Lưu các thay đổi vào cơ sở dữ liệu
+            await _repo.UpsertBatchAsync(inserts, updates);
+
+            // 8. Xây dựng và trả về thông tin chi tiết của phiên bản giá
+            var response = await BuildVersionDetailAsync(courtTypeId, effectiveFrom);
+            return (response, isCreated);
+        }
+
+        private static void ValidateEffectiveDate(DateOnly effectiveFrom)
+        {
             var today = DateTimeHelper.GetTodayInVietnam();
             if (effectiveFrom < today)
                 throw new AppException(400,
                     "Không thể tạo hoặc cập nhật phiên bản giá trong quá khứ",
                     ErrorCodes.BadRequest);
+        }
 
-            // 3. Load all time slots once — used for range expansion in the loop below
-            var allTimeSlots = await _timeSlotRepo.GetAllAsync();
-
-            // 4. First pass: validate + expand all input ranges before any DB writes
-            //
-            //    allMatchedSlotIds accumulates every DB time_slot_id covered by the request.
-            //    If the same slot_id appears in two input ranges, those ranges overlap — fail fast.
+        private static List<(PriceSlotInput Input, List<TimeSlot> Slots)> ExpandAndValidateInputSlots(
+            List<PriceSlotInput> inputs,
+            List<TimeSlot> allTimeSlots)
+        {
             var allMatchedSlotIds = new HashSet<Guid>();
             var expandedSlots = new List<(PriceSlotInput Input, List<TimeSlot> Slots)>();
 
-            foreach (var slotInput in request.Slots)
+            foreach (var slotInput in inputs)
             {
-                // Parse time strings
                 if (!DateTimeHelper.TryParseTimeOnly(slotInput.StartTime, out var startTime))
                     throw new AppException(400,
                         $"Định dạng giờ bắt đầu không hợp lệ: {slotInput.StartTime}. Sử dụng HH:mm hoặc HH:mm:ss",
@@ -127,19 +147,16 @@ namespace SmashCourt_BE.Services
                         $"Định dạng giờ kết thúc không hợp lệ: {slotInput.EndTime}. Sử dụng HH:mm hoặc HH:mm:ss",
                         ErrorCodes.BadRequest);
 
-                // Start must be strictly before end
                 if (startTime >= endTime)
                     throw new AppException(400,
                         $"Giờ bắt đầu phải nhỏ hơn giờ kết thúc: {slotInput.StartTime} - {slotInput.EndTime}",
                         ErrorCodes.BadRequest);
 
-                // Prices must be non-negative
                 if (slotInput.WeekdayPrice < 0 || slotInput.WeekendPrice < 0)
                     throw new AppException(400,
                         $"Giá không được âm tại khung giờ {slotInput.StartTime} - {slotInput.EndTime}",
                         ErrorCodes.BadRequest);
 
-                // Expand: find all DB time slots fully contained within the submitted range
                 var matched = allTimeSlots
                     .Where(ts => ts.StartTime >= startTime && ts.EndTime <= endTime)
                     .ToList();
@@ -149,7 +166,6 @@ namespace SmashCourt_BE.Services
                         $"Không tìm thấy khung giờ nào trong khoảng {startTime:HH\\:mm} - {endTime:HH\\:mm}",
                         ErrorCodes.BadRequest);
 
-                // Validate the expanded slots form an unbroken chain that exactly covers the input range
                 var uniqueRanges = matched
                     .GroupBy(ts => new { ts.StartTime, ts.EndTime })
                     .OrderBy(g => g.Key.StartTime)
@@ -169,7 +185,6 @@ namespace SmashCourt_BE.Services
                             ErrorCodes.BadRequest);
                 }
 
-                // Overlap detection: a slot ID that already appears in another input range is an overlap
                 foreach (var ts in matched)
                 {
                     if (!allMatchedSlotIds.Add(ts.Id))
@@ -181,15 +196,17 @@ namespace SmashCourt_BE.Services
                 expandedSlots.Add((slotInput, matched));
             }
 
-            // 5. Determine whether this is a create or update (for response status code)
-            var existingPrices = await _repo.GetExactDatePricesAsync(courtTypeId, effectiveFrom);
-            var isCreated = !existingPrices.Any();
+            return expandedSlots;
+        }
 
-            // 6. Second pass: build insert / update lists
-            //    PATCH semantics — only rows in the request are touched;
-            //    existing rows for other time slots in this version are left unchanged.
-            var insertPrices = new List<SystemPrice>();
-            var updatePrices = new List<SystemPrice>();
+        private static (List<SystemPrice> Inserts, List<SystemPrice> Updates) BuildSystemPrices(
+            Guid courtTypeId,
+            DateOnly effectiveFrom,
+            List<(PriceSlotInput Input, List<TimeSlot> Slots)> expandedSlots,
+            List<SystemPrice> existingPrices)
+        {
+            var inserts = new List<SystemPrice>();
+            var updates = new List<SystemPrice>();
 
             foreach (var (slotInput, matchedSlots) in expandedSlots)
             {
@@ -203,11 +220,11 @@ namespace SmashCourt_BE.Services
                     if (existing != null)
                     {
                         existing.Price = priceToApply;
-                        updatePrices.Add(existing);
+                        updates.Add(existing);
                     }
                     else
                     {
-                        insertPrices.Add(new SystemPrice
+                        inserts.Add(new SystemPrice
                         {
                             CourtTypeId = courtTypeId,
                             TimeSlotId = ts.Id,
@@ -219,25 +236,20 @@ namespace SmashCourt_BE.Services
                 }
             }
 
-            // 7. Persist
-            await _repo.UpsertBatchAsync(insertPrices, updatePrices);
-
-            // 8. Return the full version detail
-            var response = await BuildVersionDetailAsync(courtTypeId, effectiveFrom);
-            return (response, isCreated);
+            return (inserts, updates);
         }
 
         // DELETE /api/system-prices/versions/{effectiveFrom}
-        // Deletes an entire system price version — all rows for (courtTypeId, effectiveFrom).
-        // Only SCHEDULED (future) versions can be deleted.
-        // Active and expired versions are locked — they are historical records.
+        // Xóa toàn bộ một phiên bản giá hệ thống - toàn bộ các dòng của (courtTypeId, effectiveFrom).
+        // Chỉ các phiên bản ở trạng thái SCHEDULED (tương lai) mới được phép xóa.
+        // Các phiên bản ACTIVE và EXPIRED sẽ bị khóa vì chúng là hồ sơ lịch sử áp dụng giá.
         //
-        // NOTE: requires ISystemPriceRepository.DeleteVersionAsync(courtTypeId, effectiveFrom)
+        // LƯU Ý: yêu cầu ISystemPriceRepository.DeleteVersionAsync(courtTypeId, effectiveFrom)
         // SQL: DELETE FROM system_prices
         //      WHERE court_type_id = @courtTypeId AND effective_from = @effectiveFrom
         public async Task DeleteVersionAsync(Guid courtTypeId, DateOnly effectiveFrom)
         {
-            // Validate court type exists
+            // Kiểm tra loại sân có tồn tại không
             var courtType = await _courtTypeRepo.GetByIdAsync(courtTypeId);
             if (courtType == null)
                 throw new AppException(404, "Không tìm thấy loại sân", ErrorCodes.NotFound);
@@ -256,7 +268,7 @@ namespace SmashCourt_BE.Services
                     ErrorCodes.NotFound);
         }
 
-        // Legacy method for internal price calculations
+        // Phương thức cũ phục vụ tính toán giá nội bộ
         // Lấy giá chung resolved cho 1 ngày cụ thể
         public async Task<List<CurrentPriceDto>> GetEffectivePricesAsync(DateOnly date, Guid? courtTypeId = null)
         {
@@ -267,15 +279,15 @@ namespace SmashCourt_BE.Services
 
         // ─── Private Helpers ─────────────────────────────────────────────────────────
 
-        // Shared implementation for building version detail.
-        // Used by GetVersionDetailAsync and UpsertVersionAsync
-        // to avoid redundant DB calls.
+        // Hàm dùng chung để xây dựng thông tin chi tiết của phiên bản giá.
+        // Được sử dụng bởi GetVersionDetailAsync và UpsertVersionAsync
+        // để tránh các truy vấn DB trùng lặp.
         private async Task<SystemPriceVersionDetailDto> BuildVersionDetailAsync(
             Guid courtTypeId,
             DateOnly effectiveFrom)
         {
-            // Exact match — only rows physically created with this effective_from date.
-            // This shows "what was configured in this version", NOT the resolved price picture.
+            // Khớp chính xác ngày - chỉ lấy những dòng được tạo với ngày effective_from này.
+            // Điều này hiển thị "phiên bản này đã cấu hình những gì", KHÔNG phải bức tranh giá thực tế đang áp dụng.
             var prices = await _repo.GetExactDatePricesAsync(courtTypeId, effectiveFrom);
 
             if (!prices.Any())
@@ -283,7 +295,7 @@ namespace SmashCourt_BE.Services
                     "Không tìm thấy phiên bản giá cho ngày hiệu lực này",
                     ErrorCodes.NotFound);
 
-            // Status: SCHEDULED is deterministic — no DB call needed for future dates
+            // Trạng thái: SCHEDULED là cố định - không cần gọi DB cho các ngày trong tương lai
             var today = DateTimeHelper.GetTodayInVietnam();
             string status;
 
@@ -293,7 +305,7 @@ namespace SmashCourt_BE.Services
             }
             else
             {
-                // For past/today dates we need the active version to distinguish ACTIVE from EXPIRED
+                // Với các ngày trong quá khứ hoặc hôm nay, cần phiên bản active để phân biệt giữa ACTIVE và EXPIRED
                 var allVersions = await _repo.GetVersionsAsync(courtTypeId);
                 var activeVersion = allVersions
                     .Where(d => d <= today)
@@ -303,7 +315,7 @@ namespace SmashCourt_BE.Services
                 status = ResolveVersionStatus(effectiveFrom, activeVersion, today);
             }
 
-            // Group WEEKDAY + WEEKEND rows into single slot records
+            // Gộp các hàng WEEKDAY + WEEKEND thành một đối tượng slot duy nhất
             var slots = prices
                 .GroupBy(sp => new { sp.TimeSlot.StartTime, sp.TimeSlot.EndTime })
                 .Select(g => new PriceSlotDetail
@@ -326,15 +338,15 @@ namespace SmashCourt_BE.Services
             };
         }
 
-        // Resolves version status from a date, the known active version, and today.
+        // Phân giải trạng thái phiên bản dựa trên ngày hiệu lực, phiên bản active hiện tại và hôm nay.
         //
-        // Status rules:
-        //   SCHEDULED  → effective_from is in the future (not yet in effect)
-        //   ACTIVE     → latest version whose effective_from <= today (currently applying)
-        //   EXPIRED    → effective_from <= today but superseded by a newer version
+        // Quy tắc trạng thái:
+        //   SCHEDULED  → ngày hiệu lực ở tương lai (chưa áp dụng)
+        //   ACTIVE     → phiên bản mới nhất có ngày hiệu lực <= hôm nay (đang áp dụng hiện tại)
+        //   EXPIRED    → ngày hiệu lực <= hôm nay nhưng đã bị thay thế bởi phiên bản mới hơn
         //
-        // When activeVersion is default (no version has taken effect yet),
-        // all dates are either future (SCHEDULED) or should not logically reach this path.
+        // Khi activeVersion là giá trị mặc định (chưa có phiên bản nào có hiệu lực),
+        // tất cả các ngày đều là tương lai (SCHEDULED) hoặc không hợp lý để chạy vào luồng này.
         private static string ResolveVersionStatus(DateOnly date, DateOnly activeVersion, DateOnly today)
         {
             if (date > today) return "SCHEDULED";
@@ -343,7 +355,7 @@ namespace SmashCourt_BE.Services
             return "EXPIRED";
         }
 
-        // Group WEEKDAY + WEEKEND rows into single records (legacy helper for GetEffectivePricesAsync)
+        // Gộp các hàng WEEKDAY + WEEKEND thành bản ghi duy nhất (hàm helper cũ cho GetEffectivePricesAsync)
         private static List<CurrentPriceDto> GroupPrices(List<SystemPrice> prices)
         {
             return prices

@@ -2,7 +2,7 @@ using System;
 using System.Threading.Tasks;
 using SmashCourt_BE.Models.Enums;
 
-namespace SmashCourt_BE.Services.Helpers
+namespace SmashCourt_BE.Services.AccessControl
 {
     public interface IBranchScopeResolver
     {

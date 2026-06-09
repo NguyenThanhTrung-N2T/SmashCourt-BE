@@ -4,7 +4,7 @@ using SmashCourt_BE.Common;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
 
-namespace SmashCourt_BE.Services.Helpers
+namespace SmashCourt_BE.Services.AccessControl
 {
     public class BranchScopeResolver : IBranchScopeResolver
     {

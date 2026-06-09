@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using SmashCourt_BE.Common;
@@ -6,7 +6,6 @@ using SmashCourt_BE.Configurations;
 using SmashCourt_BE.DTOs.Service;
 using SmashCourt_BE.DTOs.Branch;
 using SmashCourt_BE.Services.IService;
-using SmashCourt_BE.Services.Helpers;
 using System.Security.Claims;
 using System.Linq;
 

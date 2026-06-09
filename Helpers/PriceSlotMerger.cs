@@ -1,6 +1,6 @@
 using SmashCourt_BE.DTOs.PriceConfig;
 
-namespace SmashCourt_BE.Services.Helpers
+namespace SmashCourt_BE.Helpers
 {
     /// <summary>
     /// Helper class để merge các timeslot liên tiếp có cùng giá

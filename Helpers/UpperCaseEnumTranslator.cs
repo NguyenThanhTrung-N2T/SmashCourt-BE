@@ -1,6 +1,6 @@
 ﻿using Npgsql;
 
-namespace SmashCourt_BE.Utils
+namespace SmashCourt_BE.Helpers
 {
     public class UpperCaseEnumTranslator : INpgsqlNameTranslator
     {
