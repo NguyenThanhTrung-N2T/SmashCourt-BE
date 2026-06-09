@@ -24,7 +24,7 @@ namespace SmashCourt_BE.Services
             _courtTypeRepo = courtTypeRepo;
         }
 
-        // ─── Public Methods ──────────────────────────────────────────────────────────
+
 
         // GET /api/system-prices/versions
         // Lấy toàn bộ danh sách các ngày có phiên bản cấu hình giá hệ thống cho một loại sân kèm theo trạng thái.
@@ -277,7 +277,7 @@ namespace SmashCourt_BE.Services
             return PriceSlotMerger.MergeConsecutivePriceSlots(grouped);
         }
 
-        // ─── Private Helpers ─────────────────────────────────────────────────────────
+
 
         // Hàm dùng chung để xây dựng thông tin chi tiết của phiên bản giá.
         // Được sử dụng bởi GetVersionDetailAsync và UpsertVersionAsync

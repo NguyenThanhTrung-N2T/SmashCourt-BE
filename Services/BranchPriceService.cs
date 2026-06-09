@@ -34,7 +34,7 @@ namespace SmashCourt_BE.Services
             _branchScopeResolver = branchScopeResolver;
         }
 
-        // ─── Public Methods ──────────────────────────────────────────────────────────
+
 
         // GET /api/prices
         // Lấy thông tin giá áp dụng thực tế của chi nhánh tại một ngày cụ thể.
@@ -510,7 +510,7 @@ namespace SmashCourt_BE.Services
             };
         }
 
-        // ─── Private Helpers ─────────────────────────────────────────────────────────
+
 
         // Hàm dùng chung để xây dựng thông tin chi tiết của phiên bản giá.
         // Được sử dụng bởi GetPriceOverrideVersionDetailAsync và UpsertPriceOverrideVersionAsync
