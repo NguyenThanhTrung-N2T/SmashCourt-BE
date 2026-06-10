@@ -29,7 +29,7 @@ namespace SmashCourt_BE.Controllers
         public async Task<IActionResult> GetAll([FromQuery] PaginationQuery query)
         {
             var result = await _service.GetAllAsync(query);
-            return Ok(ApiResponse<PagedResult<PromotionDto>>.Ok(result,"Lấy danh sách khuyến mãi thành công"));
+            return Ok(ApiResponse<PagedResult<PromotionDto>>.Ok(result, "Lấy danh sách khuyến mãi thành công"));
         }
 
         /// <summary>
@@ -56,7 +56,7 @@ namespace SmashCourt_BE.Controllers
         {
             var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
             var result = await _service.GetApplicablePromotionsAsync(dto, userId);
-            return Ok(ApiResponse<List<ApplicablePromotionDto>>.Ok(result, 
+            return Ok(ApiResponse<List<ApplicablePromotionDto>>.Ok(result,
                 "Lấy danh sách khuyến mãi áp dụng được thành công"));
         }
 

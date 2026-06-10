@@ -1,4 +1,5 @@
 using SmashCourt_BE.DTOs.PriceConfig;
+using SmashCourt_BE.DTOs.Booking;
 
 namespace SmashCourt_BE.Helpers
 {
@@ -367,6 +368,76 @@ namespace SmashCourt_BE.Helpers
                     current.WeekendPrice == next.WeekendPrice)
                 {
                     current.EndTime = next.EndTime;
+                }
+                else
+                {
+                    result.Add(current);
+                    current = next;
+                }
+            }
+
+            result.Add(current);
+            return result;
+        }
+
+        /// <summary>
+        /// Merge các price items trong BookingCourtDto có cùng giá và liên tiếp nhau.
+        /// </summary>
+        public static List<BookingPriceItemDto> MergeBookingPriceItems(List<BookingPriceItemDto> items)
+        {
+            if (items == null || items.Count <= 1)
+                return items ?? new List<BookingPriceItemDto>();
+
+            var sortedItems = items.OrderBy(i => i.StartTime).ToList();
+            var result = new List<BookingPriceItemDto>();
+            var current = sortedItems[0];
+
+            for (int i = 1; i < sortedItems.Count; i++)
+            {
+                var next = sortedItems[i];
+
+                // Merge nếu liên tiếp và cùng đơn giá
+                if (current.EndTime == next.StartTime && current.UnitPrice == next.UnitPrice)
+                {
+                    current.EndTime = next.EndTime;
+                    current.Hours += next.Hours;
+                    current.SubTotal += next.SubTotal;
+                }
+                else
+                {
+                    result.Add(current);
+                    current = next;
+                }
+            }
+
+            result.Add(current);
+            return result;
+        }
+
+        /// <summary>
+        /// Merge các price breakdown items có cùng giá, cùng source và liên tiếp nhau.
+        /// </summary>
+        public static List<PriceBreakdownDto> MergePriceBreakdowns(List<PriceBreakdownDto> items)
+        {
+            if (items == null || items.Count <= 1)
+                return items ?? new List<PriceBreakdownDto>();
+
+            var sortedItems = items.OrderBy(i => i.StartTime).ToList();
+            var result = new List<PriceBreakdownDto>();
+            var current = sortedItems[0];
+
+            for (int i = 1; i < sortedItems.Count; i++)
+            {
+                var next = sortedItems[i];
+
+                // Merge nếu liên tiếp, cùng đơn giá VÀ cùng nguồn giá (System/Branch)
+                if (current.EndTime == next.StartTime && 
+                    current.UnitPrice == next.UnitPrice && 
+                    current.PriceSource == next.PriceSource)
+                {
+                    current.EndTime = next.EndTime;
+                    current.Hours += next.Hours;
+                    current.SubTotal += next.SubTotal;
                 }
                 else
                 {

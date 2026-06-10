@@ -6,7 +6,7 @@ namespace SmashCourt_BE.DTOs.PriceConfig
     public class CalculatePriceDto : IValidatableObject
     {
         [Required(ErrorMessage = "Sân không được để trống")]
-        public Guid CourtId { get; set; }
+        public List<Guid> Courts { get; set; } = new List<Guid>();
 
         [Required(ErrorMessage = "Ngày đặt không được để trống")]
         public DateTime BookingDate { get; set; }
@@ -26,7 +26,7 @@ namespace SmashCourt_BE.DTOs.PriceConfig
 
             var today = DateTimeHelper.GetTodayInVietnam();
             var bookingDateOnly = DateOnly.FromDateTime(BookingDate);
-            
+
             if (bookingDateOnly < today)
                 yield return new ValidationResult(
                     "Không thể đặt sân cho ngày trong quá khứ",

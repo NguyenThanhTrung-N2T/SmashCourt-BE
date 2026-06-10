@@ -13,18 +13,15 @@ namespace SmashCourt_BE.Services
     {
         private readonly IPromotionRepository _repo;
         private readonly PromotionEngineService _promotionEngine;
-        private readonly ICourtRepository _courtRepo;
         private readonly IBookingRepository _bookingRepo;
 
         public PromotionService(
             IPromotionRepository repo,
             PromotionEngineService promotionEngine,
-            ICourtRepository courtRepo,
             IBookingRepository bookingRepo)
         {
             _repo = repo;
             _promotionEngine = promotionEngine;
-            _courtRepo = courtRepo;
             _bookingRepo = bookingRepo;
         }
 
@@ -240,11 +237,6 @@ namespace SmashCourt_BE.Services
             var usageDate = DateOnly.FromDateTime(dto.BookingDate);
             var activePromotions = await _repo.GetApplicableByDateAsync(usageDate);
 
-            // 2. Lấy thông tin court để có CourtType (Sport)
-            var court = await _courtRepo.GetByIdAsync(dto.CourtId);
-            if (court == null)
-                throw new AppException(404, "Không tìm thấy sân", ErrorCodes.NotFound);
-
             // 3. Lấy số lượng booking đã hoàn thành của customer
             var previousBookingCount = await _bookingRepo.GetCompletedBookingCountAsync(customerId);
 
@@ -253,10 +245,10 @@ namespace SmashCourt_BE.Services
             {
                 UserId = customerId,
                 BranchId = dto.BranchId,
-                CourtId = dto.CourtId,
                 BookingAmount = dto.BookingAmount,
                 BookingDate = dto.BookingDate,
-                Sport = court.CourtType?.Name ?? "Unknown",
+                StartTime = dto.StartTime,
+                EndTime = dto.EndTime,
                 PreviousBookingCount = previousBookingCount
             };
 

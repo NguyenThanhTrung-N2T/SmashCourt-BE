@@ -116,15 +116,15 @@ public class PromotionEngineService
                         return Fail("Mã khuyến mãi không áp dụng cho chi nhánh này");
                     break;
 
-                case "COURT_ID":
-                    if (context.CourtId.ToString() != condition.ConditionValue)
-                        return Fail("Mã khuyến mãi không áp dụng cho sân này");
-                    break;
+                // case "COURT_TYPE_ID":
+                //     if (context.CourtTypeId.ToString() != condition.ConditionValue)
+                //         return Fail("Mã khuyến mãi không áp dụng cho loai sân này");
+                //     break;
 
-                case "SPORT":
-                    if (context.Sport != condition.ConditionValue)
-                        return Fail($"Mã khuyến mãi chỉ áp dụng cho môn {condition.ConditionValue}");
-                    break;
+                // case "SPORT":
+                //     if (context.Sport != condition.ConditionValue)
+                //         return Fail($"Mã khuyến mãi chỉ áp dụng cho môn {condition.ConditionValue}");
+                //     break;
 
                 case "DAY_OF_WEEK":
                     var dayOfWeek = context.BookingDate.DayOfWeek.ToString().ToUpper();
@@ -133,15 +133,21 @@ public class PromotionEngineService
                     break;
 
                 case "START_HOUR":
-                    if (!int.TryParse(condition.ConditionValue, out var startHour)
-                        || context.BookingDate.Hour < startHour)
-                        return Fail($"Mã khuyến mãi chỉ áp dụng từ {startHour}h trở đi");
+                    if (!TimeSpan.TryParse(condition.ConditionValue, out var startHour))
+                        return Fail("Điều kiện khuyến mãi không hợp lệ");
+
+                    if (context.StartTime < startHour)
+                        return Fail($"Mã khuyến mãi chỉ áp dụng từ {startHour}:00 trở đi");
+
                     break;
 
                 case "END_HOUR":
-                    if (!int.TryParse(condition.ConditionValue, out var endHour)
-                        || context.BookingDate.Hour >= endHour)
-                        return Fail($"Mã khuyến mãi chỉ áp dụng trước {endHour}h");
+                    if (!TimeSpan.TryParse(condition.ConditionValue, out var endHour))
+                        return Fail("Điều kiện khuyến mãi không hợp lệ");
+
+                    if (context.EndTime > endHour)
+                        return Fail($"Mã khuyến mãi chỉ áp dụng trước {endHour}:00");
+
                     break;
 
                 case "MONTH":

@@ -209,7 +209,7 @@ namespace SmashCourt_BE.Services
                     throw new AppException(403,
                         "Bạn không có quyền xem đơn này", ErrorCodes.Forbidden);
 
-                return MapToDto(booking);
+                return MapToDetailDto(booking);
             }
 
             // MANAGER/STAFF chỉ xem chi nhánh mình
@@ -304,24 +304,33 @@ namespace SmashCourt_BE.Services
             using var transaction = new System.Transactions.TransactionScope(
                 System.Transactions.TransactionScopeAsyncFlowOption.Enabled);
 
-            // 4. Tính giá cho từng court — cộng lại
+            // 4. Tính giá — Group các sân cùng khung giờ để tối ưu 1 call multi-court calculation
             decimal totalCourtFee = 0;
-            var priceResults = new List<(CourtSlotDto Slot, CalculatePriceResultDto Price)>();
+            var priceResults = new List<(CourtSlotDto Slot, CourtPriceResultDto Price)>();
 
-            foreach (var (slot, court) in courtEntities)
+            var groupedSlots = courtEntities
+                .GroupBy(ce => new { ce.Slot.StartTime, ce.Slot.EndTime });
+
+            foreach (var group in groupedSlots)
             {
-                var priceResult = await _priceService.CalculateAsync(
+                var calcResult = await _priceService.CalculateForBookingAsync(
                     branchId,
                     new CalculatePriceDto
                     {
-                        CourtId = slot.CourtId,
+                        Courts = group.Select(ce => ce.Slot.CourtId).ToList(),
                         BookingDate = dto.BookingDate,
-                        StartTime = slot.StartTime,
-                        EndTime = slot.EndTime
+                        StartTime = group.Key.StartTime,
+                        EndTime = group.Key.EndTime
                     });
 
-                priceResults.Add((slot, priceResult));
-                totalCourtFee += priceResult.CourtFee;
+                totalCourtFee += calcResult.TotalFee;
+
+                // Map từng kết quả sân về đúng CourtSlotDto để lưu vào BookingCourt sau này
+                foreach (var ce in group)
+                {
+                    var courtResult = calcResult.Courts.First(c => c.CourtId == ce.Slot.CourtId);
+                    priceResults.Add((ce.Slot, courtResult));
+                }
             }
 
             // 5. Loyalty discount tính trên tổng court fee
@@ -538,24 +547,32 @@ namespace SmashCourt_BE.Services
                     }
                 }
 
-                // 3. Tính giá cho từng court
+                // 3. Tính giá — Group các sân cùng khung giờ để tối ưu 1 call multi-court calculation
                 decimal totalCourtFee = 0;
-                var priceResults = new List<(CourtSlotDto Slot, CalculatePriceResultDto Price)>();
+                var priceResults = new List<(CourtSlotDto Slot, CourtPriceResultDto Price)>();
 
-                foreach (var (slot, court) in courtEntities)
+                var groupedSlots = courtEntities
+                    .GroupBy(ce => new { ce.Slot.StartTime, ce.Slot.EndTime });
+
+                foreach (var group in groupedSlots)
                 {
-                    var priceResult = await _priceService.CalculateAsync(
+                    var calcResult = await _priceService.CalculateForBookingAsync(
                         branchId,
                         new CalculatePriceDto
                         {
-                            CourtId = slot.CourtId,
+                            Courts = group.Select(ce => ce.Slot.CourtId).ToList(),
                             BookingDate = dto.BookingDate,
-                            StartTime = slot.StartTime,
-                            EndTime = slot.EndTime
+                            StartTime = group.Key.StartTime,
+                            EndTime = group.Key.EndTime
                         });
 
-                    priceResults.Add((slot, priceResult));
-                    totalCourtFee += priceResult.CourtFee;
+                    totalCourtFee += calcResult.TotalFee;
+
+                    foreach (var ce in group)
+                    {
+                        var courtResult = calcResult.Courts.First(c => c.CourtId == ce.Slot.CourtId);
+                        priceResults.Add((ce.Slot, courtResult));
+                    }
                 }
 
                 // 4. Tính loyalty + promotion
@@ -2217,11 +2234,11 @@ namespace SmashCourt_BE.Services
                     // Gửi cho customer (dùng custom group thay vì Clients.User để đồng bộ với OnConnectedAsync)
                     _hubContext.Clients.Group($"user_{customerId}")
                         .SendAsync(eventName, notification),
-                    
+
                     // Gửi cho Staff/Manager của chi nhánh
                     _hubContext.Clients.Group($"branch_{branchId}")
                         .SendAsync(eventName, notification),
-                    
+
                     // Gửi cho Owner (xem toàn hệ thống)
                     _hubContext.Clients.Group("role_OWNER")
                         .SendAsync(eventName, notification)
@@ -2334,18 +2351,72 @@ namespace SmashCourt_BE.Services
                 CourtName = bc.Court?.Name ?? "",
                 StartTime = bc.StartTime.ToTimeSpan(),
                 EndTime = bc.EndTime.ToTimeSpan(),
-                PriceItems = bc.BookingPriceItems?.Select(bpi => new BookingPriceItemDto
+            }).ToList() ?? [],
+            Services = b.BookingServices?.Select(bs => new BookingServiceDto
+            {
+                Id = bs.Id,
+                ServiceId = bs.ServiceId,
+                ServiceName = bs.ServiceName,
+                Unit = bs.Unit,
+                UnitPrice = bs.UnitPrice,
+                Quantity = bs.Quantity,
+                Total = bs.UnitPrice * bs.Quantity
+            }).ToList() ?? []
+        };
+        private static BookingDto MapToDetailDto(Booking b) => new()
+        {
+            Id = b.Id,
+            BookingCode = b.BookingCode,
+            InvoiceCode = b.Invoice?.InvoiceCode,
+            BranchId = b.BranchId,
+            BranchName = b.Branch?.Name ?? "",
+            CustomerId = b.CustomerId,
+            CustomerName = b.Customer?.FullName,
+            CustomerPhone = b.Customer?.Phone,
+            GuestName = b.GuestName,
+            GuestPhone = b.GuestPhone,
+            GuestEmail = b.GuestEmail,
+            BookingDate = b.BookingDate.ToDateTime(TimeOnly.MinValue),
+            Status = b.Status.ToString(),
+            Source = b.Source.ToString(),
+            Note = b.Note,
+            ExpiresAt = b.Invoice?.ExpiresAt,
+            CreatedAt = b.CreatedAt,
+            UpdatedAt = b.UpdatedAt,
+            CourtFee = b.Invoice?.CourtFee ?? 0,
+            ServiceFee = b.Invoice?.ServiceFee ?? 0,
+            LoyaltyDiscountAmount = b.Invoice?.LoyaltyDiscountAmount ?? 0,
+            PromotionDiscountAmount = b.Invoice?.PromotionDiscountAmount ?? 0,
+            FinalTotal = b.Invoice?.FinalTotal ?? 0,
+            PaymentStatus = b.Invoice?.PaymentStatus.ToString() ?? "",
+            RefundAmount = b.Invoice?.Payments?
+                .SelectMany(p => p.Refunds ?? Enumerable.Empty<Refund>())
+                .Sum(r => (decimal?)r.Amount),
+            Courts = b.BookingCourts?.Select(bc => new BookingCourtDto
+            {
+                CourtId = bc.CourtId,
+                CourtName = bc.Court?.Name ?? "",
+                StartTime = bc.StartTime.ToTimeSpan(),
+                EndTime = bc.EndTime.ToTimeSpan(),
+                PriceItems = PriceSlotMerger.MergeBookingPriceItems(bc.BookingPriceItems?.Select(bpi =>
                 {
-                    StartTime = bpi.TimeSlot?.StartTime.ToTimeSpan() ?? default,
-                    EndTime = bpi.TimeSlot?.EndTime.ToTimeSpan() ?? default,
-                    UnitPrice = bpi.UnitPrice,
-                    Hours = bpi.TimeSlot != null
+                    var slotHours = bpi.TimeSlot != null
                         ? (decimal)(bpi.TimeSlot.EndTime - bpi.TimeSlot.StartTime).TotalHours
-                        : 0,
-                    SubTotal = bpi.UnitPrice * (bpi.TimeSlot != null
-                        ? (decimal)(bpi.TimeSlot.EndTime - bpi.TimeSlot.StartTime).TotalHours
-                        : 0)
-                }).ToList() ?? []
+                        : 0;
+
+                    // ĐƠN GIÁ (UnitPrice) luôn trả về theo GIỜ để đảm bảo UnitPrice * Hours = SubTotal
+                    // DB unitPrice đang lưu theo "slot", nên cần quy đổi ngược lại: hourlyRate = slotPrice / slotHours
+                    var hourlyUnitPrice = slotHours > 0 ? bpi.UnitPrice / slotHours : bpi.UnitPrice;
+
+                    return new BookingPriceItemDto
+                    {
+                        StartTime = bpi.TimeSlot?.StartTime.ToTimeSpan() ?? default,
+                        EndTime = bpi.TimeSlot?.EndTime.ToTimeSpan() ?? default,
+                        UnitPrice = hourlyUnitPrice,
+                        Hours = slotHours,
+                        SubTotal = bpi.UnitPrice // Subtotal chính là giá của slot đó
+                    };
+                }).ToList() ?? [])
             }).ToList() ?? [],
             Services = b.BookingServices?.Select(bs => new BookingServiceDto
             {
@@ -2366,7 +2437,7 @@ namespace SmashCourt_BE.Services
         private async Task<Invoice> CreateBookingDetailsAsync(
             Booking booking,
             DateOnly bookingDate,
-            List<(CourtSlotDto Slot, CalculatePriceResultDto Price)> priceResults,
+            List<(CourtSlotDto Slot, CourtPriceResultDto Price)> priceResults,
             Promotion? promotion,
             decimal promotionDiscountAmount,
             decimal totalCourtFee,
@@ -2528,10 +2599,12 @@ namespace SmashCourt_BE.Services
             {
                 UserId = customerId.Value,
                 BranchId = branchId,
-                CourtId = firstCourt.Id,
                 BookingAmount = totalAfterLoyalty,
                 BookingDate = bookingDate,
-                Sport = firstCourt.CourtType?.Name ?? "Unknown",
+                // multi-court booking sẽ có nhiều slot, nhưng chắc chắn cùng thời gian vì đã validate ở trên → lấy slot đầu tiên làm đại diện
+                StartTime = courtEntities.First().Slot.StartTime,
+                EndTime = courtEntities.First().Slot.EndTime,
+                // Sport = firstCourt.CourtType?.Name ?? "Unknown",
                 PreviousBookingCount = previousBookingCount
             };
 

@@ -10,8 +10,8 @@ namespace SmashCourt_BE.DTOs.Promotion
         [Required(ErrorMessage = "Chi nhánh không được để trống")]
         public Guid BranchId { get; set; }
 
-        [Required(ErrorMessage = "Sân không được để trống")]
-        public Guid CourtId { get; set; }
+        // [Required(ErrorMessage = "Sân không được để trống")]
+        // public Guid CourtId { get; set; }
 
         [Required(ErrorMessage = "Ngày đặt không được để trống")]
         public DateTime BookingDate { get; set; }

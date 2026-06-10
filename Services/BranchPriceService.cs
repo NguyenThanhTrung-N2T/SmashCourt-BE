@@ -403,110 +403,176 @@ namespace SmashCourt_BE.Services
         }
 
         // POST /api/prices/calculate
-        // Tính toán phí thuê cho một sân cụ thể, ngày đặt sân và khoảng thời gian đặt.
+        // Tính toán phí thuê cho nhiều sân cùng một khoảng thời gian và ngày đặt.
         // Lấy giá tại ngày đặt sân (không phải hôm nay) để các lượt đặt trước trong tương lai
         // sử dụng chính xác phiên bản giá sẽ có hiệu lực vào ngày hôm đó.
         public async Task<CalculatePriceResultDto> CalculateAsync(Guid? branchId, CalculatePriceDto dto)
         {
-            // Chuyển đổi kiểu dữ liệu
+            var result = await CalculateBaseAsync(branchId, dto);
+
+            // Merge breakdown để hiển thị UI gọn gàng
+            foreach (var court in result.Courts)
+            {
+                court.Breakdown = PriceSlotMerger.MergePriceBreakdowns(court.Breakdown);
+            }
+
+            return result;
+        }
+
+        public async Task<CalculatePriceResultDto> CalculateForBookingAsync(Guid? branchId, CalculatePriceDto dto)
+        {
+            // Trả về kết quả thô (raw) để BookingService lưu vào database
+            return await CalculateBaseAsync(branchId, dto);
+        }
+
+        private async Task<CalculatePriceResultDto> CalculateBaseAsync(Guid? branchId, CalculatePriceDto dto)
+        {
+            // 1. Chuyển đổi và xác thực dữ liệu cơ bản
             var startTime = TimeOnly.FromTimeSpan(dto.StartTime);
             var endTime = TimeOnly.FromTimeSpan(dto.EndTime);
             var bookingDate = DateOnly.FromDateTime(dto.BookingDate);
 
-            // Xác thực dữ liệu
             if (startTime >= endTime)
-                throw new AppException(400,
-                    "Giờ bắt đầu phải nhỏ hơn giờ kết thúc",
-                    ErrorCodes.BadRequest);
+                throw new AppException(400, "Giờ bắt đầu phải nhỏ hơn giờ kết thúc", ErrorCodes.BadRequest);
 
             var today = DateTimeHelper.GetTodayInVietnam();
             if (bookingDate < today)
-                throw new AppException(400,
-                    "Không thể tính giá cho ngày trong quá khứ",
-                    ErrorCodes.BadRequest);
+                throw new AppException(400, "Không thể tính giá cho ngày trong quá khứ", ErrorCodes.BadRequest);
 
-            var court = await _courtRepo.GetByIdAsync(dto.CourtId, branchId);
-            if (court == null)
+            var courtIds = dto.Courts?.ToList() ?? [];
+            if (courtIds.Count == 0)
+                throw new AppException(400, "Vui lòng chọn ít nhất một sân", ErrorCodes.BadRequest);
+
+            // 2. Lấy thông tin sân và kiểm tra tồn tại/trạng thái
+            var courts = await _courtRepo.GetByIdsAsync(courtIds);
+
+            // Kiểm tra sân không tồn tại
+            var missingIds = courtIds.Except(courts.Select(c => c.Id)).ToList();
+            if (missingIds.Count > 0)
                 throw new AppException(404, "Không tìm thấy sân", ErrorCodes.NotFound);
-            if (court.Status == CourtStatus.SUSPENDED || court.Status == CourtStatus.LOCKED)
-                throw new AppException(400, "Sân hiện đang bị khóa hoặc bảo trì", ErrorCodes.BadRequest);
 
-            // Sử dụng chi nhánh của sân nếu không cung cấp trong query
-            var resolvedBranchId = branchId ?? court.BranchId;
-
-            // Xác định loại ngày: ngày thường (WEEKDAY) hay cuối tuần (WEEKEND)
-            var dayType = (dto.BookingDate.DayOfWeek == DayOfWeek.Saturday ||
-                           dto.BookingDate.DayOfWeek == DayOfWeek.Sunday)
-                ? DayType.WEEKEND
-                : DayType.WEEKDAY;
-
-            var relevantSlots = await _timeSlotRepo.GetByDayTypeAsync(dayType);
-            if (!relevantSlots.Any())
-                throw new AppException(400,
-                    "Chưa cấu hình khung giờ cho hệ thống",
-                    ErrorCodes.BadRequest);
-
-            // Lấy giá tại ngày đặt sân - không phải hôm nay
-            // Điều này đảm bảo việc đặt lịch hôm nay cho tháng sau sẽ dùng đúng cấu hình giá tương lai của tháng sau
-            var branchPrices = await _repo.GetCurrentForDateAsync(resolvedBranchId, bookingDate, court.CourtTypeId);
-            var systemPrices = await _systemPriceRepo.GetCurrentForDateAsync(bookingDate, court.CourtTypeId);
-
-            var breakdown = new List<PriceBreakdownDto>();
-            decimal courtFee = 0;
-
-            foreach (var slot in relevantSlots)
+            // Kiểm tra sân thuộc chi nhánh (nếu có cung cấp branchId)
+            if (branchId.HasValue)
             {
-                // Tính toán khoảng thời gian chồng lấp (overlap) giữa khung giờ DB và khoảng đặt sân yêu cầu
-                var overlapStart = slot.StartTime > startTime ? slot.StartTime : startTime;
-                var overlapEnd = slot.EndTime < endTime ? slot.EndTime : endTime;
-
-                if (overlapStart >= overlapEnd) continue;
-
-                var hours = (decimal)(overlapEnd - overlapStart).TotalHours;
-
-                // Giá override của chi nhánh được ưu tiên cao hơn giá hệ thống
-                var branchPrice = branchPrices.FirstOrDefault(p =>
-                    p.TimeSlot.StartTime == slot.StartTime &&
-                    p.TimeSlot.EndTime == slot.EndTime);
-
-                var systemPrice = systemPrices.FirstOrDefault(p =>
-                    p.TimeSlot.StartTime == slot.StartTime &&
-                    p.TimeSlot.EndTime == slot.EndTime);
-
-                decimal unitPrice = branchPrice?.Price > 0
-                    ? branchPrice.Price
-                    : systemPrice?.Price ?? 0;
-
-                if (unitPrice == 0)
+                var invalidBranchCourt = courts.FirstOrDefault(c => c.BranchId != branchId.Value);
+                if (invalidBranchCourt != null)
                     throw new AppException(400,
-                        $"Chưa cấu hình giá cho khung giờ {slot.StartTime:HH\\:mm} - {slot.EndTime:HH\\:mm}",
+                        $"Sân \"{invalidBranchCourt.Name}\" không thuộc chi nhánh đang chọn",
                         ErrorCodes.BadRequest);
-
-                // Tính giá theo tỷ lệ (pro-rate) nếu lượt đặt chỉ chiếm một phần khung giờ
-                var slotHours = (decimal)(slot.EndTime - slot.StartTime).TotalHours;
-                var subTotal = unitPrice * (hours / slotHours);
-                courtFee += subTotal;
-
-                breakdown.Add(new PriceBreakdownDto
-                {
-                    StartTime = overlapStart.ToTimeSpan(),
-                    EndTime = overlapEnd.ToTimeSpan(),
-                    UnitPrice = unitPrice,
-                    Hours = hours,
-                    SubTotal = subTotal,
-                    PriceSource = branchPrice?.Price > 0 ? "BRANCH" : "SYSTEM"
-                });
             }
 
-            if (!breakdown.Any())
+            // Kiểm tra sân bị khóa / bảo trì
+            var unavailableCourt = courts.FirstOrDefault(c =>
+                c.Status == CourtStatus.SUSPENDED || c.Status == CourtStatus.LOCKED);
+
+            if (unavailableCourt != null)
                 throw new AppException(400,
-                    "Thời gian đặt nằm ngoài giờ hoạt động của sân",
+                    $"Sân \"{unavailableCourt.Name}\" hiện không khả dụng",
                     ErrorCodes.BadRequest);
+
+            // 3. Chuẩn bị dữ liệu giá (dùng cache để tối ưu)
+            var branchPriceCache = new Dictionary<(Guid, Guid), List<BranchPriceOverride>>();
+            var systemPriceCache = new Dictionary<Guid, List<SystemPrice>>();
+
+            var totalFee = 0m;
+            var courtResults = new List<CourtPriceResultDto>();
+
+            foreach (var court in courts)
+            {
+                var resolvedBranchId = branchId ?? court.BranchId;
+                var courtTypeId = court.CourtTypeId;
+
+                // Lấy hoặc Cache giá chi nhánh
+                if (!branchPriceCache.TryGetValue((resolvedBranchId, courtTypeId), out var branchPrices))
+                {
+                    branchPrices = (await _repo.GetCurrentForDateAsync(resolvedBranchId, bookingDate, courtTypeId)).ToList();
+                    branchPriceCache[(resolvedBranchId, courtTypeId)] = branchPrices;
+                }
+
+                // Lấy hoặc Cache giá hệ thống
+                if (!systemPriceCache.TryGetValue(courtTypeId, out var systemPrices))
+                {
+                    systemPrices = (await _systemPriceRepo.GetCurrentForDateAsync(bookingDate, courtTypeId)).ToList();
+                    systemPriceCache[courtTypeId] = systemPrices;
+                }
+
+                // 4. Lấy Timeslots hoạt động cho ngày này
+                var dayType = (bookingDate.DayOfWeek == DayOfWeek.Saturday || bookingDate.DayOfWeek == DayOfWeek.Sunday)
+                    ? DayType.WEEKEND
+                    : DayType.WEEKDAY;
+
+                var activeTimeSlots = (await _timeSlotRepo.GetByDayTypeAsync(dayType));
+
+                var courtFee = 0m;
+                var breakdown = new List<PriceBreakdownDto>();
+
+                foreach (var slot in activeTimeSlots.OrderBy(ts => ts.StartTime))
+                {
+                    // Tính toán khoảng thời gian chồng lấp (overlap) giữa khung giờ DB và khoảng đặt sân yêu cầu
+                    var overlapStart = slot.StartTime > startTime ? slot.StartTime : startTime;
+                    var overlapEnd = slot.EndTime < endTime ? slot.EndTime : endTime;
+
+                    if (overlapStart >= overlapEnd) continue;
+
+                    var hours = (decimal)(overlapEnd - overlapStart).TotalHours;
+
+                    // Giá override của chi nhánh được ưu tiên cao hơn giá hệ thống
+                    var branchPrice = branchPrices.FirstOrDefault(p =>
+                        p.TimeSlot.StartTime == slot.StartTime &&
+                        p.TimeSlot.EndTime == slot.EndTime);
+
+                    var systemPrice = systemPrices.FirstOrDefault(p =>
+                        p.TimeSlot.StartTime == slot.StartTime &&
+                        p.TimeSlot.EndTime == slot.EndTime);
+
+                    decimal unitPrice = branchPrice?.Price > 0
+                        ? branchPrice.Price
+                        : systemPrice?.Price ?? 0;
+
+                    if (unitPrice == 0)
+                        throw new AppException(400,
+                            $"Chưa cấu hình giá cho khung giờ {slot.StartTime:HH\\:mm} - {slot.EndTime:HH\\:mm}",
+                            ErrorCodes.BadRequest);
+
+                    // Tính giá theo tỷ lệ (pro-rate) nếu lượt đặt chỉ chiếm một phần khung giờ
+                    var slotHours = (decimal)(slot.EndTime - slot.StartTime).TotalHours;
+                    var subTotal = unitPrice * (hours / slotHours);
+                    courtFee += subTotal;
+
+                    // ĐƠN GIÁ (UnitPrice) luôn trả về theo GIỜ để đảm bảo UnitPrice * Hours = SubTotal
+                    decimal hourlyRate = slotHours > 0 ? unitPrice / slotHours : unitPrice;
+
+                    breakdown.Add(new PriceBreakdownDto
+                    {
+                        StartTime = overlapStart.ToTimeSpan(),
+                        EndTime = overlapEnd.ToTimeSpan(),
+                        UnitPrice = hourlyRate,
+                        Hours = hours,
+                        SubTotal = subTotal,
+                        PriceSource = branchPrice?.Price > 0 ? "BRANCH" : "SYSTEM"
+                    });
+                }
+
+                if (!breakdown.Any())
+                    throw new AppException(400,
+                        $"Thời gian đặt nằm ngoài giờ hoạt động của sân \"{court.Name}\"",
+                        ErrorCodes.BadRequest);
+
+                courtResults.Add(new CourtPriceResultDto
+                {
+                    CourtId = court.Id,
+                    CourtName = court.Name,
+                    CourtFee = courtFee,
+                    Breakdown = breakdown
+                });
+
+                totalFee += courtFee;
+            }
 
             return new CalculatePriceResultDto
             {
-                CourtFee = courtFee,
-                Breakdown = breakdown
+                TotalFee = totalFee,
+                Courts = courtResults
             };
         }
 
