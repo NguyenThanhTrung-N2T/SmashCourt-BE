@@ -1,4 +1,5 @@
 using SmashCourt_BE.Common;
+using SmashCourt_BE.Common.Constants;
 using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
@@ -6,10 +7,13 @@ using SmashCourt_BE.Repositories.IRepository;
 using SmashCourt_BE.Services.IService;
 using SmashCourt_BE.DTOs.Booking;
 using SmashCourt_BE.DTOs.Payment;
+using SmashCourt_BE.DTOs.SignalR;
 using SmashCourt_BE.Factories;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Configuration;
+using Microsoft.AspNetCore.SignalR;
+using SmashCourt_BE.Hubs;
 
 namespace SmashCourt_BE.Services
 {
@@ -25,6 +29,7 @@ namespace SmashCourt_BE.Services
         private readonly PromotionEngineService _promotionEngine;
         private readonly ILogger<PaymentService> _logger;
         private readonly IConfiguration _config;
+        private readonly IHubContext<NotificationHub> _hubContext;
 
         public PaymentService(
             IPaymentRepository paymentRepo,
@@ -36,7 +41,8 @@ namespace SmashCourt_BE.Services
             EmailService emailService,
             PromotionEngineService promotionEngine,
             ILogger<PaymentService> logger,
-            IConfiguration config)
+            IConfiguration config,
+            IHubContext<NotificationHub> hubContext)
         {
             _paymentRepo = paymentRepo;
             _bookingRepo = bookingRepo;
@@ -48,6 +54,7 @@ namespace SmashCourt_BE.Services
             _promotionEngine = promotionEngine;
             _logger = logger;
             _config = config;
+            _hubContext = hubContext;
         }
 
         /// <summary>
@@ -298,7 +305,22 @@ namespace SmashCourt_BE.Services
                     _logger.LogError(ex, "Failed to send confirmation email for booking {BookingId}", booking.Id);
                 }
 
-                // TODO: Broadcast SignalR notification
+                // Broadcast SignalR notification - payment success
+                var customerName = booking.Customer?.FullName ?? booking.GuestName ?? "Khách";
+                await BroadcastPaymentEventAsync(
+                    SignalREvents.PaymentSuccess,
+                    new PaymentNotificationDto
+                    {
+                        BookingId = booking.Id,
+                        InvoiceId = payment.InvoiceId,
+                        Amount = payment.Amount,
+                        Status = "SUCCESS",
+                        Message = $"Thanh toán thành công cho booking của {customerName}",
+                        Timestamp = DateTimeHelper.GetUtcNow()
+                    },
+                    booking.BranchId,
+                    booking.CustomerId ?? Guid.Empty
+                );
             }
             else
             {
@@ -353,7 +375,22 @@ namespace SmashCourt_BE.Services
                     booking.Id, BookingStatus.CANCELLED, transactionRef,
                     query["vnp_ResponseCode"].ToString());
 
-                // TODO: Broadcast SignalR notification
+                // Broadcast SignalR notification - payment failed
+                var customerName = booking.Customer?.FullName ?? booking.GuestName ?? "Khách";
+                await BroadcastPaymentEventAsync(
+                    SignalREvents.PaymentFailed,
+                    new PaymentNotificationDto
+                    {
+                        BookingId = booking.Id,
+                        InvoiceId = payment.InvoiceId,
+                        Amount = payment.Amount,
+                        Status = "FAILED",
+                        Message = $"Thanh toán thất bại cho booking của {customerName}. Booking đã bị hủy.",
+                        Timestamp = DateTimeHelper.GetUtcNow()
+                    },
+                    booking.BranchId,
+                    booking.CustomerId ?? Guid.Empty
+                );
             }
         }
 
@@ -486,6 +523,45 @@ namespace SmashCourt_BE.Services
             }.Min();
 
             return (rawToken, tokenHash, tokenExpiry);
+        }
+
+        /// <summary>
+        /// Helper method broadcast payment event tới SignalR groups
+        /// Gửi tới: Customer (user_{customerId}), Staff/Manager của chi nhánh (branch_{branchId}), Owner (role_OWNER)
+        /// </summary>
+        private async Task BroadcastPaymentEventAsync(
+            string eventName,
+            PaymentNotificationDto notification,
+            Guid branchId,
+            Guid customerId)
+        {
+            try
+            {
+                await Task.WhenAll(
+                    // Gửi cho customer (dùng custom group thay vì Clients.User để đồng bộ với OnConnectedAsync)
+                    _hubContext.Clients.Group($"user_{customerId}")
+                        .SendAsync(eventName, notification),
+                    
+                    // Gửi cho Staff/Manager của chi nhánh
+                    _hubContext.Clients.Group($"branch_{branchId}")
+                        .SendAsync(eventName, notification),
+                    
+                    // Gửi cho Owner (xem toàn hệ thống)
+                    _hubContext.Clients.Group("role_OWNER")
+                        .SendAsync(eventName, notification)
+                );
+
+                _logger.LogInformation(
+                    "SignalR broadcast success: Event={EventName}, BookingId={BookingId}, Amount={Amount}",
+                    eventName, notification.BookingId, notification.Amount);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "SignalR broadcast failed: Event={EventName}, BookingId={BookingId}",
+                    eventName, notification.BookingId);
+                // Không throw - SignalR failure không nên block business logic
+            }
         }
 
         /// <summary>

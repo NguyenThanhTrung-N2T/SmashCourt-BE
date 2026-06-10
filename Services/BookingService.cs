@@ -1,8 +1,10 @@
 using SmashCourt_BE.Common;
+using SmashCourt_BE.Common.Constants;
 using SmashCourt_BE.Data;
 using SmashCourt_BE.Helpers;
 using SmashCourt_BE.DTOs.Booking;
 using SmashCourt_BE.DTOs.PriceConfig;
+using SmashCourt_BE.DTOs.SignalR;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
@@ -12,6 +14,8 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Configuration;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.SignalR;
+using SmashCourt_BE.Hubs;
 
 namespace SmashCourt_BE.Services
 {
@@ -41,6 +45,7 @@ namespace SmashCourt_BE.Services
         private readonly SmashCourtContext _context;
         private readonly ILogger<BookingService> _logger;
         private readonly IConfiguration _configuration;
+        private readonly IHubContext<NotificationHub> _hubContext;
 
         public BookingService(
             IBookingRepository bookingRepo,
@@ -66,7 +71,8 @@ namespace SmashCourt_BE.Services
             ISlotInterestRepository slotInterestRepo,
             SmashCourtContext context,
             ILogger<BookingService> logger,
-            IConfiguration configuration)
+            IConfiguration configuration,
+            IHubContext<NotificationHub> hubContext)
         {
             _bookingRepo = bookingRepo;
             _slotLockRepo = slotLockRepo;
@@ -92,6 +98,7 @@ namespace SmashCourt_BE.Services
             _context = context;
             _logger = logger;
             _configuration = configuration;
+            _hubContext = hubContext;
         }
 
         // Lấy danh sách booking theo quyền + chi nhánh + filter 
@@ -826,7 +833,24 @@ namespace SmashCourt_BE.Services
             // Notify users interested in the freed slots (after commit, outside transaction)
             await NotifySlotInterestedUsersAsync(booking);
 
-            // TODO: Broadcast SignalR
+            // Broadcast SignalR notification
+            var customerName = booking.Customer?.FullName ?? booking.GuestName ?? "Khách";
+            await BroadcastBookingEventAsync(
+                SignalREvents.BookingCheckedIn,
+                new BookingNotificationDto
+                {
+                    BookingId = booking.Id,
+                    CustomerId = booking.CustomerId ?? Guid.Empty,
+                    CustomerName = customerName,
+                    BranchId = booking.BranchId,
+                    BranchName = booking.Branch.Name,
+                    Status = booking.Status.ToString(),
+                    Message = $"{customerName} đã check-in tại {booking.Branch.Name}",
+                    Timestamp = DateTimeHelper.GetUtcNow()
+                },
+                booking.BranchId,
+                booking.CustomerId ?? Guid.Empty
+            );
         }
 
         // Thu tiền cho booking đang chờ (PENDING_PAYMENT) và hoàn tất đơn
@@ -1027,7 +1051,24 @@ namespace SmashCourt_BE.Services
             // Notify users interested in the freed slots (sau commit, ngoài transaction)
             await NotifySlotInterestedUsersAsync(booking);
 
-            // TODO: Broadcast SignalR để update real-time cho staff
+            // Broadcast SignalR notification
+            var customerName = booking.Customer?.FullName ?? booking.GuestName ?? "Khách";
+            await BroadcastBookingEventAsync(
+                SignalREvents.BookingCancelled,
+                new BookingNotificationDto
+                {
+                    BookingId = booking.Id,
+                    CustomerId = booking.CustomerId ?? Guid.Empty,
+                    CustomerName = customerName,
+                    BranchId = booking.BranchId,
+                    BranchName = booking.Branch.Name,
+                    Status = booking.Status.ToString(),
+                    Message = $"Booking của {customerName} đã bị hủy bởi nhân viên",
+                    Timestamp = DateTimeHelper.GetUtcNow()
+                },
+                booking.BranchId,
+                booking.CustomerId ?? Guid.Empty
+            );
         }
 
         // Lấy thông tin hủy booking theo token (dùng cho khách hàng hủy booking online)
@@ -1289,7 +1330,24 @@ namespace SmashCourt_BE.Services
             // Notify users interested in the freed slots (sau commit, ngoài transaction)
             await NotifySlotInterestedUsersAsync(booking);
 
-            // TODO: Broadcast SignalR để update real-time cho staff
+            // Broadcast SignalR notification
+            var customerName = booking.Customer?.FullName ?? booking.GuestName ?? "Khách";
+            await BroadcastBookingEventAsync(
+                SignalREvents.BookingCancelled,
+                new BookingNotificationDto
+                {
+                    BookingId = booking.Id,
+                    CustomerId = booking.CustomerId ?? Guid.Empty,
+                    CustomerName = customerName,
+                    BranchId = booking.BranchId,
+                    BranchName = booking.Branch.Name,
+                    Status = booking.Status.ToString(),
+                    Message = $"{customerName} đã hủy booking qua link email",
+                    Timestamp = DateTimeHelper.GetUtcNow()
+                },
+                booking.BranchId,
+                booking.CustomerId ?? Guid.Empty
+            );
         }
 
         // Check-in khách hàng đến sân, chỉ cho phép check-in khi booking đang CONFIRMED hoặc PAID_ONLINE
@@ -1355,7 +1413,24 @@ namespace SmashCourt_BE.Services
                 transaction.Complete();
             }
 
-            // TODO: Broadcast SignalR
+            // Broadcast SignalR notification
+            var customerName = booking.Customer?.FullName ?? booking.GuestName ?? "Khách";
+            await BroadcastBookingEventAsync(
+                SignalREvents.BookingCheckedIn,
+                new BookingNotificationDto
+                {
+                    BookingId = booking.Id,
+                    CustomerId = booking.CustomerId ?? Guid.Empty,
+                    CustomerName = customerName,
+                    BranchId = booking.BranchId,
+                    BranchName = booking.Branch.Name,
+                    Status = booking.Status.ToString(),
+                    Message = $"{customerName} đã check-in tại {booking.Branch.Name}",
+                    Timestamp = DateTimeHelper.GetUtcNow()
+                },
+                booking.BranchId,
+                booking.CustomerId ?? Guid.Empty
+            );
         }
 
         // Checkout khách hàng rời sân, chấp nhận IN_PROGRESS (khách về sớm) và PENDING_PAYMENT (hết giờ)
@@ -1487,7 +1562,24 @@ namespace SmashCourt_BE.Services
                 transaction.Complete();
             }
 
-            // TODO: Broadcast SignalR
+            // Broadcast SignalR notification
+            var customerName = booking.Customer?.FullName ?? booking.GuestName ?? "Khách";
+            await BroadcastBookingEventAsync(
+                SignalREvents.BookingCompleted,
+                new BookingNotificationDto
+                {
+                    BookingId = booking.Id,
+                    CustomerId = booking.CustomerId ?? Guid.Empty,
+                    CustomerName = customerName,
+                    BranchId = booking.BranchId,
+                    BranchName = booking.Branch.Name,
+                    Status = booking.Status.ToString(),
+                    Message = $"Booking của {customerName} đã hoàn tất",
+                    Timestamp = DateTimeHelper.GetUtcNow()
+                },
+                booking.BranchId,
+                booking.CustomerId ?? Guid.Empty
+            );
         }
 
         // thêm dịch vụ vào booking, chỉ cho phép thêm khi booking đang active và invoice chưa thanh toán đủ
@@ -2106,6 +2198,45 @@ namespace SmashCourt_BE.Services
             catch
             {
                 return 0;
+            }
+        }
+
+        /// <summary>
+        /// Helper method broadcast booking event tới SignalR groups
+        /// Gửi tới: Customer (user_{customerId}), Staff/Manager của chi nhánh (branch_{branchId}), Owner (role_OWNER)
+        /// </summary>
+        private async Task BroadcastBookingEventAsync(
+            string eventName,
+            BookingNotificationDto notification,
+            Guid branchId,
+            Guid customerId)
+        {
+            try
+            {
+                await Task.WhenAll(
+                    // Gửi cho customer (dùng custom group thay vì Clients.User để đồng bộ với OnConnectedAsync)
+                    _hubContext.Clients.Group($"user_{customerId}")
+                        .SendAsync(eventName, notification),
+                    
+                    // Gửi cho Staff/Manager của chi nhánh
+                    _hubContext.Clients.Group($"branch_{branchId}")
+                        .SendAsync(eventName, notification),
+                    
+                    // Gửi cho Owner (xem toàn hệ thống)
+                    _hubContext.Clients.Group("role_OWNER")
+                        .SendAsync(eventName, notification)
+                );
+
+                _logger.LogInformation(
+                    "SignalR broadcast success: Event={EventName}, BookingId={BookingId}, BranchId={BranchId}, CustomerId={CustomerId}",
+                    eventName, notification.BookingId, branchId, customerId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "SignalR broadcast failed: Event={EventName}, BookingId={BookingId}",
+                    eventName, notification.BookingId);
+                // Không throw - SignalR failure không nên block business logic
             }
         }
 

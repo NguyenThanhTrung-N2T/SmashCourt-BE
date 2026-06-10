@@ -236,7 +236,8 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
     options.KnownProxies.Clear();
 });
 
-
+// SignalR
+builder.Services.AddSignalR();
 
 // CORS
 builder.Services.AddCors(options =>
@@ -386,6 +387,20 @@ builder.Services.AddAuthentication(options =>
 
     options.Events = new JwtBearerEvents
     {
+        // Đọc token từ query string cho WebSocket/SignalR
+        OnMessageReceived = context =>
+        {
+            var accessToken = context.Request.Query["access_token"];
+            var path = context.Request.Path;
+            
+            if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
+            {
+                context.Token = accessToken;
+            }
+            
+            return Task.CompletedTask;
+        },
+        
         OnAuthenticationFailed = context =>
         {
             context.NoResult();
@@ -485,6 +500,9 @@ app.UseAuthorization();
 app.UseHangfireServices(app.Configuration);
 
 app.MapControllers();
+
+// SignalR Hub endpoint
+app.MapHub<SmashCourt_BE.Hubs.NotificationHub>("/hubs/notifications");
 
 // Kiểm tra kết nối database
 using (var scope = app.Services.CreateScope())
