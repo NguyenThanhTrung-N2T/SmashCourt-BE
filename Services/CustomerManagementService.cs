@@ -210,7 +210,6 @@ public class CustomerManagementService : ICustomerManagementService
             CreatedAt = transaction.CreatedAt
         };
     }
-
     /// <summary>
     /// Invalidate tất cả refresh tokens của customer (dùng khi lock)
     /// </summary>
@@ -283,12 +282,10 @@ public class CustomerManagementService : ICustomerManagementService
         if (string.IsNullOrWhiteSpace(searchTerm) || searchTerm.Length < 2)
             return [];
 
-        var result = await _customerRepo.SearchCustomersAsync(
+        return await _customerRepo.SearchCustomersAsync(
             searchTerm,
             managerBranchId,
             query.Limit);
-
-        return result;
     }
     /// <summary>
     /// Lấy thông tin chi tiết khách hàng

@@ -106,44 +106,55 @@ public class CustomerManagementRepository : ICustomerManagementRepository
     /// Tìm kiếm khách hàng
     /// </summary>
     public async Task<List<CustomerSearchDto>> SearchCustomersAsync(
-        string searchTerm,
-        Guid? managerBranchId,
-        int limit)
+    string searchTerm,
+    Guid? managerBranchId,
+    int limit)
+{
+    var search = searchTerm.Trim().ToLower();
+    var normalizedSearch = StringHelper.NormalizeVietnamese(searchTerm.Trim());
+
+    var customersQuery = _context.Users
+        .AsNoTracking()
+        .Where(u => u.Role == UserRole.CUSTOMER);
+
+    if (managerBranchId.HasValue)
     {
-        var search = searchTerm.Trim().ToLower();
-        var normalizedSearch = StringHelper.NormalizeVietnamese(searchTerm.Trim());
-
-        var customersQuery = _context.Users
-            .AsNoTracking()
-            .Where(u => u.Role == UserRole.CUSTOMER);
-
-        if (managerBranchId.HasValue)
-        {
-            customersQuery = customersQuery.Where(u =>
-                _context.Bookings.Any(b =>
-                    b.CustomerId == u.Id &&
-                    b.BranchId == managerBranchId.Value));
-        }
-
         customersQuery = customersQuery.Where(u =>
-            (u.FullNameNormalized != null && u.FullNameNormalized.Contains(normalizedSearch)) ||
-            (u.Phone != null && u.Phone.Contains(search)) ||
-            (u.Email != null && u.Email.ToLower().Contains(search)));
-
-        var take = Math.Clamp(limit, 1, 50);
-
-        return await customersQuery
-            .OrderBy(u => u.FullName)
-            .Take(take)
-            .Select(u => new CustomerSearchDto
-            {
-                Id = u.Id,
-                FullName = u.FullName,
-                Email = u.Email,
-                Phone = u.Phone
-            })
-            .ToListAsync();
+            _context.Bookings.Any(b =>
+                b.CustomerId == u.Id &&
+                b.BranchId == managerBranchId.Value));
     }
+
+    customersQuery = customersQuery.Where(u =>
+        (u.FullNameNormalized != null &&
+         u.FullNameNormalized.Contains(normalizedSearch))
+        || (u.Phone != null &&
+            u.Phone.Contains(search))
+        || (u.Email != null &&
+            u.Email.ToLower().Contains(search)));
+
+    var take = Math.Clamp(limit, 1, 50);
+
+    return await customersQuery
+        .OrderBy(u => u.FullName)
+        .Take(take)
+        .Select(u => new CustomerSearchDto
+        {
+            Id = u.Id,
+            FullName = u.FullName,
+            Email = u.Email,
+            Phone = u.Phone,
+            TierName = u.CustomerLoyalty != null &&
+                       u.CustomerLoyalty.Tier != null
+                ? u.CustomerLoyalty.Tier.Name
+                : "Bronze",
+            DiscountRate = u.CustomerLoyalty != null &&
+                           u.CustomerLoyalty.Tier != null
+                ? u.CustomerLoyalty.Tier.DiscountRate
+                : 0
+        })
+        .ToListAsync();
+}
 
     /// <summary>
     /// Lấy thông tin chi tiết khách hàng

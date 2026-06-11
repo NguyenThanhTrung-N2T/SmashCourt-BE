@@ -9,5 +9,7 @@ namespace SmashCourt_BE.DTOs.CustomerManagement
         public string? FullName { get; set; }
         public string? Email { get; set; }
         public string? Phone { get; set; }
+        public string TierName { get; set; } = null!;
+        public decimal DiscountRate { get; set; }
     }
 }
