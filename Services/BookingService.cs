@@ -1080,7 +1080,7 @@ namespace SmashCourt_BE.Services
                     BranchId = booking.BranchId,
                     BranchName = booking.Branch.Name,
                     Status = booking.Status.ToString(),
-                    Message = $"Booking của {customerName} đã bị hủy bởi nhân viên",
+                    Message = $"Booking của {customerName} đã được yêu cầu hủy",
                     Timestamp = DateTimeHelper.GetUtcNow()
                 },
                 booking.BranchId,
