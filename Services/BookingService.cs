@@ -1908,7 +1908,7 @@ namespace SmashCourt_BE.Services
                 };
 
                 await BroadcastBookingEventAsync(
-                    SignalREvents.BookingCancelled,
+                    SignalREvents.BookingRefunded,
                     notification,
                     booking.BranchId,
                     booking.CustomerId.GetValueOrDefault(Guid.Empty) // Guest bookings sẽ dùng Empty GUID

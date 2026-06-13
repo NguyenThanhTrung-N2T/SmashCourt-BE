@@ -11,6 +11,9 @@ public static class SignalREvents
     public const string BookingCheckedOut = "BookingCheckedOut";
     public const string BookingCancelled = "BookingCancelled";
     public const string BookingCompleted = "BookingCompleted";
+    public const string BookingRefunded = "BookingRefunded";
+    public const string BookingExpired = "BookingExpired";
+    public const string BookingNoShow = "BookingNoShow";
     
     // Payment Events
     public const string PaymentSuccess = "PaymentSuccess";

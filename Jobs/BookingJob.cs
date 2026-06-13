@@ -190,7 +190,7 @@ namespace SmashCourt_BE.Jobs
                     };
 
                     await BroadcastBookingEventAsync(
-                        SignalREvents.BookingCancelled,
+                        SignalREvents.BookingExpired,
                         notification,
                         booking.BranchId,
                         booking.CustomerId ?? Guid.Empty
@@ -531,7 +531,7 @@ namespace SmashCourt_BE.Jobs
                     };
 
                     await BroadcastBookingEventAsync(
-                        SignalREvents.BookingCancelled, // Dùng BookingCancelled để FE cập nhật giải phóng lưới sân
+                        SignalREvents.BookingNoShow,
                         notification,
                         booking.BranchId,
                         booking.CustomerId ?? Guid.Empty
