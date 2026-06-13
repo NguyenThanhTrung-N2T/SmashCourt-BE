@@ -1,11 +1,15 @@
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.SignalR;
 using SmashCourt_BE.Data;
 using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Jobs.Interfaces;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
+using SmashCourt_BE.Hubs;
+using SmashCourt_BE.DTOs.SignalR;
+using SmashCourt_BE.Common.Constants;
 using System.Diagnostics;
 
 namespace SmashCourt_BE.Jobs
@@ -32,6 +36,7 @@ namespace SmashCourt_BE.Jobs
         // ── Khai báo Dependencies ───────────────────────────────────────────
         private readonly SmashCourtContext _db;
         private readonly ISlotInterestRepository _slotInterestRepo;
+        private readonly IHubContext<NotificationHub> _hubContext;
         private readonly ILogger<BookingJob> _logger;
 
         // ── Khai báo hằng số ────────────────────────────────────────────────
@@ -54,11 +59,37 @@ namespace SmashCourt_BE.Jobs
         public BookingJob(
             SmashCourtContext db,
             ISlotInterestRepository slotInterestRepo,
+            IHubContext<NotificationHub> hubContext,
             ILogger<BookingJob> logger)
         {
             _db = db;
             _slotInterestRepo = slotInterestRepo;
+            _hubContext = hubContext;
             _logger = logger;
+        }
+
+        private async Task BroadcastBookingEventAsync(
+            string eventName,
+            BookingNotificationDto notification,
+            Guid branchId,
+            Guid customerId)
+        {
+            try
+            {
+                await Task.WhenAll(
+                    _hubContext.Clients.Group($"user_{customerId}")
+                        .SendAsync(eventName, notification),
+                    _hubContext.Clients.Group($"branch_{branchId}")
+                        .SendAsync(eventName, notification),
+                    _hubContext.Clients.Group("role_OWNER")
+                        .SendAsync(eventName, notification)
+                );
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "SignalR broadcast failed in Job: Event={EventName}, BookingId={BookingId}",
+                    eventName, notification.BookingId);
+            }
         }
 
         // ════════════════════════════════════════════════════════════════════
@@ -87,6 +118,8 @@ namespace SmashCourt_BE.Jobs
                     .Include(i => i.Booking)
                         .ThenInclude(b => b.BookingCourts)
                             .ThenInclude(bc => bc.Court)
+                    .Include(i => i.Booking.Branch)
+                    .Include(i => i.Booking.Customer)
                     .Where(i => i.PaymentStatus == InvoicePaymentStatus.UNPAID 
                              && i.ExpiresAt < now
                              && i.Booking.Status == BookingStatus.PENDING)
@@ -140,6 +173,30 @@ namespace SmashCourt_BE.Jobs
 
                 await _db.SaveChangesAsync();
 
+                // 3. Gửi thông báo real-time qua SignalR
+                foreach (var booking in expiredBookings)
+                {
+                    var customerName = booking.Customer?.FullName ?? booking.GuestName ?? "Khách";
+                    var notification = new BookingNotificationDto
+                    {
+                        BookingId = booking.Id,
+                        CustomerId = booking.CustomerId ?? Guid.Empty,
+                        CustomerName = customerName,
+                        BranchId = booking.BranchId,
+                        BranchName = booking.Branch?.Name ?? "",
+                        Status = booking.Status.ToString(),
+                        Message = $"Đơn đặt sân #{booking.BookingCode} của {customerName} đã bị hủy tự động do hết hạn thanh toán.",
+                        Timestamp = DateTimeHelper.GetUtcNow()
+                    };
+
+                    await BroadcastBookingEventAsync(
+                        SignalREvents.BookingCancelled,
+                        notification,
+                        booking.BranchId,
+                        booking.CustomerId ?? Guid.Empty
+                    );
+                }
+
                 _logger.LogInformation(
                     "[Job-01] Đã hủy {Count} đơn PENDING quá hạn thanh toán. Thời gian chạy: {Ms}ms",
                     expiredBookings.Count, sw.ElapsedMilliseconds);
@@ -185,6 +242,8 @@ namespace SmashCourt_BE.Jobs
                     .Include(b => b.BookingCourts)
                         .ThenInclude(bc => bc.Court)
                     .Include(b => b.Invoice)
+                    .Include(b => b.Branch)
+                    .Include(b => b.Customer)
                     .Where(b =>
                         b.Status == BookingStatus.IN_PROGRESS ||
                         b.Status == BookingStatus.PAID_ONLINE ||
@@ -262,6 +321,39 @@ namespace SmashCourt_BE.Jobs
 
                 await _db.SaveChangesAsync();
 
+                // 3. Gửi thông báo real-time qua SignalR
+                foreach (var booking in expiredBookings)
+                {
+                    if (booking.Status == BookingStatus.COMPLETED || booking.Status == BookingStatus.PENDING_PAYMENT)
+                    {
+                        var customerName = booking.Customer?.FullName ?? booking.GuestName ?? "Khách";
+                        var notification = new BookingNotificationDto
+                        {
+                            BookingId = booking.Id,
+                            CustomerId = booking.CustomerId ?? Guid.Empty,
+                            CustomerName = customerName,
+                            BranchId = booking.BranchId,
+                            BranchName = booking.Branch?.Name ?? "",
+                            Status = booking.Status.ToString(),
+                            Message = booking.Status == BookingStatus.COMPLETED 
+                                ? $"Đơn đặt sân #{booking.BookingCode} của {customerName} đã hoàn tất."
+                                : $"Đơn đặt sân #{booking.BookingCode} của {customerName} đã hết giờ và đang chờ thanh toán sau.",
+                            Timestamp = DateTimeHelper.GetUtcNow()
+                        };
+
+                        var eventName = booking.Status == BookingStatus.COMPLETED 
+                            ? SignalREvents.BookingCompleted 
+                            : SignalREvents.BookingCancelled; // PENDING_PAYMENT dùng BookingCancelled vì đơn chưa hoàn tất và cần FE cập nhật trạng thái
+
+                        await BroadcastBookingEventAsync(
+                            eventName,
+                            notification,
+                            booking.BranchId,
+                            booking.CustomerId ?? Guid.Empty
+                        );
+                    }
+                }
+
                 _logger.LogInformation(
                     "[Job-02] Hoàn tất quét. Đã xong={Completed} Chờ thanh toán={PendingPayment} " +
                     "Bỏ qua={Skipped} Lỗi={Errors} Thời gian chạy: {Ms}ms",
@@ -325,6 +417,8 @@ namespace SmashCourt_BE.Jobs
                     .Include(b => b.BookingCourts)
                         .ThenInclude(bc => bc.Court)
                     .Include(b => b.Invoice)
+                    .Include(b => b.Branch)
+                    .Include(b => b.Customer)
                     .Where(b => eligibleStatuses.Contains(b.Status) && b.CheckedInAt == null)
                     .ToListAsync();
 
@@ -419,6 +513,30 @@ namespace SmashCourt_BE.Jobs
                 }
 
                 await _db.SaveChangesAsync();
+
+                // Gửi thông báo real-time qua SignalR cho các đơn NO_SHOW
+                foreach (var booking in noShowBookings)
+                {
+                    var customerName = booking.Customer?.FullName ?? booking.GuestName ?? "Khách";
+                    var notification = new BookingNotificationDto
+                    {
+                        BookingId = booking.Id,
+                        CustomerId = booking.CustomerId ?? Guid.Empty,
+                        CustomerName = customerName,
+                        BranchId = booking.BranchId,
+                        BranchName = booking.Branch?.Name ?? "",
+                        Status = booking.Status.ToString(),
+                        Message = $"Đơn đặt sân #{booking.BookingCode} của {customerName} bị đánh dấu NO_SHOW do không nhận sân đúng giờ.",
+                        Timestamp = DateTimeHelper.GetUtcNow()
+                    };
+
+                    await BroadcastBookingEventAsync(
+                        SignalREvents.BookingCancelled, // Dùng BookingCancelled để FE cập nhật giải phóng lưới sân
+                        notification,
+                        booking.BranchId,
+                        booking.CustomerId ?? Guid.Empty
+                    );
+                }
 
                 _logger.LogInformation(
                     "[Job-04] Kết thúc. Đã xử lý NO_SHOW={Marked} Lỗi={Errors} Thời gian chạy: {Ms}ms",

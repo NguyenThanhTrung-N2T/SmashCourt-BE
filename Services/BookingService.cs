@@ -1891,6 +1891,34 @@ namespace SmashCourt_BE.Services
             {
                 _logger.LogError(ex, "Failed to send refund email for booking {Id}", booking.Id);
             }
+
+            // 7. Gửi SignalR notification - cập nhật realtime về refund completed
+            try
+            {
+                var notification = new BookingNotificationDto
+                {
+                    BookingId = booking.Id,
+                    CustomerId = booking.CustomerId ?? Guid.Empty,
+                    CustomerName = booking.Customer?.FullName ?? booking.GuestName ?? "Khách",
+                    BranchId = booking.BranchId,
+                    BranchName = booking.Branch.Name,
+                    Status = booking.Status.ToString(),
+                    Message = $"Hoàn tiền thành công cho booking #{booking.BookingCode} - Số tiền: {refund.Amount:N0} VND",
+                    Timestamp = DateTimeHelper.GetUtcNow()
+                };
+
+                await BroadcastBookingEventAsync(
+                    SignalREvents.BookingCancelled,
+                    notification,
+                    booking.BranchId,
+                    booking.CustomerId.GetValueOrDefault(Guid.Empty) // Guest bookings sẽ dùng Empty GUID
+                );
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to send SignalR notification for refund confirmation {BookingId}", booking.Id);
+                // Don't throw - notification failure shouldn't fail the refund
+            }
         }
 
         // Kiểm tra quyền thao tác chi nhánh của user, nếu là OWNER thì bỏ qua
