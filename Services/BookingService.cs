@@ -2680,9 +2680,8 @@ namespace SmashCourt_BE.Services
             Guid? customerId,
             IReadOnlyCollection<CourtSlotDto> requestedSlots)
         {
-            if (!dto.NotifyIfUnavailable)
-                return false;
-
+            // ✅ TỰ ĐỘNG đăng ký SlotInterest nếu có email hợp lệ
+            // Không cần kiểm tra dto.NotifyIfUnavailable - tự động giúp khách hàng nhận thông báo
             var email = await ResolveSlotInterestEmailAsync(dto, customerId);
             if (string.IsNullOrWhiteSpace(email))
                 return false;

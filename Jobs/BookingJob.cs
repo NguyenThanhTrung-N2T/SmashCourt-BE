@@ -11,6 +11,8 @@ using SmashCourt_BE.Hubs;
 using SmashCourt_BE.DTOs.SignalR;
 using SmashCourt_BE.Common.Constants;
 using System.Diagnostics;
+using SmashCourt_BE.Services;
+using Microsoft.Extensions.Configuration;
 
 namespace SmashCourt_BE.Jobs
 {
@@ -37,6 +39,8 @@ namespace SmashCourt_BE.Jobs
         private readonly SmashCourtContext _db;
         private readonly ISlotInterestRepository _slotInterestRepo;
         private readonly IHubContext<NotificationHub> _hubContext;
+        private readonly EmailService _emailService;
+        private readonly IConfiguration _configuration;
         private readonly ILogger<BookingJob> _logger;
 
         // ── Khai báo hằng số ────────────────────────────────────────────────
@@ -60,11 +64,15 @@ namespace SmashCourt_BE.Jobs
             SmashCourtContext db,
             ISlotInterestRepository slotInterestRepo,
             IHubContext<NotificationHub> hubContext,
+            EmailService emailService,
+            IConfiguration configuration,
             ILogger<BookingJob> logger)
         {
             _db = db;
             _slotInterestRepo = slotInterestRepo;
             _hubContext = hubContext;
+            _emailService = emailService;
+            _configuration = configuration;
             _logger = logger;
         }
 
@@ -89,6 +97,57 @@ namespace SmashCourt_BE.Jobs
             {
                 _logger.LogError(ex, "SignalR broadcast failed in Job: Event={EventName}, BookingId={BookingId}",
                     eventName, notification.BookingId);
+            }
+        }
+
+        private async Task NotifySlotInterestedUsersAsync(Booking booking)
+        {
+            var frontendUrl = _configuration["FrontendBaseUrl"] ?? "https://smashcourt.vn";
+            var branchName = booking.Branch?.Name ?? string.Empty;
+
+            foreach (var bc in booking.BookingCourts)
+            {
+                var interested = await _slotInterestRepo.GetOverlappingSlotInterestsAsync(
+                    bc.CourtId, bc.Date, bc.StartTime, bc.EndTime);
+
+                if (!interested.Any()) continue;
+
+                _logger.LogInformation(
+                    "[SLOT_INTEREST] Notifying {Count} users for released slot | Court={CourtId} | Date={Date} | Slot={Start}-{End}",
+                    interested.Count, bc.CourtId, bc.Date, bc.StartTime, bc.EndTime);
+
+                var courtName = bc.Court?.Name ?? "Sân";
+                var bookingUrl = $"{frontendUrl}/booking?courtId={bc.CourtId}&date={bc.Date:yyyy-MM-dd}&start={bc.StartTime:HH:mm}&end={bc.EndTime:HH:mm}";
+
+                foreach (var interest in interested)
+                {
+                    try
+                    {
+                        await _emailService.SendSlotAvailableNotificationAsync(
+                            interest.Email,
+                            courtName,
+                            branchName,
+                            bc.Date,
+                            bc.StartTime,
+                            bc.EndTime,
+                            bookingUrl);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Lỗi gửi email không block việc notify người khác
+                        _logger.LogError(ex,
+                            "[SLOT_INTEREST] Failed to send notification to {Email} for slot Court={CourtId}",
+                            interest.Email, bc.CourtId);
+                    }
+                }
+
+                // Xóa tất cả interests của slot này sau khi đã notify (one-shot)
+                var deletedCount = await _slotInterestRepo.DeleteOverlappingSlotInterestsAsync(
+                    bc.CourtId, bc.Date, bc.StartTime, bc.EndTime);
+
+                _logger.LogInformation(
+                    "[SLOT_INTEREST] Deleted {DeletedCount} slot interests after notification | Court={CourtId} | Date={Date} | Slot={Start}-{End}",
+                    deletedCount, bc.CourtId, bc.Date, bc.StartTime, bc.EndTime);
             }
         }
 
@@ -195,6 +254,9 @@ namespace SmashCourt_BE.Jobs
                         booking.BranchId,
                         booking.CustomerId ?? Guid.Empty
                     );
+
+                    // Gửi email cho người dùng đăng ký quan tâm slot trống (nếu có)
+                    await NotifySlotInterestedUsersAsync(booking);
                 }
 
                 _logger.LogInformation(
@@ -536,6 +598,9 @@ namespace SmashCourt_BE.Jobs
                         booking.BranchId,
                         booking.CustomerId ?? Guid.Empty
                     );
+
+                    // Gửi email cho người dùng đăng ký quan tâm slot trống (nếu có)
+                    await NotifySlotInterestedUsersAsync(booking);
                 }
 
                 _logger.LogInformation(

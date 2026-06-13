@@ -24,7 +24,16 @@ namespace SmashCourt_BE.DTOs.Booking
         public string? Note { get; set; }
 
         /// <summary>
-        /// Nếu slot bị người khác đặt hoặc đang bị khóa thanh toán, hệ thống sẽ tự đăng ký nhận thông báo khi slot trống lại.
+        /// [DEPRECATED - Hệ thống tự động đăng ký]
+        /// Trường này không còn được sử dụng. Hệ thống sẽ TỰ ĐỘNG đăng ký nhận thông báo 
+        /// khi slot trống lại nếu đặt sân thất bại do bận và khách hàng có email hợp lệ.
+        /// 
+        /// Logic mới:
+        /// - Nếu booking thất bại do slot unavailable
+        /// - VÀ khách hàng có email (GuestEmail hoặc Customer.Email)
+        /// - HỆ THỐNG TỰ ĐỘNG lưu SlotInterest và gửi email khi sân trống
+        /// 
+        /// Giữ lại field này để backward compatibility với FE cũ.
         /// </summary>
         public bool NotifyIfUnavailable { get; set; } = false;
 
