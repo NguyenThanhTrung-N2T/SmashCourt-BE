@@ -2745,9 +2745,14 @@ namespace SmashCourt_BE.Services
 
         private async Task<string?> ResolveSlotInterestEmailAsync(CreateOnlineBookingDto dto, Guid? customerId)
         {
-            var email = dto.GuestEmail?.Trim();
-            if (!string.IsNullOrWhiteSpace(email) || !customerId.HasValue)
-                return email;
+            // Priority 1: Use guest email if provided
+            var guestEmail = dto.GuestEmail?.Trim();
+            if (!string.IsNullOrWhiteSpace(guestEmail))
+                return guestEmail;
+
+            // Priority 2: Use customer email if logged in
+            if (!customerId.HasValue)
+                return null;
 
             var user = await _userRepo.GetUserByIdAsync(customerId.Value);
             return user?.Email;
