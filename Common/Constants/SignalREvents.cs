@@ -7,6 +7,7 @@ public static class SignalREvents
 {
     // Booking Events
     public const string BookingCreated = "BookingCreated";
+    public const string BookingUpdated = "BookingUpdated";
     public const string BookingCheckedIn = "BookingCheckedIn";
     public const string BookingCheckedOut = "BookingCheckedOut";
     public const string BookingCancelled = "BookingCancelled";

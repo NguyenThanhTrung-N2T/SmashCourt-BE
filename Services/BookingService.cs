@@ -1773,6 +1773,36 @@ namespace SmashCourt_BE.Services
 
             // Query lại booking với details để trả về
             var result = await _bookingRepo.GetByIdWithDetailsAsync(booking.Id);
+
+            // Broadcast SignalR notification - BookingUpdated
+            try
+            {
+                if (result != null)
+                {
+                    var customerName = result.Customer?.FullName ?? result.GuestName ?? "Khách";
+                    await BroadcastBookingEventAsync(
+                        SignalREvents.BookingUpdated,
+                        new BookingNotificationDto
+                        {
+                            BookingId = result.Id,
+                            CustomerId = result.CustomerId ?? Guid.Empty,
+                            CustomerName = customerName,
+                            BranchId = result.BranchId,
+                            BranchName = result.Branch?.Name ?? "",
+                            Status = result.Status.ToString(),
+                            Message = $"Đã thêm dịch vụ {branchService.Service.Name} (SL: {dto.Quantity}) vào đơn đặt sân #{result.BookingCode}.",
+                            Timestamp = DateTimeHelper.GetUtcNow()
+                        },
+                        result.BranchId,
+                        result.CustomerId ?? Guid.Empty
+                    );
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to send SignalR notification for service addition to booking {BookingId}", booking.Id);
+            }
+
             return MapToDto(result!);
         }
 
@@ -1868,6 +1898,36 @@ namespace SmashCourt_BE.Services
 
             // Query lại booking với details để trả về
             var result = await _bookingRepo.GetByIdWithDetailsAsync(booking.Id);
+
+            // Broadcast SignalR notification - BookingUpdated
+            try
+            {
+                if (result != null)
+                {
+                    var customerName = result.Customer?.FullName ?? result.GuestName ?? "Khách";
+                    await BroadcastBookingEventAsync(
+                        SignalREvents.BookingUpdated,
+                        new BookingNotificationDto
+                        {
+                            BookingId = result.Id,
+                            CustomerId = result.CustomerId ?? Guid.Empty,
+                            CustomerName = customerName,
+                            BranchId = result.BranchId,
+                            BranchName = result.Branch?.Name ?? "",
+                            Status = result.Status.ToString(),
+                            Message = $"Đã xóa dịch vụ {bookingService.ServiceName} khỏi đơn đặt sân #{result.BookingCode}.",
+                            Timestamp = DateTimeHelper.GetUtcNow()
+                        },
+                        result.BranchId,
+                        result.CustomerId ?? Guid.Empty
+                    );
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to send SignalR notification for service removal from booking {BookingId}", booking.Id);
+            }
+
             return MapToDto(result!);
         }
 
