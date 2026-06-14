@@ -453,6 +453,36 @@ namespace SmashCourt_BE.Services
                 throw;
             }
 
+            // 14. Broadcast SignalR notification - BookingCreated
+            try
+            {
+                var fullBooking = await _bookingRepo.GetByIdWithDetailsAsync(booking.Id);
+                if (fullBooking != null)
+                {
+                    var customerName = fullBooking.Customer?.FullName ?? fullBooking.GuestName ?? "Khách";
+                    await BroadcastBookingEventAsync(
+                        SignalREvents.BookingCreated,
+                        new BookingNotificationDto
+                        {
+                            BookingId = fullBooking.Id,
+                            CustomerId = fullBooking.CustomerId ?? Guid.Empty,
+                            CustomerName = customerName,
+                            BranchId = fullBooking.BranchId,
+                            BranchName = fullBooking.Branch?.Name ?? "",
+                            Status = fullBooking.Status.ToString(),
+                            Message = $"Đơn đặt sân online #{fullBooking.BookingCode} của {customerName} đã được tạo (Chờ thanh toán).",
+                            Timestamp = DateTimeHelper.GetUtcNow()
+                        },
+                        fullBooking.BranchId,
+                        fullBooking.CustomerId ?? Guid.Empty
+                    );
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to send SignalR notification for online booking creation {BookingId}", booking.Id);
+            }
+
             return new OnlineBookingResponse
             {
                 BookingId = booking.Id,
@@ -717,6 +747,38 @@ namespace SmashCourt_BE.Services
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Failed to send confirmation email for booking {Id}", bookingId);
+                }
+            }
+
+            // 16. Broadcast SignalR notification - BookingCreated
+            try
+            {
+                if (result != null)
+                {
+                    var customerName = result.Customer?.FullName ?? result.GuestName ?? "Khách";
+                    await BroadcastBookingEventAsync(
+                        SignalREvents.BookingCreated,
+                        new BookingNotificationDto
+                        {
+                            BookingId = result.Id,
+                            CustomerId = result.CustomerId ?? Guid.Empty,
+                            CustomerName = customerName,
+                            BranchId = result.BranchId,
+                            BranchName = result.Branch?.Name ?? "",
+                            Status = result.Status.ToString(),
+                            Message = $"Đơn đặt sân tại quầy #{result.BookingCode} đã được tạo thành công.",
+                            Timestamp = DateTimeHelper.GetUtcNow()
+                        },
+                        result.BranchId,
+                        result.CustomerId ?? Guid.Empty
+                    );
+                }
+            }
+            catch (Exception ex)
+            {
+                if (result != null)
+                {
+                    _logger.LogError(ex, "Failed to send SignalR notification for walk-in booking creation {BookingId}", result.Id);
                 }
             }
 
