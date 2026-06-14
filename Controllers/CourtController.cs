@@ -58,22 +58,38 @@ namespace SmashCourt_BE.Controllers
         }
 
         /// <summary>
-        /// Stats-only dashboard — 4 ô thống kê, có thể poll độc lập mọi 30–60 giây. (todo: signalr)
+        /// Stats-only dashboard — 4 ô thống kê
         /// </summary>
         [HttpGet("management-dashboard/stats")]
         [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
         [ProducesResponseType(StatusCodes.Status200OK)]
         public async Task<IActionResult> GetManagementStats(
-            [FromQuery] Guid? branchId,
-            [FromQuery] DateOnly? date)
+            [FromQuery] Guid? branchId)
         {
             var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
             var role = User.FindFirstValue(ClaimTypes.Role)!;
 
-            var result = await _service.GetManagementStatsAsync(branchId, date, userId, role);
+            var result = await _service.GetManagementStatsAsync(branchId, userId, role);
             return Ok(ApiResponse<CourtManagementStatsDto>.Ok(result, "Lấy thống kê sân thành công"));
         }
+        /// <summary>
+        /// Lấy danh sách card sân theo IDs
+        /// </summary>
+        [HttpPost("management-dashboard/courts-by-ids")]
+        [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        public async Task<IActionResult> GetManagementCourtsByIds(
+            [FromQuery] Guid? branchId,
+            [FromQuery] DateOnly? date,
+            [FromBody] List<Guid> courtIds)
+        {
+            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var role = User.FindFirstValue(ClaimTypes.Role)!;
 
+            var result = await _service.GetManagementCourtsByIdsAsync(
+                courtIds, branchId, date, userId, role);
+            return Ok(ApiResponse<List<CourtManagementCardDto>>.Ok(result, "Lấy danh sách card sân thành công"));
+        }
         /// <summary>
         /// Danh sách card sân (phân trang) kèm timeline ngày được chọn.
         /// </summary>

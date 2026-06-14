@@ -10,6 +10,7 @@ public class BookingNotificationDto
     public string CustomerName { get; set; } = string.Empty;
     public Guid BranchId { get; set; }
     public string BranchName { get; set; } = string.Empty;
+    public List<string> CourtIds { get; set; } = [];
     public string Status { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
     public DateTime Timestamp { get; set; }

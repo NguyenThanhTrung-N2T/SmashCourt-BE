@@ -7,13 +7,14 @@ public static class SignalREvents
 {
     // Booking Events
     public const string BookingCreated = "BookingCreated";
+    public const string BookingExpired = "BookingExpired";
     public const string BookingUpdated = "BookingUpdated";
     public const string BookingCheckedIn = "BookingCheckedIn";
     public const string BookingCheckedOut = "BookingCheckedOut";
-    public const string BookingCancelled = "BookingCancelled";
+    public const string BookingPendingPayment = "BookingPendingPayment";
     public const string BookingCompleted = "BookingCompleted";
+    public const string BookingCancelled = "BookingCancelled";
     public const string BookingRefunded = "BookingRefunded";
-    public const string BookingExpired = "BookingExpired";
     public const string BookingNoShow = "BookingNoShow";
     
     // Payment Events

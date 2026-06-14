@@ -12,8 +12,6 @@ using SmashCourt_BE.Factories;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Configuration;
-using Microsoft.AspNetCore.SignalR;
-using SmashCourt_BE.Hubs;
 
 namespace SmashCourt_BE.Services
 {
@@ -29,7 +27,7 @@ namespace SmashCourt_BE.Services
         private readonly PromotionEngineService _promotionEngine;
         private readonly ILogger<PaymentService> _logger;
         private readonly IConfiguration _config;
-        private readonly IHubContext<NotificationHub> _hubContext;
+        private readonly IBroadcastService _broadcast;
 
         public PaymentService(
             IPaymentRepository paymentRepo,
@@ -42,7 +40,7 @@ namespace SmashCourt_BE.Services
             PromotionEngineService promotionEngine,
             ILogger<PaymentService> logger,
             IConfiguration config,
-            IHubContext<NotificationHub> hubContext)
+            IBroadcastService broadcast)
         {
             _paymentRepo = paymentRepo;
             _bookingRepo = bookingRepo;
@@ -54,7 +52,7 @@ namespace SmashCourt_BE.Services
             _promotionEngine = promotionEngine;
             _logger = logger;
             _config = config;
-            _hubContext = hubContext;
+            _broadcast = broadcast;
         }
 
         /// <summary>
@@ -307,7 +305,8 @@ namespace SmashCourt_BE.Services
 
                 // Broadcast SignalR notification - payment success
                 var customerName = booking.Customer?.FullName ?? booking.GuestName ?? "Khách";
-                await BroadcastPaymentEventAsync(
+                // includeTimeGrid=false: payment success for previously held slot doesn't change availability
+                await _broadcast.BroadcastPaymentEventAsync(
                     SignalREvents.PaymentSuccess,
                     new PaymentNotificationDto
                     {
@@ -315,11 +314,11 @@ namespace SmashCourt_BE.Services
                         InvoiceId = payment.InvoiceId,
                         Amount = payment.Amount,
                         Status = "SUCCESS",
-                        Message = $"Thanh toán thành công cho booking của {customerName}",
+                        Message = $"Thanh toán thành công cho booking #{booking.BookingCode} của {customerName}",
                         Timestamp = DateTimeHelper.GetUtcNow()
                     },
-                    booking.BranchId,
-                    booking.CustomerId ?? Guid.Empty
+                    booking,
+                    includeTimeGrid: false
                 );
             }
             else
@@ -377,7 +376,8 @@ namespace SmashCourt_BE.Services
 
                 // Broadcast SignalR notification - payment failed
                 var customerName = booking.Customer?.FullName ?? booking.GuestName ?? "Khách";
-                await BroadcastPaymentEventAsync(
+                // includeTimeGrid=true: payment failure results in cancellation → slot released
+                await _broadcast.BroadcastPaymentEventAsync(
                     SignalREvents.PaymentFailed,
                     new PaymentNotificationDto
                     {
@@ -385,11 +385,11 @@ namespace SmashCourt_BE.Services
                         InvoiceId = payment.InvoiceId,
                         Amount = payment.Amount,
                         Status = "FAILED",
-                        Message = $"Thanh toán thất bại cho booking của {customerName}. Booking đã bị hủy.",
+                        Message = $"Thanh toán thất bại cho booking #{booking.BookingCode} của {customerName}. Booking đã bị hủy.",
                         Timestamp = DateTimeHelper.GetUtcNow()
                     },
-                    booking.BranchId,
-                    booking.CustomerId ?? Guid.Empty
+                    booking,
+                    includeTimeGrid: true
                 );
             }
         }
@@ -427,6 +427,7 @@ namespace SmashCourt_BE.Services
             //    Dùng AsNoTracking để tránh EF identity cache trả về entity cũ
             var payment = await _paymentRepo.GetByTransactionRefAsync(transactionRef, asNoTracking: true);
             var bookingId = payment?.Invoice?.Booking?.Id;
+            var bookingCode = payment?.Invoice?.Booking?.BookingCode;
 
             // 4. Re-fetch booking status trực tiếp từ DB để tránh stale EF cache
             //    HandleVnPayIpnAsync dùng raw ExecuteUpdateAsync — EF identity cache
@@ -448,6 +449,7 @@ namespace SmashCourt_BE.Services
                         : "Thanh toán thành công! Vui lòng đợi hệ thống xác nhận.")
                     : GetVnPayErrorMessage(responseCode),
                 BookingId = bookingId?.ToString(),
+                BookingCode = bookingCode,
                 TransactionRef = transactionRef,
                 Amount = amount,
                 ResponseCode = responseCode
@@ -525,44 +527,7 @@ namespace SmashCourt_BE.Services
             return (rawToken, tokenHash, tokenExpiry);
         }
 
-        /// <summary>
-        /// Helper method broadcast payment event tới SignalR groups
-        /// Gửi tới: Customer (user_{customerId}), Staff/Manager của chi nhánh (branch_{branchId}), Owner (role_OWNER)
-        /// </summary>
-        private async Task BroadcastPaymentEventAsync(
-            string eventName,
-            PaymentNotificationDto notification,
-            Guid branchId,
-            Guid customerId)
-        {
-            try
-            {
-                await Task.WhenAll(
-                    // Gửi cho customer (dùng custom group thay vì Clients.User để đồng bộ với OnConnectedAsync)
-                    _hubContext.Clients.Group($"user_{customerId}")
-                        .SendAsync(eventName, notification),
-                    
-                    // Gửi cho Staff/Manager của chi nhánh
-                    _hubContext.Clients.Group($"branch_{branchId}")
-                        .SendAsync(eventName, notification),
-                    
-                    // Gửi cho Owner (xem toàn hệ thống)
-                    _hubContext.Clients.Group("role_OWNER")
-                        .SendAsync(eventName, notification)
-                );
 
-                _logger.LogInformation(
-                    "SignalR broadcast success: Event={EventName}, BookingId={BookingId}, Amount={Amount}",
-                    eventName, notification.BookingId, notification.Amount);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex,
-                    "SignalR broadcast failed: Event={EventName}, BookingId={BookingId}",
-                    eventName, notification.BookingId);
-                // Không throw - SignalR failure không nên block business logic
-            }
-        }
 
         /// <summary>
         /// Gửi email xác nhận booking (không query DB - dùng data đã fetch)

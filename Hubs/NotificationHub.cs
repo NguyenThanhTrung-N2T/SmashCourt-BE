@@ -95,4 +95,42 @@ public class NotificationHub : Hub
 
         await base.OnDisconnectedAsync(exception);
     }
+
+    // ── Public TimeGrid Channels (customers viewing a specific date/court-type) ──
+
+    /// <summary>
+    /// Subscribes the current connection to the timegrid channel for a specific
+    /// branch + court type + date combination.
+    /// Group key: timegrid_{branchId}_{courtTypeId}_{date:yyyy-MM-dd}
+    /// Call this when the customer navigates to the timegrid page.
+    /// </summary>
+    public async Task JoinTimeGrid(Guid branchId, Guid courtTypeId, DateOnly date)
+    {
+        var group = TimeGridGroup(branchId, courtTypeId, date);
+        await Groups.AddToGroupAsync(Context.ConnectionId, group);
+
+        _logger.LogDebug(
+            "SignalR JoinTimeGrid: ConnectionId={ConnectionId}, Group={Group}",
+            Context.ConnectionId, group);
+    }
+
+    /// <summary>
+    /// Removes the current connection from the timegrid channel.
+    /// Call this when the customer leaves the timegrid page or changes date/court-type.
+    /// </summary>
+    public async Task LeaveTimeGrid(Guid branchId, Guid courtTypeId, DateOnly date)
+    {
+        var group = TimeGridGroup(branchId, courtTypeId, date);
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, group);
+
+        _logger.LogDebug(
+            "SignalR LeaveTimeGrid: ConnectionId={ConnectionId}, Group={Group}",
+            Context.ConnectionId, group);
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    internal static string TimeGridGroup(Guid branchId, Guid courtTypeId, DateOnly date)
+        => $"timegrid_{branchId}_{courtTypeId}_{date:yyyy-MM-dd}";
 }
+

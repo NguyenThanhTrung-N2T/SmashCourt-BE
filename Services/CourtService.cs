@@ -253,15 +253,14 @@ namespace SmashCourt_BE.Services
         }
 
         public async Task<CourtManagementStatsDto> GetManagementStatsAsync(
-            Guid? requestedBranchId, DateOnly? date,
-            Guid currentUserId, string currentUserRole)
+            Guid? requestedBranchId, Guid currentUserId, string currentUserRole)
         {
             if (!Enum.TryParse<UserRole>(currentUserRole, true, out var roleEnum))
             {
                 throw new AppException(403, "Role không hợp lệ", ErrorCodes.Forbidden);
             }
             var branchId = await _branchScopeResolver.ResolveRequiredBranchIdAsync(requestedBranchId, currentUserId, roleEnum);
-            var targetDate = date ?? DateTimeHelper.GetTodayInVietnam();
+            var targetDate = DateTimeHelper.GetTodayInVietnam();
             var data = await _repo.GetManagementDashboardDataAsync(branchId, targetDate, null, null);
 
             var bookingCourts = data.TodayBookingCourts;
@@ -284,7 +283,57 @@ namespace SmashCourt_BE.Services
                 Total = statuses.Count
             };
         }
+        public async Task<List<CourtManagementCardDto>> GetManagementCourtsByIdsAsync(
+            List<Guid> courtIds, Guid? requestedBranchId, DateOnly? date,
+            Guid currentUserId, string currentUserRole)
+        {
+            if (!Enum.TryParse<UserRole>(currentUserRole, true, out var roleEnum))
+            {
+                throw new AppException(403, "Role không hợp lệ", ErrorCodes.Forbidden);
+            }
 
+            var branchId = await _branchScopeResolver.ResolveRequiredBranchIdAsync(requestedBranchId, currentUserId, roleEnum);
+            var targetDate = date ?? DateTimeHelper.GetTodayInVietnam();
+            
+            // Get data for all courts in the branch to ensure we have all context (stats, slots, prices)
+            // Then we filter for the requested courtIds
+            var data = await _repo.GetManagementDashboardDataAsync(branchId, targetDate, null, null);
+
+            var branch = data.Branch;
+            var courts = data.Courts.Where(c => courtIds.Contains(c.Id)).ToList();
+            var bookingCourts = data.TodayBookingCourts;
+            var slots = await GetTimelineSlotsForDateAsync(branch.OpenTime, branch.CloseTime, targetDate);
+            var priceSummaries = await GetCurrentPriceSummariesAsync(
+                branchId,
+                courts.Select(c => c.CourtTypeId).Distinct());
+
+            var bcByCourt = bookingCourts
+                .GroupBy(bc => bc.CourtId)
+                .ToDictionary(g => g.Key, g => g.ToList());
+
+            var now = TimeOnly.FromDateTime(DateTimeHelper.GetVietnamNow());
+
+            var cards = courts.Select(court =>
+            {
+                var courtBcs = bcByCourt.GetValueOrDefault(court.Id, []);
+                var opStatus = DeriveOperationalStatus(court, courtBcs, now);
+                var timeline = BuildTimeline(courtBcs, slots);
+                priceSummaries.TryGetValue(court.CourtTypeId, out var priceSummary);
+
+                return new CourtManagementCardDto
+                {
+                    Id = court.Id,
+                    Name = court.Name,
+                    TypeName = court.CourtType?.Name ?? "N/A",
+                    OperationalStatus = opStatus,
+                    BookingsCount = courtBcs.Select(bc => bc.BookingId).Distinct().Count(),
+                    BasePrice = priceSummary?.NormalPrice,
+                    ScheduleTimeline = timeline
+                };
+            }).ToList();
+
+            return cards;
+        }
         public async Task<Common.PagedResult<CourtManagementCardDto>> GetManagementCourtsAsync(
             Guid? requestedBranchId, DateOnly? date, string? search, Guid? typeId,
             int page, int pageSize,

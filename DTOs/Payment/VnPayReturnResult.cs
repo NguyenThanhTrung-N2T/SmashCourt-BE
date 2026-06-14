@@ -20,6 +20,10 @@ namespace SmashCourt_BE.DTOs.Payment
         /// Booking ID (nếu tìm thấy payment)
         /// </summary>
         public string? BookingId { get; set; }
+        /// <summary>
+        /// Booking code
+        /// </summary>
+        public string? BookingCode { get; set; }
 
         /// <summary>
         /// Transaction reference từ VNPay

@@ -43,12 +43,16 @@ namespace SmashCourt_BE.Services.IService
         Task DeleteAsync(Guid id, Guid? requestedBranchId, Guid currentUserId, string currentUserRole);
 
         /// <summary>
-        /// Stats-only dashboard (4 ô thống kê) — có thể poll độc lập mọi 30–60 giây.
+        /// Stats-only dashboard (4 ô thống kê)
         /// </summary>
         Task<CourtManagementStatsDto> GetManagementStatsAsync(
-            Guid? requestedBranchId, DateOnly? date,
+            Guid? requestedBranchId, Guid currentUserId, string currentUserRole);
+        /// <summary>
+        /// Lấy danh sách card sân theo IDs
+        /// </summary>
+        Task<List<CourtManagementCardDto>> GetManagementCourtsByIdsAsync(
+            List<Guid> courtIds, Guid? requestedBranchId, DateOnly? date,
             Guid currentUserId, string currentUserRole);
-
         /// <summary>
         /// Danh sách card sân (phân trang) kèm timeline ngày được chọn.
         /// </summary>

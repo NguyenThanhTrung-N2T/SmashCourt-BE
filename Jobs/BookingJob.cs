@@ -1,17 +1,16 @@
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.AspNetCore.SignalR;
 using SmashCourt_BE.Data;
 using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Jobs.Interfaces;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
-using SmashCourt_BE.Hubs;
 using SmashCourt_BE.DTOs.SignalR;
 using SmashCourt_BE.Common.Constants;
 using System.Diagnostics;
 using SmashCourt_BE.Services;
+using SmashCourt_BE.Services.IService;
 using Microsoft.Extensions.Configuration;
 
 namespace SmashCourt_BE.Jobs
@@ -38,7 +37,7 @@ namespace SmashCourt_BE.Jobs
         // ── Khai báo Dependencies ───────────────────────────────────────────
         private readonly SmashCourtContext _db;
         private readonly ISlotInterestRepository _slotInterestRepo;
-        private readonly IHubContext<NotificationHub> _hubContext;
+        private readonly IBroadcastService _broadcast;
         private readonly EmailService _emailService;
         private readonly IConfiguration _configuration;
         private readonly ILogger<BookingJob> _logger;
@@ -63,42 +62,20 @@ namespace SmashCourt_BE.Jobs
         public BookingJob(
             SmashCourtContext db,
             ISlotInterestRepository slotInterestRepo,
-            IHubContext<NotificationHub> hubContext,
+            IBroadcastService broadcast,
             EmailService emailService,
             IConfiguration configuration,
             ILogger<BookingJob> logger)
         {
             _db = db;
             _slotInterestRepo = slotInterestRepo;
-            _hubContext = hubContext;
+            _broadcast = broadcast;
             _emailService = emailService;
             _configuration = configuration;
             _logger = logger;
         }
 
-        private async Task BroadcastBookingEventAsync(
-            string eventName,
-            BookingNotificationDto notification,
-            Guid branchId,
-            Guid customerId)
-        {
-            try
-            {
-                await Task.WhenAll(
-                    _hubContext.Clients.Group($"user_{customerId}")
-                        .SendAsync(eventName, notification),
-                    _hubContext.Clients.Group($"branch_{branchId}")
-                        .SendAsync(eventName, notification),
-                    _hubContext.Clients.Group("role_OWNER")
-                        .SendAsync(eventName, notification)
-                );
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "SignalR broadcast failed in Job: Event={EventName}, BookingId={BookingId}",
-                    eventName, notification.BookingId);
-            }
-        }
+
 
         private async Task NotifySlotInterestedUsersAsync(Booking booking)
         {
@@ -179,7 +156,7 @@ namespace SmashCourt_BE.Jobs
                             .ThenInclude(bc => bc.Court)
                     .Include(i => i.Booking.Branch)
                     .Include(i => i.Booking.Customer)
-                    .Where(i => i.PaymentStatus == InvoicePaymentStatus.UNPAID 
+                    .Where(i => i.PaymentStatus == InvoicePaymentStatus.UNPAID
                              && i.ExpiresAt < now
                              && i.Booking.Status == BookingStatus.PENDING)
                     .ToListAsync();
@@ -243,17 +220,18 @@ namespace SmashCourt_BE.Jobs
                         CustomerName = customerName,
                         BranchId = booking.BranchId,
                         BranchName = booking.Branch?.Name ?? "",
+                        CourtIds = booking.BookingCourts.Select(bc => bc.CourtId.ToString()).ToList(),
                         Status = booking.Status.ToString(),
-                        Message = $"Đơn đặt sân #{booking.BookingCode} của {customerName} đã bị hủy tự động do hết hạn thanh toán.",
+                        Message = $"Booking #{booking.BookingCode} của {customerName} đã bị hủy tự động do hết hạn thanh toán.",
                         Timestamp = DateTimeHelper.GetUtcNow()
                     };
 
-                    await BroadcastBookingEventAsync(
+                    // includeTimeGrid=true: slot released → customers viewing the grid need a refresh
+                    await _broadcast.BroadcastBookingEventAsync(
                         SignalREvents.BookingExpired,
                         notification,
-                        booking.BranchId,
-                        booking.CustomerId ?? Guid.Empty
-                    );
+                        booking,
+                        includeTimeGrid: true);
 
                     // Gửi email cho người dùng đăng ký quan tâm slot trống (nếu có)
                     await NotifySlotInterestedUsersAsync(booking);
@@ -396,23 +374,24 @@ namespace SmashCourt_BE.Jobs
                             CustomerName = customerName,
                             BranchId = booking.BranchId,
                             BranchName = booking.Branch?.Name ?? "",
+                            CourtIds = booking.BookingCourts.Select(bc => bc.CourtId.ToString()).ToList(),
                             Status = booking.Status.ToString(),
-                            Message = booking.Status == BookingStatus.COMPLETED 
-                                ? $"Đơn đặt sân #{booking.BookingCode} của {customerName} đã hoàn tất."
-                                : $"Đơn đặt sân #{booking.BookingCode} của {customerName} đã hết giờ và đang chờ thanh toán sau.",
+                            Message = booking.Status == BookingStatus.COMPLETED
+                                ? $"Booking #{booking.BookingCode} của {customerName} đã hoàn tất."
+                                : $"Booking #{booking.BookingCode} của {customerName} đã hết giờ và đang chờ thanh toán sau.",
                             Timestamp = DateTimeHelper.GetUtcNow()
                         };
 
-                        var eventName = booking.Status == BookingStatus.COMPLETED 
-                            ? SignalREvents.BookingCompleted 
+                        var eventName = booking.Status == BookingStatus.COMPLETED
+                            ? SignalREvents.BookingCompleted
                             : SignalREvents.BookingCancelled; // PENDING_PAYMENT dùng BookingCancelled vì đơn chưa hoàn tất và cần FE cập nhật trạng thái
 
-                        await BroadcastBookingEventAsync(
+                        // includeTimeGrid=false: session end doesn't open a currently bookable slot
+                        await _broadcast.BroadcastBookingEventAsync(
                             eventName,
                             notification,
-                            booking.BranchId,
-                            booking.CustomerId ?? Guid.Empty
-                        );
+                            booking,
+                            includeTimeGrid: false);
                     }
                 }
 
@@ -587,17 +566,18 @@ namespace SmashCourt_BE.Jobs
                         CustomerName = customerName,
                         BranchId = booking.BranchId,
                         BranchName = booking.Branch?.Name ?? "",
+                        CourtIds = booking.BookingCourts.Select(bc => bc.CourtId.ToString()).ToList(),
                         Status = booking.Status.ToString(),
-                        Message = $"Đơn đặt sân #{booking.BookingCode} của {customerName} bị đánh dấu NO_SHOW do không nhận sân đúng giờ.",
+                        Message = $"Booking #{booking.BookingCode} của {customerName} bị đánh dấu NO_SHOW do không nhận sân đúng giờ.",
                         Timestamp = DateTimeHelper.GetUtcNow()
                     };
 
-                    await BroadcastBookingEventAsync(
+                    // includeTimeGrid=true: no-show releases the slot → timegrid needs refresh
+                    await _broadcast.BroadcastBookingEventAsync(
                         SignalREvents.BookingNoShow,
                         notification,
-                        booking.BranchId,
-                        booking.CustomerId ?? Guid.Empty
-                    );
+                        booking,
+                        includeTimeGrid: true);
 
                     // Gửi email cho người dùng đăng ký quan tâm slot trống (nếu có)
                     await NotifySlotInterestedUsersAsync(booking);

@@ -162,6 +162,7 @@ builder.Services.AddScoped<IBranchServiceRepository, BranchServiceRepository>();
 builder.Services.AddScoped<IPaymentService, PaymentService>();
 builder.Services.AddScoped<ITimeGridService, TimeGridService>();
 builder.Services.AddScoped<IBookingJob, BookingJob>();
+builder.Services.AddScoped<IBroadcastService, BroadcastService>();
 builder.Services.AddScoped<IVnPayService, VnPayService>();
 builder.Services.AddScoped<IBranchManagerService, BranchManagerService>();
 builder.Services.AddScoped<IBranchStaffService, BranchStaffService>();
