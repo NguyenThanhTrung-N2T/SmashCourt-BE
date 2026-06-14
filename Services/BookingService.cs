@@ -2055,11 +2055,11 @@ namespace SmashCourt_BE.Services
             }
         }
         /// <summary>
-        /// Returns true when an exception is the PostgreSQL exclusion-constraint violation
-        /// on booking_courts (23P01 / excl_booking_courts_no_overlap).
-        /// The violation fires during SaveChangesAsync (BookingCourt INSERT),
-        /// NOT at TransactionScope.Complete(), so it must be caught around the full
-        /// set of DB-write steps, not just around Complete().
+        /// Trả về true nếu exception là lỗi vi phạm ràng buộc loại trừ (exclusion-constraint) của PostgreSQL
+        /// trên bảng booking_courts (mã lỗi 23P01 / excl_booking_courts_no_overlap).
+        /// Lỗi này xảy ra trong lúc SaveChangesAsync (khi INSERT BookingCourt),
+        /// CHỨ KHÔNG PHẢI lúc TransactionScope.Complete(), nên phải bắt lỗi này quanh
+        /// các bước ghi xuống DB, thay vì chỉ quanh lệnh Complete().
         /// </summary>
         private static bool IsOverlapConstraintViolation(Exception ex)
         {

@@ -21,7 +21,7 @@ namespace SmashCourt_BE.DTOs.Payment
         /// </summary>
         public string? BookingId { get; set; }
         /// <summary>
-        /// Booking code
+        /// Mã đơn đặt sân (Booking Code)
         /// </summary>
         public string? BookingCode { get; set; }
 

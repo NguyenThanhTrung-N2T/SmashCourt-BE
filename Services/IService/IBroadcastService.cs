@@ -4,24 +4,24 @@ using SmashCourt_BE.Models.Entities;
 namespace SmashCourt_BE.Services.IService;
 
 /// <summary>
-/// Centralized SignalR broadcast service.
-/// Broadcasts to four group types:
-///   user_{userId}                          — personal channel for the customer
-///   role_{ROLE}                            — role-wide channel (e.g. role_OWNER)
-///   branch_{branchId}                      — ops channel for Staff/Manager of a branch
-///   timegrid_{branchId}_{courtTypeId}_{date} — public channel for customers viewing the timegrid
+/// Dịch vụ gửi thông báo SignalR tập trung.
+/// Hỗ trợ phát tín hiệu tới 4 nhóm kênh:
+///   user_{userId}                          — Kênh cá nhân của khách hàng
+///   role_{ROLE}                            — Kênh phân quyền hệ thống (ví dụ: role_OWNER)
+///   branch_{branchId}                      — Kênh vận hành của Staff/Manager tại chi nhánh
+///   timegrid_{branchId}_{courtTypeId}_{date} — Kênh công khai dành cho khách hàng đang xem lịch đặt sân
 /// </summary>
 public interface IBroadcastService
 {
     /// <summary>
-    /// Broadcasts a booking-related event.
+    /// Phát đi sự kiện realtime liên quan đến đơn đặt sân (Booking).
     /// </summary>
-    /// <param name="eventName">SignalR event name from <see cref="SmashCourt_BE.Common.Constants.SignalREvents"/>.</param>
-    /// <param name="notification">Payload to send.</param>
-    /// <param name="booking">The booking entity, used to derive target groups. Must have BookingCourts with Court navigations loaded.</param>
+    /// <param name="eventName">Tên sự kiện SignalR lấy từ <see cref="SmashCourt_BE.Common.Constants.SignalREvents"/>.</param>
+    /// <param name="notification">Nội dung payload thông báo.</param>
+    /// <param name="booking">Thực thể Booking dùng để xác định các nhóm nhận tin. Cần nạp sẵn BookingCourts và Court.</param>
     /// <param name="includeTimeGrid">
-    /// When true, also broadcasts to <c>timegrid_...</c> groups for every court/date in the booking.
-    /// Set to false for events that do not affect slot availability (e.g. check-in).
+    /// Nếu true, sự kiện sẽ được gửi đến cả các nhóm <c>timegrid_...</c> tương ứng.
+    /// Đặt là false đối với các sự kiện không ảnh hưởng đến trạng thái trống của lịch (ví dụ: check-in).
     /// </param>
     Task BroadcastBookingEventAsync(
         string eventName,
@@ -30,14 +30,14 @@ public interface IBroadcastService
         bool includeTimeGrid = false);
 
     /// <summary>
-    /// Broadcasts a payment-related event.
+    /// Phát đi sự kiện realtime liên quan đến thanh toán (Payment).
     /// </summary>
-    /// <param name="eventName">SignalR event name.</param>
-    /// <param name="notification">Payload to send.</param>
-    /// <param name="booking">The booking entity. Must have BookingCourts with Court navigations loaded.</param>
+    /// <param name="eventName">Tên sự kiện SignalR.</param>
+    /// <param name="notification">Nội dung payload thông báo.</param>
+    /// <param name="booking">Thực thể Booking. Cần nạp sẵn BookingCourts và Court.</param>
     /// <param name="includeTimeGrid">
-    /// When true, also broadcasts to <c>timegrid_...</c> groups.
-    /// Use only when the payment outcome releases or holds a slot (e.g. payment failure cancels booking).
+    /// Nếu true, sự kiện sẽ được gửi đến cả các nhóm <c>timegrid_...</c>.
+    /// Chỉ dùng khi kết quả thanh toán trực tiếp làm thay đổi trạng thái trống của slot sân (ví dụ: thanh toán thất bại).
     /// </param>
     Task BroadcastPaymentEventAsync(
         string eventName,

@@ -32,17 +32,17 @@ public class BroadcastService : IBroadcastService
         {
             var tasks = new List<Task>
             {
-                // Personal: customer who made the booking
+                // Group theo cá nhân: user_{CustomerId}
                 _hubContext.Clients
                     .Group($"user_{booking.CustomerId}")
                     .SendAsync(eventName, notification),
 
-                // Ops: Staff & Managers of the branch
+                // Group theo chi nhánh: branch_{BranchId}
                 _hubContext.Clients
                     .Group($"branch_{booking.BranchId}")
                     .SendAsync(eventName, notification),
 
-                // Role-wide: OWNER sees everything
+                // Group theo quyền: role_OWNER
                 _hubContext.Clients
                     .Group($"role_{Models.Enums.UserRole.OWNER}")
                     .SendAsync(eventName, notification),
@@ -76,14 +76,17 @@ public class BroadcastService : IBroadcastService
         {
             var tasks = new List<Task>
             {
+                // Group theo cá nhân: user_{CustomerId}
                 _hubContext.Clients
                     .Group($"user_{booking.CustomerId}")
                     .SendAsync(eventName, notification),
 
+                // Group theo chi nhánh: branch_{BranchId}
                 _hubContext.Clients
                     .Group($"branch_{booking.BranchId}")
                     .SendAsync(eventName, notification),
 
+                // Group theo quyền: role_OWNER
                 _hubContext.Clients
                     .Group($"role_{Models.Enums.UserRole.OWNER}")
                     .SendAsync(eventName, notification),
@@ -109,8 +112,8 @@ public class BroadcastService : IBroadcastService
     // ── Private Helpers ──────────────────────────────────────────────────────
 
     /// <summary>
-    /// Builds a SendAsync task for each unique (branchId, courtTypeId, date) combination
-    /// found in the booking's courts. Requires BookingCourts → Court to be loaded.
+    /// Tạo danh sách các task gửi sự kiện cho mỗi tổ hợp duy nhất (branchId, courtTypeId, date)
+    /// tìm thấy trong danh sách sân của booking. Yêu cầu BookingCourts và Court phải được nạp trước.
     /// </summary>
     private IEnumerable<Task> BuildTimeGridTasks(
         string eventName,
@@ -119,7 +122,7 @@ public class BroadcastService : IBroadcastService
     {
         if (booking.BookingCourts == null) yield break;
 
-        // De-duplicate: one push per unique (branchId, courtTypeId, date)
+        // Loại bỏ trùng lặp: chỉ gửi 1 lần cho mỗi cặp (branchId, courtTypeId, date) duy nhất
         var keys = booking.BookingCourts
             .Where(bc => bc.Court != null)
             .Select(bc => (

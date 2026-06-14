@@ -378,13 +378,13 @@ namespace SmashCourt_BE.Jobs
                             Status = booking.Status.ToString(),
                             Message = booking.Status == BookingStatus.COMPLETED
                                 ? $"Booking #{booking.BookingCode} của {customerName} đã hoàn tất."
-                                : $"Booking #{booking.BookingCode} của {customerName} đã hết giờ và đang chờ thanh toán sau.",
+                                : $"Booking #{booking.BookingCode} của {customerName} đã hết giờ chơi. Vui lòng thanh toán tại quầy.",
                             Timestamp = DateTimeHelper.GetUtcNow()
                         };
 
                         var eventName = booking.Status == BookingStatus.COMPLETED
                             ? SignalREvents.BookingCompleted
-                            : SignalREvents.BookingCancelled; // PENDING_PAYMENT dùng BookingCancelled vì đơn chưa hoàn tất và cần FE cập nhật trạng thái
+                            : SignalREvents.BookingPendingPayment; // PENDING_PAYMENT sử dụng BookingPendingPayment để phân biệt với Cancelled
 
                         // includeTimeGrid=false: session end doesn't open a currently bookable slot
                         await _broadcast.BroadcastBookingEventAsync(
