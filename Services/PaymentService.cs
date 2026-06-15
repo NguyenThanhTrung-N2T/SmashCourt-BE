@@ -303,9 +303,9 @@ namespace SmashCourt_BE.Services
                     _logger.LogError(ex, "Failed to send confirmation email for booking {BookingId}", booking.Id);
                 }
 
-                // Broadcast SignalR notification - payment success
+                // Phát SignalR notification - thanh toán thành công
                 var customerName = booking.Customer?.FullName ?? booking.GuestName ?? "Khách";
-                // includeTimeGrid=false: payment success for previously held slot doesn't change availability
+                // includeTimeGrid=false: thanh toán thành công cho slot đã giữ trước đó không làm thay đổi trạng thái trống/bận
                 await _broadcast.BroadcastPaymentEventAsync(
                     SignalREvents.PaymentSuccess,
                     new PaymentNotificationDto
@@ -374,9 +374,9 @@ namespace SmashCourt_BE.Services
                     booking.Id, BookingStatus.CANCELLED, transactionRef,
                     query["vnp_ResponseCode"].ToString());
 
-                // Broadcast SignalR notification - payment failed
+                // Phát SignalR notification - thanh toán thất bại
                 var customerName = booking.Customer?.FullName ?? booking.GuestName ?? "Khách";
-                // includeTimeGrid=true: payment failure results in cancellation → slot released
+                // includeTimeGrid=true: thanh toán thất bại dẫn tới hủy đơn → giải phóng slot sân nên cần cập nhật timegrid
                 await _broadcast.BroadcastPaymentEventAsync(
                     SignalREvents.PaymentFailed,
                     new PaymentNotificationDto

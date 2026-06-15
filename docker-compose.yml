@@ -14,6 +14,8 @@ services:
       - VnPay__HashSecret=${VNPAY_HASH_SECRET}
       - VnPay__CallbackUrl=${VNPAY_CALLBACK_URL}
       - VnPay__IpnUrl=${VNPAY_IPN_URL}
+    networks:
+      - smashcourt-network
     restart: unless-stopped
 
   ngrok:
@@ -24,6 +26,13 @@ services:
     environment:
       - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
     command: http smashcourt-be:8080
+    networks:
+      - smashcourt-network
     depends_on:
       - smashcourt-be
     restart: unless-stopped
+
+networks:
+  smashcourt-network:
+    name: smashcourt-network
+    external: true

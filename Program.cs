@@ -246,7 +246,10 @@ builder.Services.AddCors(options =>
     options.AddPolicy("AllowFrontend", policy =>
     {
         policy
-            .WithOrigins("http://localhost:3000")
+            .WithOrigins(
+                "http://localhost:3000",
+                "https://smashcourt-ai.vercel.app"
+            )
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials();
@@ -525,6 +528,6 @@ using (var scope = app.Services.CreateScope())
 }
 
 // Thông báo URL của Hangfire dashboard
-Console.WriteLine("http://localhost:5179/hangfire - Dashboard Hangfire (admin only)");
+Console.WriteLine("http://localhost:8080/hangfire - Dashboard Hangfire (admin only)");
 
 app.Run();

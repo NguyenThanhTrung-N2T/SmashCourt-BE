@@ -96,13 +96,12 @@ public class NotificationHub : Hub
         await base.OnDisconnectedAsync(exception);
     }
 
-    // ── Public TimeGrid Channels (customers viewing a specific date/court-type) ──
+    // ── Kênh công khai TimeGrid (khách hàng xem lịch đặt sân theo loại sân/ngày) ──
 
     /// <summary>
-    /// Subscribes the current connection to the timegrid channel for a specific
-    /// branch + court type + date combination.
-    /// Group key: timegrid_{branchId}_{courtTypeId}_{date:yyyy-MM-dd}
-    /// Call this when the customer navigates to the timegrid page.
+    /// Đăng ký kết nối hiện tại vào nhóm (Group) timegrid cho một cặp Chi nhánh + Loại sân + Ngày cụ thể.
+    /// Khóa Group: timegrid_{branchId}_{courtTypeId}_{date:yyyy-MM-dd}
+    /// Gọi phương thức này khi khách hàng điều hướng đến trang xem lịch đặt sân.
     /// </summary>
     public async Task JoinTimeGrid(Guid branchId, Guid courtTypeId, DateOnly date)
     {
@@ -115,8 +114,8 @@ public class NotificationHub : Hub
     }
 
     /// <summary>
-    /// Removes the current connection from the timegrid channel.
-    /// Call this when the customer leaves the timegrid page or changes date/court-type.
+    /// Hủy đăng ký kết nối hiện tại khỏi nhóm timegrid.
+    /// Gọi phương thức này khi khách hàng rời trang xem lịch hoặc thay đổi ngày/loại sân khác.
     /// </summary>
     public async Task LeaveTimeGrid(Guid branchId, Guid courtTypeId, DateOnly date)
     {
