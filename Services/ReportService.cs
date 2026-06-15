@@ -147,18 +147,6 @@ public class ReportService : IReportService
             (fromDate, toDate) = ValidateDateRange(filter);
         }
 
-        // Cache key
-        var cacheKey = GetDashboardCacheKey("OWNER", filter.BranchId, filter.FromDate, filter.ToDate, filter.GroupBy);
-
-        // Try get from cache
-        if (_cache.TryGetValue(cacheKey, out OwnerDashboardDto? cachedData) && cachedData != null)
-        {
-            _logger.LogInformation("Dashboard cache HIT for {CacheKey}", cacheKey);
-            return cachedData;
-        }
-
-        _logger.LogInformation("Dashboard cache MISS for {CacheKey}", cacheKey);
-
         // Query current period
         var summary = await _reportRepo.GetDashboardSummaryAsync(fromDate, toDate, filter.BranchId, isAllTime);
 
@@ -195,9 +183,6 @@ public class ReportService : IReportService
             RevenueTrend = revenueTrend,
             BookingTrend = bookingTrend
         };
-
-        // Cache for 5 minutes
-        _cache.Set(cacheKey, dashboard, TimeSpan.FromMinutes(5));
 
         return dashboard;
     }

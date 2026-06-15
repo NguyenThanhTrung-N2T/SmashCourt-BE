@@ -241,7 +241,7 @@ namespace SmashCourt_BE.Services
                         "Bạn không có quyền xem đơn này", ErrorCodes.Forbidden);
             }
 
-            return MapToDto(booking);
+            return MapToDetailDto(booking);
         }
         // ────────────────────────────────────────────────────────────────────────────
         // 1. CreateOnlineAsync
@@ -2632,7 +2632,7 @@ namespace SmashCourt_BE.Services
                         {
                             BookingCourtId = bookingCourt.Id,
                             TimeSlotId = timeSlot.Id,
-                            UnitPrice = item.UnitPrice,
+                            UnitPrice = item.SubTotal,
                             CreatedAt = DateTime.UtcNow
                         };
                     })
