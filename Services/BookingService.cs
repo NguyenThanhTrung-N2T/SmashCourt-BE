@@ -112,12 +112,21 @@ namespace SmashCourt_BE.Services
                     404, "Không tìm thấy booking", ErrorCodes.NotFound);
             }
 
+            // CUSTOMER chỉ được xem booking của chính mình
+            if (userRole == UserRole.CUSTOMER.ToString() && booking.CustomerId != userId)
+            {
+                throw new AppException(403, 
+                    "Bạn không có quyền xem đơn đặt sân này", 
+                    ErrorCodes.Forbidden);
+            }
+
+            // STAFF/MANAGER phải thuộc chi nhánh mới được xem
             await ValidateBranchAccessAsync(
                 booking.BranchId,
                 userId,
                 userRole);
 
-            return MapToDto(booking);
+            return MapToDetailDto(booking);
         }
         // Lấy danh sách booking theo quyền + chi nhánh + filter 
         public async Task<PagedResult<BookingDto>> GetAllAsync(
@@ -2090,8 +2099,13 @@ namespace SmashCourt_BE.Services
         private async Task ValidateBranchAccessAsync(
             Guid branchId, Guid userId, string userRole)
         {
-            if (userRole == UserRole.OWNER.ToString()) return;
+            // OWNER và CUSTOMER không cần check user_branches
+            // - OWNER: có quyền toàn hệ thống
+            // - CUSTOMER: chỉ xem booking của chính mình (đã check ở controller/repo)
+            if (userRole == UserRole.OWNER.ToString() || userRole == UserRole.CUSTOMER.ToString())
+                return;
 
+            // STAFF và BRANCH_MANAGER phải thuộc chi nhánh mới được thao tác
             var isInBranch = await _userBranchRepo.IsUserInBranchAsync(userId, branchId);
             if (!isInBranch)
                 throw new AppException(403,
@@ -2480,8 +2494,8 @@ namespace SmashCourt_BE.Services
             BranchId = b.BranchId,
             BranchName = b.Branch?.Name ?? "",
             CustomerId = b.CustomerId,
-            CustomerName = b.Customer?.FullName,
-            CustomerPhone = b.Customer?.Phone,
+            CustomerName = !string.IsNullOrEmpty(b.Customer?.FullName) ? b.Customer.FullName : b.GuestName,
+            CustomerPhone = !string.IsNullOrEmpty(b.Customer?.Phone) ? b.Customer.Phone : b.GuestPhone,
             GuestName = b.GuestName,
             GuestPhone = b.GuestPhone,
             GuestEmail = b.GuestEmail,
@@ -2527,8 +2541,8 @@ namespace SmashCourt_BE.Services
             BranchId = b.BranchId,
             BranchName = b.Branch?.Name ?? "",
             CustomerId = b.CustomerId,
-            CustomerName = b.Customer?.FullName,
-            CustomerPhone = b.Customer?.Phone,
+            CustomerName = !string.IsNullOrEmpty(b.Customer?.FullName) ? b.Customer.FullName : b.GuestName,
+            CustomerPhone = !string.IsNullOrEmpty(b.Customer?.Phone) ? b.Customer.Phone : b.GuestPhone,
             GuestName = b.GuestName,
             GuestPhone = b.GuestPhone,
             GuestEmail = b.GuestEmail,
