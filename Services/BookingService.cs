@@ -2941,7 +2941,7 @@ namespace SmashCourt_BE.Services
                     interested.Count, bc.CourtId, bc.Date, bc.StartTime, bc.EndTime);
 
                 var courtName = bc.Court?.Name ?? "Sân";
-                var bookingUrl = $"{frontendUrl}/booking?courtId={bc.CourtId}&date={bc.Date:yyyy-MM-dd}&start={bc.StartTime:HH:mm}&end={bc.EndTime:HH:mm}";
+                var bookingUrl = frontendUrl;
 
                 foreach (var interest in interested)
                 {
