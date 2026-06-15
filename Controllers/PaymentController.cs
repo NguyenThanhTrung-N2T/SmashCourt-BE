@@ -139,22 +139,6 @@ namespace SmashCourt_BE.Controllers
             // 🔥 STEP 1: Check đã xử lý bởi IPN chưa (idempotency check)
             var txnRef = queryCollection["vnp_TxnRef"].ToString();
             
-            // ✅ FALLBACK MODE: Sandbox/Development
-            // Gọi IPN logic trực tiếp từ Confirm endpoint để đảm bảo DB luôn được update
-            // (HandleVnPayIpnAsync đã có idempotency check bên trong)
-            _logger.LogInformation(
-                "📱 CONFIRM | Triggering IPN fallback logic | TxnRef={TxnRef}",
-                txnRef);
-            
-            try 
-            {
-                await _service.HandleVnPayIpnAsync(queryCollection, Request);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "📱 CONFIRM | Error executing IPN fallback for TxnRef={TxnRef}", txnRef);
-            }
-
             _logger.LogInformation(
                 "📱 CONFIRM | Reading payment result | TxnRef={TxnRef}",
                 txnRef);
