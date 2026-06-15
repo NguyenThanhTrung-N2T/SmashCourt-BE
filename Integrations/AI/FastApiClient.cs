@@ -39,14 +39,26 @@ public class FastApiClient : IFastApiClient
         {
             var json = JsonSerializer.Serialize(request, _jsonOptions);
             using var content = new StringContent(json, Encoding.UTF8, "application/json");
-            return await _httpClient.PostAsync(path, content, token);
+            using var requestMessage = new HttpRequestMessage(HttpMethod.Post, path)
+            {
+                Content = content
+            };
+            // Add ngrok bypass header
+            requestMessage.Headers.Add("ngrok-skip-browser-warning", "true");
+            return await _httpClient.SendAsync(requestMessage, token);
         }, path, cancellationToken);
     }
 
     public async Task<TResponse?> GetAsync<TResponse>(string path, CancellationToken cancellationToken = default)
     {
         return await SendWithRetryAsync<TResponse>(
-            token => _httpClient.GetAsync(path, token),
+            async token =>
+            {
+                using var requestMessage = new HttpRequestMessage(HttpMethod.Get, path);
+                // Add ngrok bypass header
+                requestMessage.Headers.Add("ngrok-skip-browser-warning", "true");
+                return await _httpClient.SendAsync(requestMessage, token);
+            },
             path,
             cancellationToken);
     }

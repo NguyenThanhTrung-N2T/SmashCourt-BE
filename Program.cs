@@ -187,6 +187,8 @@ builder.Services.AddHttpClient<IFastApiClient, FastApiClient>((serviceProvider, 
     var baseUrl = aiServiceSection["BaseUrl"] ?? "http://localhost:8000";
 
     client.BaseAddress = new Uri(baseUrl);
+    // Bỏ qua trang cảnh báo của ngrok khi gọi API
+    client.DefaultRequestHeaders.Add("ngrok-skip-browser-warning", "true");
     // Set timeout vô cực để tránh HttpClient tự động cancel request giữa chừng khi FastAPI mất nhiều thời gian phản hồi. Polly sẽ bắt lỗi timeout và trả về TimeoutRejectedException, cho phép chúng ta retry hoặc fallback một cách nhất quán.
     client.Timeout = Timeout.InfiniteTimeSpan;
 });
