@@ -49,7 +49,7 @@ public static class HangfireExtensions
             {
                 Authorization = new[]
                 {
-                    new Hangfire.Dashboard.LocalRequestsOnlyAuthorizationFilter()
+                    new DevHangfireAuthorizationFilter()
                 }
             });
         }
@@ -121,5 +121,14 @@ public static class HangfireExtensions
             new RecurringJobOptions { TimeZone = vnTimezone });
 
         return app;
+    }
+}
+
+public class DevHangfireAuthorizationFilter : Hangfire.Dashboard.IDashboardAuthorizationFilter
+{
+    public bool Authorize(Hangfire.Dashboard.DashboardContext context)
+    {
+        // Cho phép toàn bộ requests trong môi trường Development (truy cập qua Docker localhost/ngrok)
+        return true;
     }
 }
