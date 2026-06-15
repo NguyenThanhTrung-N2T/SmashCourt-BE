@@ -230,7 +230,7 @@ public class ReportService : IReportService
         {
             BranchId = branchInfo.BranchId,
             BranchName = branchInfo.BranchName,
-            GeneratedAt = now,
+            GeneratedAt = now.ToString("yyyy-MM-ddTHH:mm:ss"),
             Kpis = kpis,
             LiveCourts = liveCourts,
             TotalCourts = branchInfo.TotalCourts,

@@ -21,7 +21,24 @@ namespace SmashCourt_BE.Controllers
         {
             _service = service;
         }
+        [HttpGet("{bookingId:guid}")]
+        [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
+        public async Task<IActionResult> GetById(Guid bookingId)
+        {
+            var userId = Guid.Parse(
+                User.FindFirstValue(ClaimTypes.NameIdentifier)!);
 
+            var role = User.FindFirstValue(ClaimTypes.Role)!;
+
+            var result = await _service.GetByIdAsync(
+                bookingId,
+                userId,
+                role);
+
+            return Ok(ApiResponse<BookingDto>.Ok(
+                result,
+                "Lấy booking thành công"));
+        }
         /// <summary>
         /// Lấy danh sách booking
         /// </summary>
@@ -167,13 +184,13 @@ namespace SmashCourt_BE.Controllers
         /// <summary>
         /// Lấy thông tin booking theo id
         /// </summary>
-        [HttpGet("{id:guid}")]
+        [HttpGet("details/{id:guid}")]
         [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
-        public async Task<IActionResult> GetById(Guid id)
+        public async Task<IActionResult> GetDetailsById(Guid id)
         {
             var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
             var role = User.FindFirstValue(ClaimTypes.Role)!;
-            var result = await _service.GetByIdAsync(id, userId, role);
+            var result = await _service.GetDetailsByIdAsync(id, userId, role);
             return Ok(ApiResponse<BookingDto>.Ok(result, "Lấy thông tin đặt sân thành công"));
         }
 

@@ -7,6 +7,7 @@ namespace SmashCourt_BE.Repositories.IRepository
 {
     public interface IBookingRepository
     {
+        
         // Lấy danh sách booking để hiển thị cho staff (có filter, phân trang)
         Task<PagedResult<Booking>> GetAllAsync(BookingListQuery query, string userRole, Guid userId);
 

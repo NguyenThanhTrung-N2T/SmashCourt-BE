@@ -99,7 +99,26 @@ namespace SmashCourt_BE.Services
             _configuration = configuration;
             _broadcast = broadcast;
         }
+        public async Task<BookingDto> GetByIdAsync(
+            Guid bookingId,
+            Guid userId,
+            string userRole)
+        {
+            var booking = await _bookingRepo.GetByIdWithDetailsAsync(bookingId);
 
+            if (booking == null)
+            {
+                throw new AppException(
+                    404, "Không tìm thấy booking", ErrorCodes.NotFound);
+            }
+
+            await ValidateBranchAccessAsync(
+                booking.BranchId,
+                userId,
+                userRole);
+
+            return MapToDto(booking);
+        }
         // Lấy danh sách booking theo quyền + chi nhánh + filter 
         public async Task<PagedResult<BookingDto>> GetAllAsync(
             BookingListQuery query, Guid currentUserId, string currentUserRole)
@@ -191,7 +210,7 @@ namespace SmashCourt_BE.Services
         }
 
         // Lấy thông tin booking theo id, có phân quyền
-        public async Task<BookingDto> GetByIdAsync(
+        public async Task<BookingDto> GetDetailsByIdAsync(
             Guid id, Guid currentUserId, string currentUserRole)
         {
             var booking = await _bookingRepo.GetByIdWithDetailsAsync(id);

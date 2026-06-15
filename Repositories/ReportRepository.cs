@@ -53,7 +53,8 @@ public class ReportRepository : IReportRepository
         // Chỉ tính doanh thu từ booking COMPLETED
         var revenueQuery = _context.Invoices
             .AsNoTracking()
-            .Where(i => i.Booking.Status == BookingStatus.COMPLETED &&
+            .Where(i => i.PaymentStatus == InvoicePaymentStatus.PAID &&
+                        !GetCancelledOrRefundedStatuses().Contains(i.Booking.Status) &&
                         (!branchId.HasValue || i.Booking.BranchId == branchId.Value));
 
         if (!isAllTime)
@@ -157,7 +158,8 @@ public class ReportRepository : IReportRepository
     {
         return await _context.Invoices
             .AsNoTracking()
-            .Where(i => i.Booking.Status == BookingStatus.COMPLETED &&
+            .Where(i => i.PaymentStatus == InvoicePaymentStatus.PAID &&
+                        !GetCancelledOrRefundedStatuses().Contains(i.Booking.Status) &&
                         i.Booking.BookingDate >= fromDate &&
                         i.Booking.BookingDate <= toDate)
             .GroupBy(i => new { i.Booking.BranchId, i.Booking.Branch.Name })
@@ -263,7 +265,7 @@ public class ReportRepository : IReportRepository
             .FirstOrDefaultAsync();
 
         if (branch == null)
-            throw new AppException(404, "KhÃ´ng tÃ¬m tháº¥y chi nhÃ¡nh", ErrorCodes.NotFound);
+            throw new AppException(404, "Không tìm thấy chi nhánh", ErrorCodes.NotFound);
 
         return branch;
     }
@@ -287,7 +289,6 @@ public class ReportRepository : IReportRepository
             .Where(bc => bc.Booking.BranchId == branchId &&
                          bc.Date == today &&
                          bc.Booking.Status == BookingStatus.IN_PROGRESS &&
-                         bc.StartTime <= nowTime &&
                          (bc.ActualEndPlayTime ?? bc.EndTime) > nowTime)
             .Select(bc => bc.CourtId)
             .Distinct()
@@ -369,12 +370,12 @@ public class ReportRepository : IReportRepository
             .Select(court => BuildLiveCourtCard(court, bookingCourts.Where(bc => bc.CourtId == court.Id).ToList(), now, nowTime, upcomingLimit))
             .Where(card => card.AttentionStatus != "AVAILABLE")
             .OrderBy(GetLiveCourtPriority)
-            .ThenBy(card => card.StartTime ?? DateTime.MaxValue)
+            .ThenBy(card => card.StartTime ?? "9999-12-31T23:59:59")
             .ThenBy(card => card.CourtName)
             .Take(fixedCards)
             .ToList();
 
-        if (attentionCards.Count >= fixedCards)
+        if (attentionCards.Count() >= fixedCards)
             return attentionCards;
 
         var selectedCourtIds = attentionCards.Select(card => card.CourtId).ToHashSet();
@@ -382,7 +383,6 @@ public class ReportRepository : IReportRepository
             .Where(court => !selectedCourtIds.Contains(court.Id) &&
                             court.Status == CourtStatus.AVAILABLE &&
                             !bookingCourts.Any(bc => bc.CourtId == court.Id &&
-                                                     bc.StartTime <= nowTime &&
                                                      (bc.ActualEndPlayTime ?? bc.EndTime) > nowTime &&
                                                      bc.Booking.Status == BookingStatus.IN_PROGRESS))
             .OrderBy(court => court.Name)
@@ -393,7 +393,7 @@ public class ReportRepository : IReportRepository
                 CourtStatus = court.Status.ToString(),
                 AttentionStatus = "AVAILABLE"
             })
-            .Take(fixedCards - attentionCards.Count)
+            .Take(fixedCards - attentionCards.Count())
             .ToList();
 
         attentionCards.AddRange(fillerCards);
@@ -1864,7 +1864,6 @@ public class ReportRepository : IReportRepository
 
         var playing = courtBookingCourts
             .Where(bc => bc.Booking.Status == BookingStatus.IN_PROGRESS &&
-                         bc.StartTime <= nowTime &&
                          (bc.ActualEndPlayTime ?? bc.EndTime) > nowTime)
             .OrderBy(bc => bc.StartTime)
             .FirstOrDefault();
@@ -1902,14 +1901,8 @@ public class ReportRepository : IReportRepository
             BookingCode = booking.BookingCode,
             CustomerName = GetCustomerName(booking),
             CustomerPhone = GetCustomerPhone(booking),
-            StartTime = startTime,
-            EndTime = endTime,
-            MinutesUntilStart = bookingCourt.StartTime > nowTime
-                ? (int)Math.Round((startTime - now).TotalMinutes)
-                : null,
-            MinutesSinceStart = bookingCourt.StartTime <= nowTime
-                ? Math.Max((int)Math.Round((now - startTime).TotalMinutes), 0)
-                : null,
+            StartTime = startTime.ToString("yyyy-MM-ddTHH:mm:ss"),
+            EndTime = endTime.ToString("yyyy-MM-ddTHH:mm:ss"),
             AmountDue = booking.Invoice == null ? null : CalculateAmountDue(booking.Invoice),
             PaymentStatus = booking.Invoice?.PaymentStatus.ToString()
         };
@@ -1917,16 +1910,19 @@ public class ReportRepository : IReportRepository
 
     private static UpcomingBookingDashboardItemDto ToUpcomingBookingDashboardItem(Booking booking)
     {
-        var courts = ToDashboardCourtSlots(booking);
+        var courtDtos = ToDashboardCourtSlots(booking);
+        var startTime = booking.BookingCourts.Min(bc => ToDateTime(bc.Date, bc.StartTime));
+        var endTime = booking.BookingCourts.Max(bc => ToDateTime(bc.Date, bc.ActualEndPlayTime ?? bc.EndTime));
+
         return new UpcomingBookingDashboardItemDto
         {
             BookingId = booking.Id,
             BookingCode = booking.BookingCode,
             CustomerName = GetCustomerName(booking),
             CustomerPhone = GetCustomerPhone(booking),
-            Courts = courts,
-            StartTime = courts.Min(c => c.StartTime),
-            EndTime = courts.Max(c => c.EndTime),
+            Courts = courtDtos,
+            StartTime = startTime.ToString("yyyy-MM-ddTHH:mm:ss"),
+            EndTime = endTime.ToString("yyyy-MM-ddTHH:mm:ss"),
             BookingStatus = booking.Status.ToString(),
             PaymentStatus = booking.Invoice?.PaymentStatus.ToString() ?? "",
             FinalTotal = booking.Invoice?.FinalTotal ?? 0
@@ -1935,7 +1931,10 @@ public class ReportRepository : IReportRepository
 
     private static ManagerDashboardActionItemDto ToManagerDashboardActionItem(Booking booking)
     {
-        var courts = ToDashboardCourtSlots(booking);
+        var courtDtos = ToDashboardCourtSlots(booking);
+        var minStart = booking.BookingCourts.Any() ? (DateTime?)booking.BookingCourts.Min(bc => ToDateTime(bc.Date, bc.StartTime)) : null;
+        var maxEnd = booking.BookingCourts.Any() ? (DateTime?)booking.BookingCourts.Max(bc => ToDateTime(bc.Date, bc.ActualEndPlayTime ?? bc.EndTime)) : null;
+
         return new ManagerDashboardActionItemDto
         {
             BookingId = booking.Id,
@@ -1943,11 +1942,11 @@ public class ReportRepository : IReportRepository
             ActionType = booking.Status.ToString(),
             CustomerName = GetCustomerName(booking),
             CustomerPhone = GetCustomerPhone(booking),
-            Courts = courts,
-            StartTime = courts.Count == 0 ? null : courts.Min(c => c.StartTime),
-            EndTime = courts.Count == 0 ? null : courts.Max(c => c.EndTime),
+            Courts = courtDtos,
+            StartTime = minStart?.ToString("yyyy-MM-ddTHH:mm:ss"),
+            EndTime = maxEnd?.ToString("yyyy-MM-ddTHH:mm:ss"),
             Amount = CalculateActionAmount(booking),
-            CreatedAt = booking.CreatedAt
+            CreatedAt = booking.CreatedAt.ToString("yyyy-MM-ddTHH:mm:ss")
         };
     }
 
@@ -1960,8 +1959,8 @@ public class ReportRepository : IReportRepository
             {
                 CourtId = bc.CourtId,
                 CourtName = bc.Court.Name,
-                StartTime = ToDateTime(bc.Date, bc.StartTime),
-                EndTime = ToDateTime(bc.Date, bc.ActualEndPlayTime ?? bc.EndTime)
+                StartTime = ToDateTime(bc.Date, bc.StartTime).ToString("yyyy-MM-ddTHH:mm:ss"),
+                EndTime = ToDateTime(bc.Date, bc.ActualEndPlayTime ?? bc.EndTime).ToString("yyyy-MM-ddTHH:mm:ss")
             })
             .ToList();
     }
@@ -2022,7 +2021,8 @@ public class ReportRepository : IReportRepository
     {
         var query = _context.Invoices
             .AsNoTracking()
-            .Where(i => i.Booking.Status == BookingStatus.COMPLETED &&
+            .Where(i => i.PaymentStatus == InvoicePaymentStatus.PAID &&
+                        !GetCancelledOrRefundedStatuses().Contains(i.Booking.Status) &&
                         (!branchId.HasValue || i.Booking.BranchId == branchId.Value));
 
         if (!isAllTime)

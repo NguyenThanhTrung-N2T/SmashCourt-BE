@@ -246,63 +246,93 @@ namespace SmashCourt_BE.Repositories
         /// - TodayRevenue: Chỉ tính invoice có PaymentStatus = PAID và booking không bị hủy
         /// - PendingRefunds: Tổng số refund có status PENDING (không chỉ hôm nay)
         /// </remarks>
-        public async Task<BookingDashboardSummaryDto> GetDashboardSummaryAsync(
-            BookingDashboardSummaryQuery query, string userRole, Guid userId)
+       public async Task<BookingDashboardSummaryDto> GetDashboardSummaryAsync(
+            BookingDashboardSummaryQuery query,
+            string userRole,
+            Guid userId)
         {
             // 1. Resolve branch scoping
-            var branchId = await ResolveScopedBranchIdAsync(query.BranchId, userRole, userId);
+            var branchId = await ResolveScopedBranchIdAsync(
+                query.BranchId,
+                userRole,
+                userId);
+
             var today = DateTimeHelper.GetTodayInVietnam();
 
-            // 2. Query bookings hôm nay, group theo status (aggregate ở DB level)
+            // Status definitions
+            var activeStatuses = new[]
+            {
+                BookingStatus.IN_PROGRESS
+            };
+
+            var cancelledStatuses = new[]
+            {
+                BookingStatus.CANCELLED,
+                BookingStatus.CANCELLED_PENDING_REFUND,
+                BookingStatus.CANCELLED_REFUNDED
+            };
+
+            // 2. Query bookings hôm nay, group theo status
             var bookings = _context.Bookings
                 .AsNoTracking()
                 .Where(b => b.BookingDate == today);
 
             if (branchId.HasValue)
+            {
                 bookings = bookings.Where(b => b.BranchId == branchId.Value);
+            }
 
             var statusCounts = await bookings
                 .GroupBy(b => b.Status)
-                .Select(g => new { Status = g.Key, Count = g.Count() })
+                .Select(g => new
+                {
+                    Status = g.Key,
+                    Count = g.Count()
+                })
                 .ToListAsync();
 
-            // 3. Tính active bookings (chỉ IN_PROGRESS)
-            var activeStatuses = new[]
-            {
-                BookingStatus.IN_PROGRESS,
-            };
-
-            // 4. Query revenue hôm nay (chỉ tính invoice đã thanh toán và booking không bị hủy)
+            // 3. Revenue hôm nay
+            // Chỉ tính invoice đã thanh toán và booking không bị hủy
             var todayRevenue = await _context.Invoices
                 .AsNoTracking()
-                .Where(i => i.Booking.BookingDate == today &&
-                            i.PaymentStatus == InvoicePaymentStatus.PAID &&
-                            i.Booking.Status != BookingStatus.CANCELLED &&
-                            i.Booking.Status != BookingStatus.CANCELLED_PENDING_REFUND &&
-                            i.Booking.Status != BookingStatus.CANCELLED_REFUNDED &&
-                            i.Booking.Status != BookingStatus.NO_SHOW &&
-                            (!branchId.HasValue || i.Booking.BranchId == branchId.Value))
+                .Where(i =>
+                    i.Booking.BookingDate == today &&
+                    i.PaymentStatus == InvoicePaymentStatus.PAID &&
+                    !cancelledStatuses.Contains(i.Booking.Status) &&
+                    (!branchId.HasValue || i.Booking.BranchId == branchId.Value))
                 .SumAsync(i => i.FinalTotal);
 
-            // 5. Query pending refunds (tất cả đơn chờ hoàn tiền, không chỉ hôm nay)
+            // 4. Pending refunds
             var pendingRefunds = await _context.Refunds
                 .AsNoTracking()
-                .Where(r => r.Status == RefundStatus.PENDING &&
-                            (!branchId.HasValue || r.Payment.Invoice.Booking.BranchId == branchId.Value))
+                .Where(r =>
+                    r.Status == RefundStatus.PENDING &&
+                    (!branchId.HasValue ||
+                    r.Payment.Invoice.Booking.BranchId == branchId.Value))
                 .CountAsync();
 
-            // 6. Aggregate kết quả
+            // 5. Aggregate
             return new BookingDashboardSummaryDto
             {
-                TodayBookings = statusCounts.Sum(s => s.Count),
-                ActiveBookings = statusCounts.Where(s => activeStatuses.Contains(s.Status)).Sum(s => s.Count),
-                CompletedBookings = statusCounts.FirstOrDefault(s => s.Status == BookingStatus.COMPLETED)?.Count ?? 0,
-                CancelledBookings = statusCounts
-                    .Where(s => s.Status == BookingStatus.CANCELLED ||
-                                s.Status == BookingStatus.CANCELLED_PENDING_REFUND ||
-                                s.Status == BookingStatus.CANCELLED_REFUNDED)
+                // Exclude cancelled bookings
+                TodayBookings = statusCounts
+                    .Where(s => !cancelledStatuses.Contains(s.Status))
                     .Sum(s => s.Count),
+
+                ActiveBookings = statusCounts
+                    .Where(s => activeStatuses.Contains(s.Status))
+                    .Sum(s => s.Count),
+
+                CompletedBookings = statusCounts
+                    .Where(s => s.Status == BookingStatus.COMPLETED)
+                    .Sum(s => s.Count),
+
+                CancelledBookings = statusCounts
+                    .Where(s => cancelledStatuses.Contains(s.Status))
+                    .Sum(s => s.Count),
+
                 TodayRevenue = todayRevenue,
+
                 PendingRefunds = pendingRefunds
             };
         }

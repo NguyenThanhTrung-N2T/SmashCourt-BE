@@ -48,7 +48,7 @@ public class OperationalManagerDashboardDto
     /// <summary>
     /// Time when this dashboard snapshot was generated.
     /// </summary>
-    public DateTime GeneratedAt { get; set; }
+    public string GeneratedAt { get; set; } = null!;
 
     /// <summary>
     /// KPI cards shown at the top of the manager dashboard.
@@ -158,10 +158,8 @@ public class LiveCourtAttentionDto
     public string? BookingCode { get; set; }
     public string? CustomerName { get; set; }
     public string? CustomerPhone { get; set; }
-    public DateTime? StartTime { get; set; }
-    public DateTime? EndTime { get; set; }
-    public int? MinutesUntilStart { get; set; }
-    public int? MinutesSinceStart { get; set; }
+    public string? StartTime { get; set; }
+    public string? EndTime { get; set; }
     public decimal? AmountDue { get; set; }
     public string? PaymentStatus { get; set; }
 }
@@ -176,8 +174,8 @@ public class UpcomingBookingDashboardItemDto
     public string CustomerName { get; set; } = null!;
     public string? CustomerPhone { get; set; }
     public List<DashboardCourtSlotDto> Courts { get; set; } = [];
-    public DateTime StartTime { get; set; }
-    public DateTime EndTime { get; set; }
+    public string StartTime { get; set; } = null!;
+    public string EndTime { get; set; } = null!;
     public string BookingStatus { get; set; } = null!;
     public string PaymentStatus { get; set; } = null!;
     public decimal FinalTotal { get; set; }
@@ -190,8 +188,8 @@ public class DashboardCourtSlotDto
 {
     public Guid CourtId { get; set; }
     public string CourtName { get; set; } = null!;
-    public DateTime StartTime { get; set; }
-    public DateTime EndTime { get; set; }
+    public string StartTime { get; set; } = null!;
+    public string EndTime { get; set; } = null!;
 }
 
 /// <summary>
@@ -210,10 +208,10 @@ public class ManagerDashboardActionItemDto
     public string CustomerName { get; set; } = null!;
     public string? CustomerPhone { get; set; }
     public List<DashboardCourtSlotDto> Courts { get; set; } = [];
-    public DateTime? StartTime { get; set; }
-    public DateTime? EndTime { get; set; }
+    public string? StartTime { get; set; }
+    public string? EndTime { get; set; }
     public decimal Amount { get; set; }
-    public DateTime CreatedAt { get; set; }
+    public string CreatedAt { get; set; } = null!;
 }
 
 /// <summary>
