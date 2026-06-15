@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Options;
 using SmashCourt_BE.Configurations;
 
 namespace SmashCourt_BE.Helpers
@@ -17,15 +17,20 @@ namespace SmashCourt_BE.Helpers
             response.Cookies.Append("RefreshToken", rawRefreshToken, new CookieOptions
             {
                 HttpOnly = true,
-                Secure = _settings.Secure,
-                SameSite = SameSiteMode.Strict,
+                Secure = true,
+                SameSite = SameSiteMode.None,
                 Expires = DateTime.UtcNow.AddDays(_settings.RefreshTokenExpirationDays)
             });
         }
 
         public void ClearRefreshToken(HttpResponse response)
         {
-            response.Cookies.Delete("RefreshToken");
+            response.Cookies.Delete("RefreshToken", new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = true,
+                SameSite = SameSiteMode.None
+            });
         }
     }
 }
