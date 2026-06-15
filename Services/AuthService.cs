@@ -988,6 +988,10 @@ public class AuthService : IAuthService
         if (user.Is2faEnabled)
             throw new AppException(400, "Xác thực 2 yếu tố đã được bật trước đó", ErrorCodes.BadRequest);
 
+        // 5.5. Không cho phép OAuth user bật 2FA (do đăng nhập qua Google đã có lớp bảo mật riêng và không đi qua flow nhập OTP khi login)
+        if (user.PasswordHash == null)
+            throw new AppException(400, "Tài khoản đăng nhập qua Google không thể sử dụng tính năng này", ErrorCodes.BadRequest);
+
         // 6. Kiểm tra cooldown 60s
         var latestOtp = await _otpRepo.GetLatestActiveOtpAsync(userId, OtpType.ENABLE_2FA);
         if (latestOtp != null)
