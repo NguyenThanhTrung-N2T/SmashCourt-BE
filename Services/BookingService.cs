@@ -115,8 +115,8 @@ namespace SmashCourt_BE.Services
             // CUSTOMER chỉ được xem booking của chính mình
             if (userRole == UserRole.CUSTOMER.ToString() && booking.CustomerId != userId)
             {
-                throw new AppException(403, 
-                    "Bạn không có quyền xem đơn đặt sân này", 
+                throw new AppException(403,
+                    "Bạn không có quyền xem đơn đặt sân này",
                     ErrorCodes.Forbidden);
             }
 
@@ -126,7 +126,7 @@ namespace SmashCourt_BE.Services
                 userId,
                 userRole);
 
-            return MapToDetailDto(booking);
+            return MapToDto(booking);
         }
         // Lấy danh sách booking theo quyền + chi nhánh + filter 
         public async Task<PagedResult<BookingDto>> GetAllAsync(
