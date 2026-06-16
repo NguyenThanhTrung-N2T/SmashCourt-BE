@@ -45,7 +45,7 @@ namespace SmashCourt_BE.Controllers
         {
             var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
             // Service sẽ check booking.CustomerId == userId, throw 403 nếu sai
-            var result = await _service.GetByIdAsync(id, userId, UserRole.CUSTOMER.ToString());
+            var result = await _service.GetDetailsByIdAsync(id, userId, UserRole.CUSTOMER.ToString());
             return Ok(ApiResponse<BookingDto>.Ok(result, "Thông tin chi tiết của đặt sân đã tải thành công"));
         }
 
