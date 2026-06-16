@@ -1,6 +1,8 @@
+using AspNetCoreRateLimit;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
@@ -11,21 +13,27 @@ using SmashCourt_BE.Data;
 using SmashCourt_BE.DTOs.Auth;
 using SmashCourt_BE.Extensions;
 using SmashCourt_BE.Helpers;
+using SmashCourt_BE.Infrastructure.CodeGeneration;
+using SmashCourt_BE.Integrations.AI;
+using SmashCourt_BE.Jobs;
+using SmashCourt_BE.Jobs.Interfaces;
 using SmashCourt_BE.Middlewares;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories;
-using SmashCourt_BE.Repositories.Interfaces;
 using SmashCourt_BE.Repositories.IRepository;
 using SmashCourt_BE.Services;
-using SmashCourt_BE.Services.Interfaces;
+using SmashCourt_BE.Services.AccessControl;
 using SmashCourt_BE.Services.IService;
-using SmashCourt_BE.Utils;
 using System.IdentityModel.Tokens.Jwt;
-using System.Reflection;
 using System.Text;
-
+using VNPAY.Extensions;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// TẮT EnableLegacyTimestampBehavior để làm việc với UTC thuần
+// Npgsql sẽ đọc timestamptz ra DateTime với Kind=Utc (không convert sang Local)
+// Điều này đảm bảo timestamp luôn nhất quán, không phụ thuộc vào timezone của container
+AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", false);
 
 // Database 
 var dataSourceBuilder = new NpgsqlDataSourceBuilder(
@@ -47,10 +55,12 @@ dataSourceBuilder.MapEnum<ServiceStatus>("service_status", translator);
 dataSourceBuilder.MapEnum<BranchServiceStatus>("branch_service_status", translator);
 dataSourceBuilder.MapEnum<LoyaltyTransactionType>("loyalty_transaction_type", translator);
 dataSourceBuilder.MapEnum<PromotionStatus>("promotion_status", translator);
+dataSourceBuilder.MapEnum<DiscountTypeEnum>("discount_type_enum", translator);
 dataSourceBuilder.MapEnum<BookingStatus>("booking_status", translator);
 dataSourceBuilder.MapEnum<BookingSource>("booking_source", translator);
 dataSourceBuilder.MapEnum<CancelSourceEnum>("cancel_source_enum", translator);
 dataSourceBuilder.MapEnum<InvoicePaymentStatus>("invoice_payment_status", translator);
+dataSourceBuilder.MapEnum<PaymentTiming>("payment_timing", translator);
 dataSourceBuilder.MapEnum<PaymentTxStatus>("payment_tx_status", translator);
 dataSourceBuilder.MapEnum<PaymentTxMethod>("payment_tx_method", translator);
 dataSourceBuilder.MapEnum<RefundStatus>("refund_status", translator);
@@ -70,6 +80,10 @@ builder.Services.AddControllers()
     {
         options.JsonSerializerOptions.Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping;
         options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+
+        // Tự động convert DateTime UTC → giờ VN "dd/MM/yyyy HH:mm:ss" trong mọi API response
+        options.JsonSerializerOptions.Converters.Add(new SmashCourt_BE.Helpers.VietnamDateTimeConverter());
+        options.JsonSerializerOptions.Converters.Add(new SmashCourt_BE.Helpers.NullableVietnamDateTimeConverter());
     });
 
 // Custom model validation response — KHÔNG tắt auto validation, chỉ override format trả về
@@ -123,9 +137,61 @@ builder.Services.AddScoped<IServiceRepository, ServiceRepository>();
 builder.Services.AddScoped<IBranchService, BranchService>();
 builder.Services.AddScoped<IBranchRepository, BranchRepository>();
 builder.Services.AddScoped<IUserBranchRepository, UserBranchRepository>();
-builder.Services.AddScoped<ICourtTypeRepository, CourtTypeRepository>();
+builder.Services.AddScoped<IBranchScopeResolver, BranchScopeResolver>();
 builder.Services.AddScoped<ICourtService, CourtService>();
 builder.Services.AddScoped<ICourtRepository, CourtRepository>();
+builder.Services.AddScoped<IPromotionService, PromotionService>();
+builder.Services.AddScoped<IPromotionRepository, PromotionRepository>();
+builder.Services.AddScoped<IPromotionJob, PromotionJob>();
+builder.Services.AddScoped<PromotionEngineService>();
+builder.Services.AddScoped<ITimeSlotService, TimeSlotService>();
+builder.Services.AddScoped<ITimeSlotRepository, TimeSlotRepository>();
+builder.Services.AddScoped<ISystemPriceService, SystemPriceService>();
+builder.Services.AddScoped<ISystemPriceRepository, SystemPriceRepository>();
+builder.Services.AddScoped<IBranchPriceService, BranchPriceService>();
+builder.Services.AddScoped<IBranchPriceRepository, BranchPriceRepository>();
+
+builder.Services.AddScoped<IBookingService, BookingService>();
+builder.Services.AddScoped<IBookingRepository, BookingRepository>();
+builder.Services.AddScoped<ISlotLockRepository, SlotLockRepository>();
+builder.Services.AddScoped<ISlotInterestRepository, SlotInterestRepository>();
+builder.Services.AddScoped<IInvoiceRepository, InvoiceRepository>();
+builder.Services.AddScoped<IPaymentRepository, PaymentRepository>();
+builder.Services.AddScoped<IRefundRepository, RefundRepository>();
+builder.Services.AddScoped<IBranchServiceRepository, BranchServiceRepository>();
+builder.Services.AddScoped<IPaymentService, PaymentService>();
+builder.Services.AddScoped<ITimeGridService, TimeGridService>();
+builder.Services.AddScoped<IBookingJob, BookingJob>();
+builder.Services.AddScoped<IBroadcastService, BroadcastService>();
+builder.Services.AddScoped<IVnPayService, VnPayService>();
+builder.Services.AddScoped<IBranchManagerService, BranchManagerService>();
+builder.Services.AddScoped<IBranchStaffService, BranchStaffService>();
+builder.Services.AddScoped<IBranchUserService, BranchUserService>();
+builder.Services.AddScoped<IUserManagementService, UserManagementService>();
+builder.Services.AddScoped<IProfileService, ProfileService>();
+builder.Services.AddScoped<ICustomerManagementRepository, CustomerManagementRepository>();
+builder.Services.AddScoped<ICustomerManagementService, CustomerManagementService>();
+builder.Services.AddScoped<ICodeGeneratorService, PostgresCodeGeneratorService>();
+// Report & Analytics
+builder.Services.AddScoped<IReportRepository, ReportRepository>();
+builder.Services.AddScoped<IReportService, ReportService>();
+
+// Đăng ký các service AI
+builder.Services.AddScoped<AIDataPreparationService>();
+builder.Services.AddScoped<IAIResponseFormatterService, AIResponseFormatterService>();
+builder.Services.AddScoped<IAIService, AIService>();
+builder.Services.AddHttpClient<IFastApiClient, FastApiClient>((serviceProvider, client) =>
+{
+    var configuration = serviceProvider.GetRequiredService<IConfiguration>();
+    var aiServiceSection = configuration.GetSection("AIService");
+    var baseUrl = aiServiceSection["BaseUrl"] ?? "http://localhost:8000";
+
+    client.BaseAddress = new Uri(baseUrl);
+    // Bỏ qua trang cảnh báo của ngrok khi gọi API
+    client.DefaultRequestHeaders.Add("ngrok-skip-browser-warning", "true");
+    // Set timeout vô cực để tránh HttpClient tự động cancel request giữa chừng khi FastAPI mất nhiều thời gian phản hồi. Polly sẽ bắt lỗi timeout và trả về TimeoutRejectedException, cho phép chúng ta retry hoặc fallback một cách nhất quán.
+    client.Timeout = Timeout.InfiniteTimeSpan;
+});
 
 builder.Services.AddScoped<EmailService>();
 builder.Services.AddScoped<OtpService>();
@@ -134,11 +200,47 @@ builder.Services.Configure<CookieSettings>(builder.Configuration.GetSection("Coo
 builder.Services.AddScoped<CookieHelper>();
 builder.Services.Configure<GoogleSettings>(
     builder.Configuration.GetSection("Google"));
+builder.Services.Configure<CloudinarySettings>(
+    builder.Configuration.GetSection("Cloudinary"));
+builder.Services.AddScoped<ICloudinaryService, CloudinaryService>();
 
 builder.Services.AddMemoryCache();
 builder.Services.AddHttpClient();
+builder.Services.AddHttpContextAccessor();
 
+// Cấu hình rate limit cho các endpoint AI
+builder.Services.Configure<IpRateLimitOptions>(builder.Configuration.GetSection("IpRateLimiting"));
+builder.Services.Configure<IpRateLimitPolicies>(builder.Configuration.GetSection("IpRateLimitPolicies"));
+builder.Services.AddInMemoryRateLimiting();
+builder.Services.AddSingleton<IRateLimitConfiguration, RateLimitConfiguration>();
 
+var vnPayConfig = builder.Configuration.GetSection("VnPay");
+builder.Services.AddVnpayClient(config =>
+{
+    config.TmnCode = vnPayConfig["TmnCode"]!;
+    config.HashSecret = vnPayConfig["HashSecret"]!;
+    config.CallbackUrl = vnPayConfig["CallbackUrl"]!;
+
+    if (!string.IsNullOrWhiteSpace(vnPayConfig["BaseUrl"]))
+        config.BaseUrl = vnPayConfig["BaseUrl"]!;
+    if (!string.IsNullOrWhiteSpace(vnPayConfig["Version"]))
+        config.Version = vnPayConfig["Version"]!;
+    if (!string.IsNullOrWhiteSpace(vnPayConfig["OrderType"]))
+        config.OrderType = vnPayConfig["OrderType"]!;
+});
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders =
+        ForwardedHeaders.XForwardedFor |
+        ForwardedHeaders.XForwardedProto |
+        ForwardedHeaders.XForwardedHost;
+
+    options.KnownNetworks.Clear();
+    options.KnownProxies.Clear();
+});
+
+// SignalR
+builder.Services.AddSignalR();
 
 // CORS
 builder.Services.AddCors(options =>
@@ -146,7 +248,10 @@ builder.Services.AddCors(options =>
     options.AddPolicy("AllowFrontend", policy =>
     {
         policy
-            .WithOrigins("http://localhost:3000")
+            .WithOrigins(
+                "http://localhost:3000",
+                "https://smashcourt-ai.vercel.app"
+            )
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials();
@@ -180,6 +285,30 @@ builder.Services.AddRateLimiter(options =>
         opt.QueueLimit = 0;
     });
 
+    // AI Public endpoints (FAQ, public chat) - cho phép nhiều request vì là public
+    options.AddFixedWindowLimiter("ai-public", opt =>
+    {
+        opt.PermitLimit = 100;
+        opt.Window = TimeSpan.FromMinutes(1);
+        opt.QueueLimit = 0;
+    });
+
+    // AI User endpoints (customer personalized suggestions) - vừa phải
+    options.AddFixedWindowLimiter("ai-user", opt =>
+    {
+        opt.PermitLimit = 20;
+        opt.Window = TimeSpan.FromMinutes(1);
+        opt.QueueLimit = 0;
+    });
+
+    // AI Management endpoints (analytics, pricing, promotions) - chặt hơn vì tốn tài nguyên
+    options.AddFixedWindowLimiter("ai-management", opt =>
+    {
+        opt.PermitLimit = 10;
+        opt.Window = TimeSpan.FromMinutes(1);
+        opt.QueueLimit = 0;
+    });
+
     options.RejectionStatusCode = 429;
 
     options.OnRejected = async (context, token) =>
@@ -189,10 +318,10 @@ builder.Services.AddRateLimiter(options =>
         var response = System.Text.Json.JsonSerializer.Serialize(
             ApiResponse.Fail(
                 "Bạn gửi quá nhiều request, vui lòng thử lại sau",
-                ErrorCodes.BadRequest
+                ErrorCodes.OtpLimitExceeded  // 429 — dùng code rate-limit, không phải BadRequest
             ),
-            new System.Text.Json.JsonSerializerOptions 
-            { 
+            new System.Text.Json.JsonSerializerOptions
+            {
                 Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
                 PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
             }
@@ -206,6 +335,7 @@ builder.Services.AddRateLimiter(options =>
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
+    options.CustomSchemaIds(type => type.FullName);
     options.SwaggerDoc("v1", new OpenApiInfo { Title = "API", Version = "v1" });
 
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
@@ -263,6 +393,20 @@ builder.Services.AddAuthentication(options =>
 
     options.Events = new JwtBearerEvents
     {
+        // Đọc token từ query string cho WebSocket/SignalR
+        OnMessageReceived = context =>
+        {
+            var accessToken = context.Request.Query["access_token"];
+            var path = context.Request.Path;
+            
+            if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
+            {
+                context.Token = accessToken;
+            }
+            
+            return Task.CompletedTask;
+        },
+        
         OnAuthenticationFailed = context =>
         {
             context.NoResult();
@@ -338,10 +482,15 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+app.UseForwardedHeaders();
 app.UseHttpsRedirection();
 
 // Sử dụng CORS policy đã định nghĩa
 app.UseCors("AllowFrontend");
+
+// IP Rate Limiting middleware for AI endpoints
+app.UseIpRateLimiting();
+
 // Thêm middleware rate limiting toàn cục — có thể override bằng attribute ở controller/action
 app.UseRateLimiter();
 // Middleware xử lý lỗi toàn cục — trả về JSON chuẩn
@@ -350,11 +499,16 @@ app.UseMiddleware<ExceptionMiddleware>();
 JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
 // Xác thực và phân quyền
 app.UseAuthentication();
+// Middleware kiểm tra user status (LOCKED/INACTIVE) - chặn ngay lập tức
+app.UseMiddleware<UserStatusMiddleware>();
 app.UseAuthorization();
 // Hangfire dashboard — chỉ cho phép admin xem
 app.UseHangfireServices(app.Configuration);
 
 app.MapControllers();
+
+// SignalR Hub endpoint
+app.MapHub<SmashCourt_BE.Hubs.NotificationHub>("/hubs/notifications");
 
 // Kiểm tra kết nối database
 using (var scope = app.Services.CreateScope())
@@ -376,6 +530,6 @@ using (var scope = app.Services.CreateScope())
 }
 
 // Thông báo URL của Hangfire dashboard
-Console.WriteLine("http://localhost:5179/hangfire - Dashboard Hangfire (admin only)");
+Console.WriteLine("http://localhost:8080/hangfire - Dashboard Hangfire (admin only)");
 
 app.Run();

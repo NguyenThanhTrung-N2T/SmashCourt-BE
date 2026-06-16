@@ -43,6 +43,7 @@ namespace SmashCourt_BE.Services
             {
                 Name = dto.Name.Trim(),
                 Description = dto.Description?.Trim(),
+                ServiceDisplayUrl = dto.ServiceDisplayUrl?.Trim(),
                 Unit = dto.Unit.Trim(),
                 DefaultPrice = dto.DefaultPrice,
                 Status = ServiceStatus.ACTIVE,
@@ -78,6 +79,7 @@ namespace SmashCourt_BE.Services
             // 3. Update
             service.Name = dto.Name.Trim();
             service.Description = dto.Description?.Trim();
+            service.ServiceDisplayUrl = dto.ServiceDisplayUrl?.Trim();
             service.Unit = dto.Unit.Trim();
             service.DefaultPrice = dto.DefaultPrice;
             service.UpdatedAt = DateTime.UtcNow;
@@ -112,6 +114,7 @@ namespace SmashCourt_BE.Services
             Id = s.Id,
             Name = s.Name,
             Description = s.Description,
+            ServiceDisplayUrl = s.ServiceDisplayUrl,
             Unit = s.Unit,
             DefaultPrice = s.DefaultPrice,
             Status = s.Status,

@@ -16,6 +16,9 @@ public static class AuthorizationPolicies
     /// <summary>OWNER hoặc BRANCH_MANAGER — quản lý cấp chi nhánh trở lên</summary>
     public const string OwnerOrManager = "OwnerOrManager";
 
+    /// <summary>Chỉ BRANCH_MANAGER — quản lý cấp chi nhánh</summary>
+    public const string ManagerOnly = "ManagerOnly";
+
     /// <summary>Mọi nhân viên: OWNER, BRANCH_MANAGER, STAFF — không bao gồm CUSTOMER</summary>
     public const string StaffAndAbove = "StaffAndAbove";
 
@@ -40,6 +43,10 @@ public static class AuthorizationPolicies
         // OWNER hoặc BRANCH_MANAGER
         options.AddPolicy(OwnerOrManager, policy =>
             policy.RequireRole("OWNER", "BRANCH_MANAGER"));
+
+        // Chỉ BRANCH_MANAGER
+        options.AddPolicy(ManagerOnly, policy =>
+            policy.RequireRole("BRANCH_MANAGER"));
 
         // Mọi nhân viên (không bao gồm CUSTOMER)
         options.AddPolicy(StaffAndAbove, policy =>

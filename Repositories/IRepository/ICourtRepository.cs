@@ -1,14 +1,19 @@
-﻿using SmashCourt_BE.Models.Entities;
+using SmashCourt_BE.Models.Entities;
+using SmashCourt_BE.Models.Enums;
+using SmashCourt_BE.Models.ViewModels;
 
 namespace SmashCourt_BE.Repositories.IRepository
 {
     public interface ICourtRepository
     {
         // lấy tất cả sân của chi nhánh
-        Task<List<Court>> GetAllByBranchAsync(Guid branchId, bool isStaffOrAbove);
+        Task<List<Court>> GetAllByBranchAsync(Guid branchId, bool isStaffOrAbove, Guid? courtTypeId = null);
 
-        // lấy sân theo id
-        Task<Court?> GetByIdAsync(Guid id, Guid branchId);
+        // lấy sân theo id, branchId là tùy chọn — khi truyền vào sẽ scope theo chi nhánh (dùng cho staff), khi null sẽ lấy theo id đơn thuần (dùng khi booking)
+        Task<Court?> GetByIdAsync(Guid id, Guid? branchId = null);
+
+        // lấy danh sách sân theo danh sách id (dùng để load hàng loạt, tránh N+1 query)
+        Task<List<Court>> GetByIdsAsync(IEnumerable<Guid> ids);
 
         // kiểm tra tên sân đã tồn tại trong chi nhánh chưa, nếu excludeId được cung cấp thì sẽ bỏ qua sân có id đó (dùng cho update)
         Task<bool> ExistsByNameAsync(string name, Guid branchId, Guid? excludeId = null);
@@ -21,5 +26,15 @@ namespace SmashCourt_BE.Repositories.IRepository
 
         // cập nhật thông tin sân
         Task UpdateAsync(Court court);
+
+        // cập nhật trạng thái nhiều sân cùng lúc (batch update để tránh N+1 query)
+        Task BatchUpdateStatusAsync(List<Guid> courtIds, CourtStatus status, DateTime updatedAt);
+
+        // lấy toàn bộ dữ liệu cho management dashboard (bulk fetch để tránh N+1 query)
+        Task<CourtManagementBulkData> GetManagementDashboardDataAsync(Guid branchId, DateOnly date, string? search, Guid? typeId);
+
+        // lấy toàn bộ dữ liệu cho management timeline (bulk fetch, có booking identity)
+        Task<CourtManagementBulkData> GetManagementTimelineDataAsync(Guid branchId, DateOnly date, Guid? typeId);
     }
 }
+

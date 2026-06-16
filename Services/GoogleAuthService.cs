@@ -2,7 +2,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using SmashCourt_BE.Common;
+using SmashCourt_BE.Configurations;
 using SmashCourt_BE.DTOs.Auth;
+using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
@@ -11,6 +13,18 @@ using System.Text.Json.Serialization;
 
 namespace SmashCourt_BE.Services
 {
+    /// <summary>
+    /// Service xử lý Google OAuth authentication
+    /// 
+    /// LƯU Ý VỀ MustChangePassword:
+    /// - User đăng nhập bằng Google OAuth KHÔNG BAO GIỜ có MustChangePassword = true
+    /// - Lý do: Google OAuth users không có password trong hệ thống (PasswordHash = null)
+    /// - Họ authenticate qua Google, không cần đổi password
+    /// - Nếu admin muốn force user đổi sang email/password login, phải:
+    ///   1. Revoke OAuth account
+    ///   2. Tạo password mới cho user (qua reset password)
+    ///   3. User login bằng email/password với MustChangePassword = true
+    /// </summary>
     public class GoogleAuthService : IGoogleAuthService
     {
         private readonly GoogleSettings _googleSettings;
@@ -24,6 +38,7 @@ namespace SmashCourt_BE.Services
         private readonly ILogger<GoogleAuthService> _logger;
         private readonly ICustomerLoyaltyRepository _customerLoyaltyRepo;
         private readonly ILoyaltyTierRepository _loyaltyTierRepo;
+        private readonly IHttpContextAccessor _httpContextAccessor;
 
         public GoogleAuthService(
             IOptions<GoogleSettings> googleSettings,
@@ -36,7 +51,8 @@ namespace SmashCourt_BE.Services
             IHttpClientFactory httpClientFactory,
             ILogger<GoogleAuthService> logger,
             ICustomerLoyaltyRepository customerLoyaltyRepo,
-            ILoyaltyTierRepository loyaltyTierRepo)
+            ILoyaltyTierRepository loyaltyTierRepo,
+            IHttpContextAccessor httpContextAccessor)
         {
             _googleSettings = googleSettings.Value;
             _cache = cache;
@@ -49,6 +65,7 @@ namespace SmashCourt_BE.Services
             _logger = logger;
             _customerLoyaltyRepo = customerLoyaltyRepo;
             _loyaltyTierRepo = loyaltyTierRepo;
+            _httpContextAccessor = httpContextAccessor;
 
             if (string.IsNullOrEmpty(_googleSettings.ClientId) ||
         string.IsNullOrEmpty(_googleSettings.ClientSecret) ||
@@ -120,6 +137,7 @@ namespace SmashCourt_BE.Services
                 {
                     Email = email,
                     FullName = googleUser.Name,
+                    FullNameNormalized = StringHelper.NormalizeVietnamese(googleUser.Name),
                     AvatarUrl = googleUser.Picture,
                     Role = UserRole.CUSTOMER,
                     Status = UserStatus.ACTIVE,
@@ -146,19 +164,31 @@ namespace SmashCourt_BE.Services
                     throw new AppException(400, "Google account này đã được liên kết với tài khoản khác");
                 }
 
-                // Tạo hạng thành viên mặc định cho user mới
-                var defaultTier = await _loyaltyTierRepo.GetDefaultTierAsync();
-                if (defaultTier != null)
+                // Tạo hạng thành viên mặc định CHỈ cho CUSTOMER
+                // (Google OAuth luôn tạo CUSTOMER, nhưng check để chắc chắn)
+                if (user.Role == UserRole.CUSTOMER)
                 {
-                    var customerLoyalty = new CustomerLoyalty
+                    var defaultTier = await _loyaltyTierRepo.GetDefaultTierAsync();
+                    if (defaultTier != null)
                     {
-                        UserId = user.Id,
-                        TierId = defaultTier.Id,
-                        TotalPoints = 0,
-                        CreatedAt = DateTime.UtcNow,
-                        UpdatedAt = DateTime.UtcNow
-                    };
-                    await _customerLoyaltyRepo.CreateAsync(customerLoyalty);
+                        var customerLoyalty = new CustomerLoyalty
+                        {
+                            UserId = user.Id,
+                            TierId = defaultTier.Id,
+                            TotalPoints = 0,
+                            CreatedAt = DateTime.UtcNow,
+                            UpdatedAt = DateTime.UtcNow
+                        };
+                        try
+                        {
+                            await _customerLoyaltyRepo.CreateAsync(customerLoyalty);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Failed to create customer loyalty for new Google user {UserId}", user.Id);
+                            // Không throw — lỗi loyalty không nên block quá trình đăng nhập
+                        }
+                    }
                 }
             }
             else if (user.PasswordHash != null)
@@ -205,16 +235,31 @@ namespace SmashCourt_BE.Services
                 // existingOAuth.UserId == user.Id → đã liên kết đúng → đăng nhập bình thường
             }
 
+            // 6. Kiểm tra status trước khi cấp token (CRITICAL FIX)
+            if (user.Status == UserStatus.LOCKED)
+                throw new AppException(403, "Tài khoản của bạn đã bị khóa, vui lòng liên hệ hỗ trợ", ErrorCodes.AccountLocked);
+
+            if (user.Status == UserStatus.INACTIVE)
+                throw new AppException(403, "Tài khoản của bạn đã bị vô hiệu hóa", ErrorCodes.AccountLocked);
+
             // 7. Revoke refresh token cũ + cấp token mới
             await _refreshTokenRepo.RevokeAllByUserIdAsync(user.Id);
 
             var rawRefreshToken = _tokenService.GenerateRefreshToken();
+
+            // Capture session metadata
+            var (deviceName, ipAddress, userAgent) = CaptureSessionMetadata();
+
             var refreshToken = new RefreshToken
             {
                 UserId = user.Id,
                 TokenHash = _otpService.HashRefreshToken(rawRefreshToken),
                 ExpiresAt = DateTime.UtcNow.AddDays(7),
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = DateTime.UtcNow,
+                DeviceName = deviceName,
+                IpAddress = ipAddress,
+                UserAgent = userAgent,
+                LastUsedAt = DateTime.UtcNow
             };
             await _refreshTokenRepo.CreateAsync(refreshToken);
 
@@ -283,6 +328,32 @@ namespace SmashCourt_BE.Services
             }
         }
 
+        // ===== HELPER METHOD: Capture Session Metadata =====
+
+        /// <summary>
+        /// Capture session metadata từ HTTP request (UserAgent, IP Address, Device Name)
+        /// </summary>
+        private (string? DeviceName, string? IpAddress, string? UserAgent) CaptureSessionMetadata()
+        {
+            var httpContext = _httpContextAccessor.HttpContext;
+            if (httpContext == null)
+                return (null, null, null);
+
+            // Lấy User-Agent từ header
+            var userAgent = httpContext.Request.Headers["User-Agent"].ToString();
+
+            // Truncate UserAgent nếu quá dài (max 500 chars)
+            var truncatedUserAgent = SmashCourt_BE.Helpers.UserAgentParser.TruncateUserAgent(userAgent);
+
+            // Parse UserAgent thành DeviceName dễ đọc
+            var deviceName = SmashCourt_BE.Helpers.UserAgentParser.ParseToDeviceName(userAgent);
+
+            // Lấy IP Address
+            var ipAddress = httpContext.Connection.RemoteIpAddress?.ToString();
+
+            return (deviceName, ipAddress, truncatedUserAgent);
+        }
+
         // Map User entity sang UserInfo DTO để trả về FE
         private static UserInfo MapUserInfo(User user) => new()
         {
@@ -296,5 +367,5 @@ namespace SmashCourt_BE.Services
         };
     }
 
-    
+
 }

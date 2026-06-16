@@ -4,6 +4,7 @@
     {
         LINK = 0,
         STAFF = 1,
-        SYSTEM = 2
+        SYSTEM = 2,
+        CUSTOMER = 3
     }
 }

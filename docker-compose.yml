@@ -10,16 +10,29 @@ services:
       - "8080:8080"
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
+      - VnPay__TmnCode=${VNPAY_TMN_CODE}
+      - VnPay__HashSecret=${VNPAY_HASH_SECRET}
+      - VnPay__CallbackUrl=${VNPAY_CALLBACK_URL}
+      - VnPay__IpnUrl=${VNPAY_IPN_URL}
+    networks:
+      - smashcourt-network
     restart: unless-stopped
 
-  # ngrok:
-  #   image: ngrok/ngrok:latest
-  #   container_name: smashcourt-ngrok
-  #   ports:
-  #     - "4040:4040"
-  #   environment:
-  #     - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
-  #   command: http smashcourt-be:8080
-  #   depends_on:
-  #     - smashcourt-be
-  #   restart: unless-stopped
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: smashcourt-ngrok
+    ports:
+      - "4040:4040"
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    command: http smashcourt-be:8080
+    networks:
+      - smashcourt-network
+    depends_on:
+      - smashcourt-be
+    restart: unless-stopped
+
+networks:
+  smashcourt-network:
+    name: smashcourt-network
+    external: true

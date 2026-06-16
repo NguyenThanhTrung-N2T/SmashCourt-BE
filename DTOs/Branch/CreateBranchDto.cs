@@ -17,10 +17,10 @@ namespace SmashCourt_BE.DTOs.Branch
         public decimal? Longitude { get; set; }
 
         [Required(ErrorMessage = "Giờ mở cửa không được để trống")]
-        public TimeOnly OpenTime { get; set; }
+        public TimeSpan OpenTime { get; set; }
 
         [Required(ErrorMessage = "Giờ đóng cửa không được để trống")]
-        public TimeOnly CloseTime { get; set; }
+        public TimeSpan CloseTime { get; set; }
 
         [Required(ErrorMessage = "Vui lòng chọn quản lý chi nhánh")]
         public Guid ManagerId { get; set; }

@@ -1,0 +1,77 @@
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using SmashCourt_BE.Common;
+using SmashCourt_BE.Configurations;
+using SmashCourt_BE.DTOs.Booking;
+using SmashCourt_BE.Models.Enums;
+using SmashCourt_BE.Services.IService;
+using System.Security.Claims;
+
+namespace SmashCourt_BE.Controllers
+{
+    [ApiController]
+    [Route("api/me/bookings")]
+    [Authorize(Policy = AuthorizationPolicies.CustomerOnly)]
+    public class CustomerBookingController : ControllerBase
+    {
+        private readonly IBookingService _service;
+        private readonly IPaymentService _paymentService;
+
+        public CustomerBookingController(IBookingService service, IPaymentService paymentService)
+        {
+            _service = service;
+            _paymentService = paymentService;
+        }
+
+
+        /// <summary>
+        /// Lấy danh sách booking của khách hàng hiện tại
+        /// </summary>
+        [HttpGet]
+        public async Task<IActionResult> GetMyBookings([FromQuery] BookingListQuery query)
+        {
+            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var result = await _service.GetMyBookingsAsync(userId, query);
+            return Ok(ApiResponse<PagedResult<BookingDto>>.Ok(result, "Lấy thành công lịch sử thành công của khách hàng"));
+        }
+
+
+        /// <summary>
+        /// Lấy thông tin booking của khách hàng hiện tại theo ID
+        /// </summary>
+        [HttpGet("{id:guid}")]
+        public async Task<IActionResult> GetMyBookingById(Guid id)
+        {
+            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            // Service sẽ check booking.CustomerId == userId, throw 403 nếu sai
+            var result = await _service.GetDetailsByIdAsync(id, userId, UserRole.CUSTOMER.ToString());
+            return Ok(ApiResponse<BookingDto>.Ok(result, "Thông tin chi tiết của đặt sân đã tải thành công"));
+        }
+
+
+        /// <summary>
+        /// Hủy booking của khách hàng hiện tại (authenticated cancel from booking history)
+        /// </summary>
+        [HttpPost("{id:guid}/cancel")]
+        public async Task<IActionResult> CancelMyBooking(Guid id)
+        {
+            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            await _service.CancelByCustomerAsync(id, userId);
+            return Ok(ApiResponse.Ok(message: "Hủy đơn thành công"));
+        }
+
+
+        /// <summary>
+        /// Tạo lại URL thanh toán VNPay cho booking PENDING (retry sau khi bị gián đoạn mạng)
+        /// Điều kiện: booking thuộc customer, status = PENDING, now < ExpiresAt
+        /// </summary>
+        [HttpPost("{id:guid}/retry-payment")]
+        public async Task<IActionResult> RetryPayment(Guid id)
+        {
+            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var result = await _paymentService.RetryPaymentAsync(id, userId);
+            return Ok(ApiResponse<OnlineBookingResponse>.Ok(result, "Tạo lại URL thanh toán thành công"));
+        }
+    }
+}

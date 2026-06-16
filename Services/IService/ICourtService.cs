@@ -1,22 +1,77 @@
-﻿using SmashCourt_BE.DTOs.Court;
+using SmashCourt_BE.DTOs.Court;
 
 namespace SmashCourt_BE.Services.IService
 {
     public interface ICourtService
     {
-        // STAFF / ADMIN → thấy tất cả sân đang hoạt động + sân bị khóa + sân bị đặt + sân đang sử dụng
-        Task<List<CourtDto>> GetAllByBranchAsync(Guid branchId, bool isStaffOrAbove);
+        /// <summary>
+        /// Lấy tất cả sân (dùng cho cả Public/Customer và Manager/Staff)
+        /// Phân biệt logic qua role và branch auto-resolve.
+        /// </summary>
+        Task<List<CourtDto>> GetAllAsync(
+            Guid? requestedBranchId, Guid? typeId, 
+            Guid? currentUserId, string? currentUserRole);
 
-        // lấy sân theo id, nếu là staff/admin thì thấy tất cả sân, nếu là khách hàng thì chỉ thấy sân đang hoạt động
-        Task<CourtDto> GetByIdAsync(Guid id, Guid branchId, bool isStaffOrAbove);
+        /// <summary>
+        /// Lấy chi tiết 1 sân
+        /// </summary>
+        Task<CourtDto> GetByIdAsync(Guid id, Guid? requestedBranchId, Guid? currentUserId, string? currentUserRole);
 
-        // chỉ OWNER / MANAGER mới có quyền tạo sân
-        Task<CourtDto> CreateAsync(Guid branchId, CreateCourtDto dto, Guid currentUserId, string currentUserRole);
+        /// <summary>
+        /// Tạo sân mới (OWNER / MANAGER)
+        /// </summary>
+        Task<CourtDto> CreateAsync(Guid? requestedBranchId, CreateCourtDto dto, Guid currentUserId, string currentUserRole);
 
-        // chỉ OWNER / MANAGER mới có quyền cập nhật sân
-        Task<CourtDto> UpdateAsync(Guid id, Guid branchId, UpdateCourtDto dto, Guid currentUserId, string currentUserRole);
-        Task SuspendAsync(Guid id, Guid branchId, Guid currentUserId, string currentUserRole);
-        Task ActivateAsync(Guid id, Guid branchId, Guid currentUserId, string currentUserRole);
-        Task DeleteAsync(Guid id, Guid branchId, Guid currentUserId, string currentUserRole);
+        /// <summary>
+        /// Cập nhật sân (OWNER / MANAGER)
+        /// </summary>
+        Task<CourtDto> UpdateAsync(Guid id, Guid? requestedBranchId, UpdateCourtDto dto, Guid currentUserId, string currentUserRole);
+
+        /// <summary>
+        /// Tạm ngưng sân
+        /// </summary>
+        Task SuspendAsync(Guid id, Guid? requestedBranchId, Guid currentUserId, string currentUserRole);
+
+        /// <summary>
+        /// Kích hoạt lại sân
+        /// </summary>
+        Task ActivateAsync(Guid id, Guid? requestedBranchId, Guid currentUserId, string currentUserRole);
+
+        /// <summary>
+        /// Xóa mềm sân
+        /// </summary>
+        Task DeleteAsync(Guid id, Guid? requestedBranchId, Guid currentUserId, string currentUserRole);
+
+        /// <summary>
+        /// Stats-only dashboard (4 ô thống kê)
+        /// </summary>
+        Task<CourtManagementStatsDto> GetManagementStatsAsync(
+            Guid? requestedBranchId, Guid currentUserId, string currentUserRole);
+        /// <summary>
+        /// Lấy danh sách card sân theo IDs
+        /// </summary>
+        Task<List<CourtManagementCardDto>> GetManagementCourtsByIdsAsync(
+            List<Guid> courtIds, Guid? requestedBranchId, DateOnly? date,
+            Guid currentUserId, string currentUserRole);
+        /// <summary>
+        /// Danh sách card sân (phân trang) kèm timeline ngày được chọn.
+        /// </summary>
+        Task<Common.PagedResult<CourtManagementCardDto>> GetManagementCourtsAsync(
+            Guid? requestedBranchId, DateOnly? date, string? search, Guid? typeId,
+            int page, int pageSize,
+            Guid currentUserId, string currentUserRole);
+
+        /// <summary>
+        /// Full-detail timeline cho mọt ngày — có booking identity để vẽ named blocks.
+        /// </summary>
+        Task<CourtManagementTimelineDto> GetManagementTimelineAsync(
+            Guid? requestedBranchId, DateOnly date, Guid? typeId,
+            Guid currentUserId, string currentUserRole);
+
+        /// <summary>
+        /// Chi tiết sân cho modal quản lý (date-scoped)
+        /// </summary>
+        Task<CourtManagementDetailDto> GetManagementDetailAsync(
+            Guid id, DateOnly? date, Guid currentUserId, string currentUserRole);
     }
 }

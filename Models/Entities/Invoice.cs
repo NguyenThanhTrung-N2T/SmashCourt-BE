@@ -1,10 +1,11 @@
-﻿using SmashCourt_BE.Models.Enums;
+using SmashCourt_BE.Models.Enums;
 
 namespace SmashCourt_BE.Models.Entities
 {
     public class Invoice
     {
         public Guid Id { get; set; }
+        public string InvoiceCode { get; set; } = null!;
         public Guid BookingId { get; set; }
         public decimal CourtFee { get; set; }
         public decimal ServiceFee { get; set; } = 0;
@@ -12,6 +13,8 @@ namespace SmashCourt_BE.Models.Entities
         public decimal PromotionDiscountAmount { get; set; } = 0;
         public decimal FinalTotal { get; set; }
         public InvoicePaymentStatus PaymentStatus { get; set; } = InvoicePaymentStatus.UNPAID;
+        public PaymentTiming PaymentTiming { get; set; } = PaymentTiming.POSTPAID;  // Default: trả sau
+        public DateTime? ExpiresAt { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
 

@@ -33,4 +33,19 @@ public interface IAuthService
 
     // Đặt lại mật khẩu mới sau khi xác thực OTP thành công
     Task ResetPasswordAsync(ResetPasswordDto dto);
+
+    // Đổi mật khẩu bắt buộc (sau khi admin tạo user hoặc reset password)
+    Task ChangePasswordAsync(ChangePasswordDto dto);
+
+    // Bật 2FA - gửi OTP xác nhận
+    Task Enable2FAAsync(Guid userId);
+
+    // Bật 2FA - xác nhận OTP và kích hoạt
+    Task Enable2FAVerifyAsync(Guid userId, Verify2FASettingDto dto);
+
+    // Tắt 2FA - gửi OTP xác nhận
+    Task Disable2FAAsync(Guid userId);
+
+    // Tắt 2FA - xác nhận OTP và vô hiệu hóa
+    Task Disable2FAVerifyAsync(Guid userId, Verify2FASettingDto dto);
 }

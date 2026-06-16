@@ -1,11 +1,11 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 namespace SmashCourt_BE.Data
 {
     public class SmashCourtContext : DbContext
     {
-        public SmashCourtContext(DbContextOptions<SmashCourtContext> option) : base(option) {}
+        public SmashCourtContext(DbContextOptions<SmashCourtContext> option) : base(option) { }
 
         // ── Module 1 ──────────────────────────────
         public DbSet<User> Users => Set<User>();
@@ -37,6 +37,7 @@ namespace SmashCourt_BE.Data
 
         // ── Module 6 ──────────────────────────────
         public DbSet<Promotion> Promotions => Set<Promotion>();
+        public DbSet<PromotionCondition> PromotionConditions => Set<PromotionCondition>();
 
         // ── Module 7 ──────────────────────────────
         public DbSet<Booking> Bookings => Set<Booking>();
@@ -45,6 +46,7 @@ namespace SmashCourt_BE.Data
         public DbSet<BookingService> BookingServices => Set<BookingService>();
         public DbSet<SlotLock> SlotLocks => Set<SlotLock>();
         public DbSet<BookingPromotion> BookingPromotions => Set<BookingPromotion>();
+        public DbSet<SlotInterest> SlotInterests => Set<SlotInterest>();
 
         // ── Module 8 ──────────────────────────────
         public DbSet<Invoice> Invoices => Set<Invoice>();
@@ -70,10 +72,12 @@ namespace SmashCourt_BE.Data
             modelBuilder.HasPostgresEnum<BranchServiceStatus>("branch_service_status");
             modelBuilder.HasPostgresEnum<LoyaltyTransactionType>("loyalty_transaction_type");
             modelBuilder.HasPostgresEnum<PromotionStatus>("promotion_status");
+            modelBuilder.HasPostgresEnum<DiscountTypeEnum>("discount_type_enum");
             modelBuilder.HasPostgresEnum<BookingStatus>("booking_status");
             modelBuilder.HasPostgresEnum<BookingSource>("booking_source");
             modelBuilder.HasPostgresEnum<CancelSourceEnum>("cancel_source_enum");
             modelBuilder.HasPostgresEnum<InvoicePaymentStatus>("invoice_payment_status");
+            modelBuilder.HasPostgresEnum<PaymentTiming>("payment_timing");
             modelBuilder.HasPostgresEnum<PaymentTxStatus>("payment_tx_status");
             modelBuilder.HasPostgresEnum<PaymentTxMethod>("payment_tx_method");
             modelBuilder.HasPostgresEnum<RefundStatus>("refund_status");
@@ -81,7 +85,6 @@ namespace SmashCourt_BE.Data
 
             // Apply configurations từng entity
             modelBuilder.ApplyConfigurationsFromAssembly(typeof(SmashCourtContext).Assembly);
-
 
             // ── MODULE 1 ──────────────────────────
             modelBuilder.Entity<User>(e =>
@@ -97,13 +100,17 @@ namespace SmashCourt_BE.Data
                 e.Property(x => x.Role).HasColumnName("role");
                 e.Property(x => x.Status).HasColumnName("status");
                 e.Property(x => x.LockReason).HasColumnName("lock_reason");
+                e.Property(x => x.LockedAt).HasColumnName("locked_at");
+                e.Property(x => x.LockedBy).HasColumnName("locked_by");
                 e.Property(x => x.IsEmailVerified).HasColumnName("is_email_verified").HasDefaultValue(false);
                 e.Property(x => x.Is2faEnabled).HasColumnName("is_2fa_enabled").HasDefaultValue(false);
                 e.Property(x => x.MustChangePassword).HasColumnName("must_change_password").HasDefaultValue(false);
                 e.Property(x => x.FailedLoginCount).HasColumnName("failed_login_count").HasDefaultValue(0);
                 e.Property(x => x.LockedUntil).HasColumnName("locked_until");
+                e.Property(x => x.LastFailedLoginAt).HasColumnName("last_failed_login_at");
                 e.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()");
                 e.Property(x => x.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("now()");
+                e.Property(x => x.FullNameNormalized).HasColumnName("full_name_normalized").HasMaxLength(255);
 
                 // Relationships
                 e.HasMany(x => x.RefreshTokens).WithOne(x => x.User).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
@@ -129,6 +136,12 @@ namespace SmashCourt_BE.Data
                 e.Property(x => x.ExpiresAt).HasColumnName("expires_at");
                 e.Property(x => x.RevokedAt).HasColumnName("revoked_at");
                 e.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()");
+
+                // Session metadata columns
+                e.Property(x => x.DeviceName).HasColumnName("device_name").HasMaxLength(200);
+                e.Property(x => x.IpAddress).HasColumnName("ip_address").HasMaxLength(45);
+                e.Property(x => x.UserAgent).HasColumnName("user_agent").HasMaxLength(500);
+                e.Property(x => x.LastUsedAt).HasColumnName("last_used_at");
 
                 e.HasOne(x => x.RotatedFrom).WithMany().HasForeignKey(x => x.RotatedFromId).OnDelete(DeleteBehavior.SetNull);
             });
@@ -316,6 +329,7 @@ namespace SmashCourt_BE.Data
                 e.Property(x => x.Status).HasColumnName("status");
                 e.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()");
                 e.Property(x => x.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("now()");
+                e.Property(x => x.ServiceDisplayUrl).HasColumnName("service_display_url");
             });
 
             modelBuilder.Entity<BranchService>(e =>
@@ -389,12 +403,34 @@ namespace SmashCourt_BE.Data
                 e.HasKey(x => x.Id);
                 e.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
                 e.Property(x => x.Name).HasColumnName("name").HasMaxLength(255).IsRequired();
-                e.Property(x => x.DiscountRate).HasColumnName("discount_rate").HasPrecision(5, 2);
+                e.Property(x => x.Code).HasColumnName("code").HasMaxLength(50);
+                e.Property(x => x.PromoDisplayUrl).HasColumnName("promo_display_url");
+                e.Property(x => x.Description).HasColumnName("description");
+                e.Property(x => x.DiscountType).HasColumnName("discount_type");
+                e.Property(x => x.DiscountValue).HasColumnName("discount_value").HasPrecision(12, 2);
+                e.Property(x => x.MaxDiscountAmount).HasColumnName("max_discount_amount").HasPrecision(12, 2);
+                e.Property(x => x.UsageLimit).HasColumnName("usage_limit");
+                e.Property(x => x.UsagePerUserLimit).HasColumnName("usage_per_user_limit");
+                e.Property(x => x.UsedCount).HasColumnName("used_count").HasDefaultValue(0);
                 e.Property(x => x.StartDate).HasColumnName("start_date");
                 e.Property(x => x.EndDate).HasColumnName("end_date");
                 e.Property(x => x.Status).HasColumnName("status");
                 e.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()");
                 e.Property(x => x.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("now()");
+
+                e.HasIndex(x => x.Code).IsUnique();
+            });
+
+            modelBuilder.Entity<PromotionCondition>(e =>
+            {
+                e.ToTable("promotion_conditions");
+                e.HasKey(x => x.Id);
+                e.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
+                e.Property(x => x.PromotionId).HasColumnName("promotion_id");
+                e.Property(x => x.ConditionType).HasColumnName("condition_type").HasMaxLength(50).IsRequired();
+                e.Property(x => x.ConditionValue).HasColumnName("condition_value").IsRequired();
+
+                e.HasOne(x => x.Promotion).WithMany(x => x.Conditions).HasForeignKey(x => x.PromotionId).OnDelete(DeleteBehavior.Cascade);
             });
 
             // ── MODULE 7 ──────────────────────────
@@ -403,6 +439,8 @@ namespace SmashCourt_BE.Data
                 e.ToTable("bookings");
                 e.HasKey(x => x.Id);
                 e.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
+                e.Property(x => x.BookingCode).HasColumnName("booking_code").HasMaxLength(20).IsRequired();
+                e.HasIndex(x => x.BookingCode).IsUnique();
                 e.Property(x => x.BranchId).HasColumnName("branch_id");
                 e.Property(x => x.CustomerId).HasColumnName("customer_id");
                 e.Property(x => x.GuestName).HasColumnName("guest_name").HasMaxLength(255);
@@ -412,7 +450,7 @@ namespace SmashCourt_BE.Data
                 e.Property(x => x.Status).HasColumnName("status");
                 e.Property(x => x.Source).HasColumnName("source");
                 e.Property(x => x.Note).HasColumnName("note");
-                e.Property(x => x.ExpiresAt).HasColumnName("expires_at");
+                e.Property(x => x.CheckedInAt).HasColumnName("checked_in_at");
                 e.Property(x => x.CreatedBy).HasColumnName("created_by");
                 e.Property(x => x.CancelledBy).HasColumnName("cancelled_by");
                 e.Property(x => x.CancelledAt).HasColumnName("cancelled_at");
@@ -439,6 +477,7 @@ namespace SmashCourt_BE.Data
                 e.Property(x => x.Date).HasColumnName("date");
                 e.Property(x => x.StartTime).HasColumnName("start_time");
                 e.Property(x => x.EndTime).HasColumnName("end_time");
+                e.Property(x => x.ActualEndPlayTime).HasColumnName("actual_end_play_time");
                 e.Property(x => x.IsActive).HasColumnName("is_active").HasDefaultValue(true);
                 e.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()");
 
@@ -502,11 +541,40 @@ namespace SmashCourt_BE.Data
                 e.Property(x => x.BookingId).HasColumnName("booking_id");
                 e.Property(x => x.PromotionId).HasColumnName("promotion_id");
                 e.Property(x => x.PromotionNameSnapshot).HasColumnName("promotion_name_snapshot").HasMaxLength(255).IsRequired();
-                e.Property(x => x.DiscountRateSnapshot).HasColumnName("discount_rate_snapshot").HasPrecision(5, 2);
+                e.Property(x => x.PromotionCodeSnapshot).HasColumnName("promotion_code_snapshot").HasMaxLength(50);
+                e.Property(x => x.DiscountTypeSnapshot).HasColumnName("discount_type_snapshot");
+                e.Property(x => x.DiscountValueSnapshot).HasColumnName("discount_value_snapshot").HasPrecision(12, 2);
                 e.Property(x => x.DiscountAmount).HasColumnName("discount_amount").HasPrecision(12, 2);
                 e.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()");
 
                 e.HasOne(x => x.Promotion).WithMany(x => x.BookingPromotions).HasForeignKey(x => x.PromotionId).OnDelete(DeleteBehavior.Restrict);
+            });
+
+            modelBuilder.Entity<SlotInterest>(e =>
+            {
+                e.ToTable("slot_interests");
+                e.HasKey(x => x.Id);
+                e.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
+                e.Property(x => x.CourtId).HasColumnName("court_id");
+                e.Property(x => x.Date).HasColumnName("date");
+                e.Property(x => x.StartTime).HasColumnName("start_time");
+                e.Property(x => x.EndTime).HasColumnName("end_time");
+                e.Property(x => x.Email).HasColumnName("email").HasMaxLength(255).IsRequired();
+                e.Property(x => x.CustomerId).HasColumnName("customer_id");
+                e.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()");
+                e.Property(x => x.ExpiresAt).HasColumnName("expires_at");
+
+                // Index để query nhanh khi có slot được giải phóng
+                e.HasIndex(x => new { x.CourtId, x.Date, x.StartTime, x.EndTime })
+                    .HasDatabaseName("idx_slot_interests_court_date_slot");
+                // Cleanup job dùng index này
+                e.HasIndex(x => x.ExpiresAt)
+                    .HasDatabaseName("idx_slot_interests_expires");
+
+                e.HasOne(x => x.Court).WithMany()
+                    .HasForeignKey(x => x.CourtId).OnDelete(DeleteBehavior.Cascade);
+                e.HasOne(x => x.Customer).WithMany()
+                    .HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.SetNull);
             });
 
             // ── MODULE 8 ──────────────────────────
@@ -515,6 +583,8 @@ namespace SmashCourt_BE.Data
                 e.ToTable("invoices");
                 e.HasKey(x => x.Id);
                 e.Property(x => x.Id).HasColumnName("id").HasDefaultValueSql("gen_random_uuid()");
+                e.Property(x => x.InvoiceCode).HasColumnName("invoice_code").HasMaxLength(20).IsRequired();
+                e.HasIndex(x => x.InvoiceCode).IsUnique();
                 e.Property(x => x.BookingId).HasColumnName("booking_id");
                 e.Property(x => x.CourtFee).HasColumnName("court_fee").HasPrecision(12, 2);
                 e.Property(x => x.ServiceFee).HasColumnName("service_fee").HasPrecision(12, 2).HasDefaultValue(0m);
@@ -522,6 +592,8 @@ namespace SmashCourt_BE.Data
                 e.Property(x => x.PromotionDiscountAmount).HasColumnName("promotion_discount_amount").HasPrecision(12, 2).HasDefaultValue(0m);
                 e.Property(x => x.FinalTotal).HasColumnName("final_total").HasPrecision(12, 2);
                 e.Property(x => x.PaymentStatus).HasColumnName("payment_status");
+                e.Property(x => x.PaymentTiming).HasColumnName("payment_timing").HasConversion<int>();
+                e.Property(x => x.ExpiresAt).HasColumnName("expires_at");
                 e.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()");
                 e.Property(x => x.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("now()");
             });

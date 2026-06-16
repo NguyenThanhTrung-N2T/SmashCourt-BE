@@ -42,9 +42,11 @@ namespace SmashCourt_BE.Repositories
             };
         }
 
+        // Lấy thông tin chi tiết của một dịch vụ trong chi nhánh theo branchId và serviceId
         public async Task<BranchService?> GetByBranchServiceAsync(Guid branchId, Guid serviceId)
         {
             return await _context.BranchServices
+                .Include(bs => bs.Service)
                 .FirstOrDefaultAsync(bs => bs.BranchId == branchId && bs.ServiceId == serviceId);
         }
 

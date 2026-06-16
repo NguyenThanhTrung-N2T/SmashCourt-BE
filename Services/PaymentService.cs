@@ -1,0 +1,599 @@
+using SmashCourt_BE.Common;
+using SmashCourt_BE.Common.Constants;
+using SmashCourt_BE.Helpers;
+using SmashCourt_BE.Models.Entities;
+using SmashCourt_BE.Models.Enums;
+using SmashCourt_BE.Repositories.IRepository;
+using SmashCourt_BE.Services.IService;
+using SmashCourt_BE.DTOs.Booking;
+using SmashCourt_BE.DTOs.Payment;
+using SmashCourt_BE.DTOs.SignalR;
+using SmashCourt_BE.Factories;
+using System.Security.Cryptography;
+using System.Text;
+using Microsoft.Extensions.Configuration;
+
+namespace SmashCourt_BE.Services
+{
+    public class PaymentService : IPaymentService
+    {
+        private readonly IPaymentRepository _paymentRepo;
+        private readonly IBookingRepository _bookingRepo;
+        private readonly IInvoiceRepository _invoiceRepo;
+        private readonly ISlotLockRepository _slotLockRepo;
+        private readonly ICourtRepository _courtRepo;
+        private readonly IVnPayService _vnPayService;
+        private readonly EmailService _emailService;
+        private readonly PromotionEngineService _promotionEngine;
+        private readonly ILogger<PaymentService> _logger;
+        private readonly IConfiguration _config;
+        private readonly IBroadcastService _broadcast;
+
+        public PaymentService(
+            IPaymentRepository paymentRepo,
+            IBookingRepository bookingRepo,
+            IInvoiceRepository invoiceRepo,
+            ISlotLockRepository slotLockRepo,
+            ICourtRepository courtRepo,
+            IVnPayService vnPayService,
+            EmailService emailService,
+            PromotionEngineService promotionEngine,
+            ILogger<PaymentService> logger,
+            IConfiguration config,
+            IBroadcastService broadcast)
+        {
+            _paymentRepo = paymentRepo;
+            _bookingRepo = bookingRepo;
+            _invoiceRepo = invoiceRepo;
+            _slotLockRepo = slotLockRepo;
+            _courtRepo = courtRepo;
+            _vnPayService = vnPayService;
+            _emailService = emailService;
+            _promotionEngine = promotionEngine;
+            _logger = logger;
+            _config = config;
+            _broadcast = broadcast;
+        }
+
+        /// <summary>
+        /// Tạo lại URL thanh toán VNPay cho booking PENDING đã bị gián đoạn bởi lỗi mạng.
+        /// Flow: validate → void old payment → extend expiry → new VNPay URL → new Payment record
+        /// </summary>
+        public async Task<OnlineBookingResponse> RetryPaymentAsync(Guid bookingId, Guid customerId)
+        {
+            // 1. Load booking với đầy đủ relations
+            var booking = await _bookingRepo.GetByIdWithDetailsAsync(bookingId);
+            if (booking == null)
+                throw new AppException(404, "Không tìm thấy đơn đặt sân", ErrorCodes.NotFound);
+
+            // 2. Validate ownership — chỉ khách hàng sở hữu booking mới được retry
+            if (!booking.CustomerId.HasValue || booking.CustomerId.Value != customerId)
+                throw new AppException(403, "Bạn không có quyền thực hiện thao tác này", ErrorCodes.Forbidden);
+
+            // 3. Validate status — chỉ PENDING mới được retry
+            if (booking.Status != BookingStatus.PENDING)
+                throw new AppException(400,
+                    "Chỉ có thể thanh toán lại cho đơn đang chờ thanh toán",
+                    ErrorCodes.BadRequest);
+            // 5. Lấy invoice (đã được tạo lúc đặt sân lần đầu)
+            var invoice = booking.Invoice
+                ?? throw new AppException(500, "Không tìm thấy hóa đơn", ErrorCodes.InternalError);
+            // 4. Validate expiry — booking chưa hết hạn
+            if (!invoice.ExpiresAt.HasValue || invoice.ExpiresAt.Value <= DateTime.UtcNow)
+                throw new AppException(400,
+                    "Đơn đặt sân đã hết hạn thanh toán, vui lòng đặt lại",
+                    ErrorCodes.BadRequest);
+
+            var now = DateTime.UtcNow;
+            var newExpiresAt = now.AddMinutes(10);
+
+            // 6. Tạo VNPay URL mới TRƯỚC transaction (không cần DB)
+            var courtNames = string.Join(", ",
+                booking.BookingCourts.Select(bc => bc.Court?.Name).Where(n => n != null).Distinct());
+            if (string.IsNullOrEmpty(courtNames))
+                courtNames = "San the thao";
+            var courtNamesAscii = StringHelper.RemoveDiacritics(courtNames);
+            var paymentInfo = _vnPayService.CreatePaymentUrl(
+                booking.Id.ToString(),
+                invoice.FinalTotal,
+                $"Thanh toan lai {courtNamesAscii}");
+
+            // 7. Ghi DB trong TransactionScope
+            using var transaction = new System.Transactions.TransactionScope(
+                System.Transactions.TransactionScopeAsyncFlowOption.Enabled);
+
+            // 7A. Void tất cả PENDING payments cũ của invoice này
+            //     Tránh ghost record làm rối IPN lookup
+            var oldPendingPayments = invoice.Payments
+                .Where(p => p.Status == PaymentTxStatus.PENDING)
+                .ToList();
+            foreach (var old in oldPendingPayments)
+            {
+                old.Status = PaymentTxStatus.FAILED;
+                old.UpdatedAt = now;
+                await _paymentRepo.UpdateAsync(old);
+            }
+
+            // 7B. Tạo Payment record mới với TransactionRef mới
+            await _paymentRepo.CreateAsync(new Payment
+            {
+                InvoiceId = invoice.Id,
+                Method = PaymentTxMethod.VNPAY,
+                Amount = invoice.FinalTotal,
+                Status = PaymentTxStatus.PENDING,
+                TransactionRef = paymentInfo.TransactionRef,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+
+            // 7C. Gia hạn ExpiresAt của booking
+            invoice.ExpiresAt = newExpiresAt;
+            invoice.UpdatedAt = now;
+
+            booking.UpdatedAt = now;
+            await _bookingRepo.UpdateAsync(booking);
+
+            // 7D. Gia hạn ExpiresAt của SlotLocks để cleanup job không giải phóng slot sớm
+            await _slotLockRepo.UpdateExpiryByBookingIdAsync(bookingId, newExpiresAt);
+
+            transaction.Complete();
+
+            _logger.LogInformation(
+                "🔄 RETRY PAYMENT | BookingId={BookingId} | CustomerId={CustomerId} | " +
+                "NewTransactionRef={TransactionRef} | NewExpiresAt={ExpiresAt}",
+                bookingId, customerId, paymentInfo.TransactionRef, newExpiresAt);
+
+            return new OnlineBookingResponse
+            {
+                BookingId = booking.Id,
+                PaymentUrl = paymentInfo.Url,
+                ExpiresAt = newExpiresAt,
+                FinalTotal = invoice.FinalTotal
+            };
+        }
+
+        public async Task HandleVnPayIpnAsync(IQueryCollection query, HttpRequest request)
+        {
+            // 1. Verify signature và parse thông tin từ VNPay
+            var isValid = _vnPayService.VerifyIpn(
+                query, out var transactionRef, out var isSuccess, out var rawPayload);
+
+            // 2. Log IPN request - luôn log dù signature có hợp lệ hay không (NGOÀI transaction)
+            var payment = await _paymentRepo.GetByTransactionRefAsync(transactionRef);
+            await _paymentRepo.CreateIpnLogAsync(new PaymentIpnLog
+            {
+                PaymentId = payment?.Id,
+                Provider = IpnProvider.VNPAY,
+                ProviderTransactionId = transactionRef,
+                RawPayload = rawPayload,
+                IsValid = isValid,
+                ProcessedAt = DateTime.UtcNow
+            });
+
+            if (!isValid)
+            {
+                _logger.LogWarning("Invalid VNPay IPN signature: {Ref}", transactionRef);
+                return;
+            }
+
+            if (payment == null)
+            {
+                _logger.LogWarning("Payment not found for ref: {Ref}", transactionRef);
+                return;
+            }
+
+            var booking = payment.Invoice?.Booking;
+            if (booking == null) return;
+
+            // 3. 🔒 IDEMPOTENCY CHECK - Ngăn chặn duplicate processing
+            // VNPay có thể gọi IPN nhiều lần (retry mechanism)
+            // Chỉ xử lý nếu booking chưa được finalized
+            if (booking.Status == BookingStatus.PAID_ONLINE ||
+                booking.Status == BookingStatus.CANCELLED)
+            {
+                _logger.LogInformation(
+                    "🔒 IDEMPOTENT | IPN already processed | BookingId={BookingId} | " +
+                    "Status={Status} | TransactionRef={TransactionRef} | " +
+                    "Result=SKIPPED (already finalized)",
+                    booking.Id, booking.Status, transactionRef);
+                return;
+            }
+
+            _logger.LogInformation(
+                "✅ PROCESSING | IPN first time | BookingId={BookingId} | " +
+                "CurrentStatus={Status} | TransactionRef={TransactionRef}",
+                booking.Id, booking.Status, transactionRef);
+
+            // 4. Verify amount từ VNPay - bảo vệ khỏi tampered callback
+            if (query.TryGetValue("vnp_Amount", out var vnpAmountStr) &&
+                long.TryParse(vnpAmountStr, out var vnpRawAmount))
+            {
+                var vnpAmount = (decimal)(vnpRawAmount / 100);
+                if (vnpAmount != payment.Amount)
+                {
+                    _logger.LogWarning(
+                        "VNPay amount mismatch for ref {Ref}: expected {Expected}, received {Actual}",
+                        transactionRef, payment.Amount, vnpAmount);
+                    return;
+                }
+            }
+
+            var now = DateTime.UtcNow;
+
+            // 5. Bọc toàn bộ business updates trong TransactionScope
+            //    để đảm bảo DB không ở trạng thái inconsistent nếu 1 update fail giữa chừng
+            using var transaction = new System.Transactions.TransactionScope(
+                System.Transactions.TransactionScopeAsyncFlowOption.Enabled);
+
+            if (isSuccess)
+            {
+                // 5A. Xử lý thanh toán thành công
+
+                // Generate cancel token TRƯỚC KHI update
+                var (cancelToken, cancelTokenHash, cancelTokenExpiry) = GenerateCancelTokenData(booking);
+
+                // 🔒 ATOMIC UPDATE: Update TẤT CẢ fields trong 1 operation duy nhất
+                // Bảo vệ khỏi race condition khi IPN và Confirm gọi cùng lúc
+                var rowsAffected = await _bookingRepo.AtomicUpdatePaymentSuccessAsync(
+                    booking.Id,
+                    BookingStatus.PENDING,  // expectedStatus
+                    cancelTokenHash,
+                    cancelTokenExpiry,
+                    now);
+
+                if (rowsAffected == 0)
+                {
+                    // ⚠️ RACE CONDITION: Booking đã được update bởi request khác
+                    _logger.LogWarning(
+                        "⚠️ RACE CONDITION | Booking already updated by another request | " +
+                        "BookingId={BookingId} | ExpectedStatus={ExpectedStatus} | " +
+                        "TransactionRef={TransactionRef}",
+                        booking.Id, BookingStatus.PENDING, transactionRef);
+                    return;
+                }
+
+                // ✅ Request thắng → tiếp tục update payment, invoice, etc.
+                payment.Status = PaymentTxStatus.SUCCESS;
+                payment.PaidAt = now;
+                payment.UpdatedAt = now;
+                await _paymentRepo.UpdateAsync(payment);
+
+                var invoice = payment.Invoice!;
+                invoice.PaymentStatus = InvoicePaymentStatus.PARTIALLY_PAID;
+                invoice.UpdatedAt = now;
+                await _invoiceRepo.UpdateAsync(invoice);
+
+                // Xóa slot locks vì booking đã được confirm
+                await _slotLockRepo.DeleteByBookingIdAsync(booking.Id);
+
+                // 🎯 Tăng usage count của promotion (nếu có)
+                // Đảm bảo usage limit được enforce đúng
+                if (booking.BookingPromotion != null)
+                {
+                    await _promotionEngine.IncrementUsageCountAsync(booking.BookingPromotion.PromotionId);
+                    _logger.LogInformation(
+                        "[PROMOTION_USAGE] Incremented usage for promotion {PromotionId} | BookingId={BookingId}",
+                        booking.BookingPromotion.PromotionId, booking.Id);
+                }
+
+                // Fetch court names TRƯỚC KHI complete transaction để gửi email sau
+                // NOTE: Court status sẽ được update bởi scheduled job khi đến StartTime
+                //       Không update court status ở đây để tránh conflict với job logic
+                var courtNames = await GetCourtNamesAsync(booking);
+
+                transaction.Complete();
+
+                _logger.LogInformation(
+                    "✅ SUCCESS | IPN processed successfully | BookingId={BookingId} | " +
+                    "NewStatus={NewStatus} | TransactionRef={TransactionRef} | " +
+                    "PaymentAmount={Amount} | InvoiceStatus={InvoiceStatus}",
+                    booking.Id, BookingStatus.PAID_ONLINE, transactionRef,
+                    payment.Amount, InvoicePaymentStatus.PARTIALLY_PAID);
+
+                // Gửi email xác nhận NGOÀI transaction
+                // Lỗi email không được rollback payment transaction
+                try
+                {
+                    _logger.LogInformation("Attempting to send confirmation email for booking {BookingId}", booking.Id);
+                    await SendConfirmationEmailAsync(booking, cancelToken, courtNames);
+                    _logger.LogInformation("Confirmation email sent successfully for booking {BookingId}", booking.Id);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to send confirmation email for booking {BookingId}", booking.Id);
+                }
+
+                // Phát SignalR notification - thanh toán thành công
+                var customerName = booking.Customer?.FullName ?? booking.GuestName ?? "Khách";
+                // includeTimeGrid=false: thanh toán thành công cho slot đã giữ trước đó không làm thay đổi trạng thái trống/bận
+                await _broadcast.BroadcastPaymentEventAsync(
+                    SignalREvents.PaymentSuccess,
+                    new PaymentNotificationDto
+                    {
+                        BookingId = booking.Id,
+                        InvoiceId = payment.InvoiceId,
+                        Amount = payment.Amount,
+                        Status = "SUCCESS",
+                        Message = $"Thanh toán thành công cho booking #{booking.BookingCode} của {customerName}",
+                        Timestamp = DateTimeHelper.GetUtcNow()
+                    },
+                    booking,
+                    includeTimeGrid: false
+                );
+            }
+            else
+            {
+                // 5B. Xử lý thanh toán thất bại
+                booking.Status = BookingStatus.CANCELLED;
+                booking.CancelledAt = now;
+                booking.CancelSource = CancelSourceEnum.SYSTEM;
+                booking.UpdatedAt = now;
+                await _bookingRepo.UpdateAsync(booking);
+
+                // Cập nhật trạng thái Invoice tương ứng khi payment thất bại
+                var invoice = payment.Invoice;
+                if (invoice != null)
+                {
+                    // Nếu bạn đã thêm trạng thái EXPIRED/CANCELLED vào InvoicePaymentStatus:
+                    invoice.PaymentStatus = InvoicePaymentStatus.EXPIRED;
+
+                    // Nếu KHÔNG thêm enum mới, hãy nullify Expiry để ngăn loop trong cron job:
+                    // invoice.ExpiresAt = null; 
+
+                    invoice.UpdatedAt = now;
+                    await _invoiceRepo.UpdateAsync(invoice);
+                }
+                // Deactivate booking courts - nhất quán với CancelByStaffAsync
+                await _bookingRepo.UpdateCourtActiveStatusAsync(booking.Id, false);
+
+                payment.Status = PaymentTxStatus.FAILED;
+                payment.UpdatedAt = now;
+                await _paymentRepo.UpdateAsync(payment);
+
+                // Xóa slot locks
+                await _slotLockRepo.DeleteByBookingIdAsync(booking.Id);
+
+                // Update tất cả courts về AVAILABLE
+                foreach (var bc in booking.BookingCourts ?? [])
+                {
+                    var court = await _courtRepo.GetByIdAsync(bc.CourtId, booking.BranchId);
+                    if (court != null)
+                    {
+                        court.Status = CourtStatus.AVAILABLE;
+                        court.UpdatedAt = now;
+                        await _courtRepo.UpdateAsync(court);
+                    }
+                }
+
+                transaction.Complete();
+
+                _logger.LogInformation(
+                    "❌ FAILED | IPN processed (payment failed) | BookingId={BookingId} | " +
+                    "NewStatus={NewStatus} | TransactionRef={TransactionRef} | " +
+                    "ResponseCode={ResponseCode}",
+                    booking.Id, BookingStatus.CANCELLED, transactionRef,
+                    query["vnp_ResponseCode"].ToString());
+
+                // Phát SignalR notification - thanh toán thất bại
+                var customerName = booking.Customer?.FullName ?? booking.GuestName ?? "Khách";
+                // includeTimeGrid=true: thanh toán thất bại dẫn tới hủy đơn → giải phóng slot sân nên cần cập nhật timegrid
+                await _broadcast.BroadcastPaymentEventAsync(
+                    SignalREvents.PaymentFailed,
+                    new PaymentNotificationDto
+                    {
+                        BookingId = booking.Id,
+                        InvoiceId = payment.InvoiceId,
+                        Amount = payment.Amount,
+                        Status = "FAILED",
+                        Message = $"Thanh toán thất bại cho booking #{booking.BookingCode} của {customerName}. Booking đã bị hủy.",
+                        Timestamp = DateTimeHelper.GetUtcNow()
+                    },
+                    booking,
+                    includeTimeGrid: true
+                );
+            }
+        }
+
+        /// <summary>
+        /// Xử lý Return URL từ VNPay (browser redirect)
+        /// ⚠️ READ-ONLY - KHÔNG UPDATE DATABASE
+        /// Chỉ verify signature và trả về thông tin để FE hiển thị
+        /// </summary>
+        public async Task<VnPayReturnResult> HandleVnPayReturnAsync(IQueryCollection query)
+        {
+            // 1. Verify signature từ VNPay
+            var isValid = _vnPayService.VerifyIpn(
+                query, out var transactionRef, out var isSuccess, out _);
+
+            if (!isValid)
+            {
+                _logger.LogWarning("Invalid VNPay return signature: {Ref}", transactionRef);
+                return new VnPayReturnResult
+                {
+                    IsSuccess = false,
+                    Message = "Chữ ký không hợp lệ",
+                    ResponseCode = "97"
+                };
+            }
+
+            // 2. Parse thông tin từ query params
+            var responseCode = query["vnp_ResponseCode"].ToString();
+            var amount = query.TryGetValue("vnp_Amount", out var amountStr) &&
+                         long.TryParse(amountStr, out var rawAmount)
+                ? (decimal)(rawAmount / 100)
+                : 0;
+
+            // 3. Tìm payment để lấy bookingId (READ-ONLY - không update)
+            //    Dùng AsNoTracking để tránh EF identity cache trả về entity cũ
+            var payment = await _paymentRepo.GetByTransactionRefAsync(transactionRef, asNoTracking: true);
+            var bookingId = payment?.Invoice?.Booking?.Id;
+            var bookingCode = payment?.Invoice?.Booking?.BookingCode;
+
+            // 4. Re-fetch booking status trực tiếp từ DB để tránh stale EF cache
+            //    HandleVnPayIpnAsync dùng raw ExecuteUpdateAsync — EF identity cache
+            //    vẫn giữ entity PENDING cũ nếu dùng navigation property
+            BookingStatus? freshStatus = null;
+            if (bookingId.HasValue)
+            {
+                try { freshStatus = await _bookingRepo.GetBookingStatusAsync(bookingId.Value); }
+                catch { /* không ném lỗi nếu booking không tồn tại */ }
+            }
+
+            // 5. Trả về kết quả để FE hiển thị
+            return new VnPayReturnResult
+            {
+                IsSuccess = isSuccess,
+                Message = isSuccess
+                    ? (freshStatus == BookingStatus.PAID_ONLINE
+                        ? "Thanh toán thành công! Đặt sân của bạn đã được xác nhận."
+                        : "Thanh toán thành công! Vui lòng đợi hệ thống xác nhận.")
+                    : GetVnPayErrorMessage(responseCode),
+                BookingId = bookingId?.ToString(),
+                BookingCode = bookingCode,
+                TransactionRef = transactionRef,
+                Amount = amount,
+                ResponseCode = responseCode
+            };
+        }
+
+        private static string GetVnPayErrorMessage(string responseCode)
+        {
+            return responseCode switch
+            {
+                "07" => "Giao dịch bị nghi ngờ gian lận",
+                "09" => "Thẻ chưa đăng ký dịch vụ Internet Banking",
+                "10" => "Xác thực thông tin thẻ không đúng quá số lần quy định",
+                "11" => "Đã hết hạn chờ thanh toán",
+                "12" => "Thẻ bị khóa",
+                "13" => "Sai mật khẩu xác thực giao dịch (OTP)",
+                "24" => "Khách hàng hủy giao dịch",
+                "51" => "Tài khoản không đủ số dư",
+                "65" => "Tài khoản đã vượt quá hạn mức giao dịch trong ngày",
+                "75" => "Ngân hàng thanh toán đang bảo trì",
+                "79" => "Giao dịch vượt quá số lần nhập sai mật khẩu",
+                _ => "Giao dịch thất bại"
+            };
+        }
+
+        /// <summary>
+        /// Lấy danh sách tên sân từ booking (TRONG transaction)
+        /// </summary>
+        private async Task<string> GetCourtNamesAsync(Booking booking)
+        {
+            var courts = booking.BookingCourts ?? [];
+            var courtNamesBuilder = new List<string>();
+
+            foreach (var bc in courts)
+            {
+                var court = await _courtRepo.GetByIdAsync(bc.CourtId, booking.BranchId);
+                if (court != null)
+                {
+                    courtNamesBuilder.Add(court.Name);
+                }
+            }
+
+            return string.Join(", ", courtNamesBuilder);
+        }
+
+        /// <summary>
+        /// Generate cancel token data (không update DB)
+        /// Trả về: (rawToken, tokenHash, tokenExpiry)
+        /// </summary>
+        private (string rawToken, string tokenHash, DateTime tokenExpiry) GenerateCancelTokenData(Booking booking)
+        {
+            var rawToken = GenerateCancelToken();
+            var tokenHash = HashToken(rawToken);
+
+            // Lấy first court slot để tính token expiry
+            // Safe vì booking luôn có ít nhất 1 court
+            var firstCourtSlot = booking.BookingCourts?.FirstOrDefault();
+            if (firstCourtSlot == null)
+            {
+                throw new InvalidOperationException("Booking must have at least one court");
+            }
+
+            var startTime = firstCourtSlot.StartTime;
+
+            // Token expiry = min(booking start time, 24h from now)
+            // DateOnly.ToDateTime() returns Kind=Unspecified — must specify UTC for Npgsql/timestamptz
+            var bookingStartUtc = DateTime.SpecifyKind(
+                booking.BookingDate.ToDateTime(startTime), DateTimeKind.Utc);
+            var tokenExpiry = new DateTime[]
+            {
+                bookingStartUtc,
+                DateTimeHelper.GetUtcNow().AddHours(24)
+            }.Min();
+
+            return (rawToken, tokenHash, tokenExpiry);
+        }
+
+
+
+        /// <summary>
+        /// Gửi email xác nhận booking (không query DB - dùng data đã fetch)
+        /// </summary>
+        private async Task SendConfirmationEmailAsync(Booking booking, string rawToken, string courtNames)
+        {
+            var email = booking.Customer?.Email ?? booking.GuestEmail;
+            var name = booking.Customer?.FullName ?? booking.GuestName;
+
+            _logger.LogInformation("SendConfirmationEmailAsync - Email: {Email}, Name: {Name}", email, name);
+
+            if (string.IsNullOrEmpty(email))
+            {
+                _logger.LogWarning("Cannot send email: email is null or empty for booking {BookingId}", booking.Id);
+                return;
+            }
+
+            if (string.IsNullOrEmpty(name))
+            {
+                _logger.LogWarning("Cannot send email: name is null or empty for booking {BookingId}", booking.Id);
+                return;
+            }
+
+            var firstCourtSlot = booking.BookingCourts?.FirstOrDefault();
+            if (firstCourtSlot == null)
+            {
+                _logger.LogWarning("Cannot send email: no court slots found for booking {BookingId}", booking.Id);
+                return;
+            }
+
+            _logger.LogInformation("Calling EmailService.SendBookingConfirmationAsync for {Email}", email);
+
+            // Lấy frontend base URL từ config
+            var frontendBaseUrl = _config["FrontendBaseUrl"] ?? "http://localhost:3000";
+
+            // Build email model using Factory
+            var emailModel = BookingEmailFactory.Build(booking, rawToken, frontendBaseUrl);
+
+            // Send email using new method
+            await _emailService.SendBookingConfirmationAsync(emailModel);
+
+            _logger.LogInformation("EmailService.SendBookingConfirmationAsync completed for {Email}", email);
+        }
+
+        /// <summary>
+        /// Generate random cancel token (URL-safe base64)
+        /// </summary>
+        private static string GenerateCancelToken()
+        {
+            var bytes = new byte[32];
+            RandomNumberGenerator.Fill(bytes);
+            return Convert.ToBase64String(bytes)
+                .Replace("+", "-")
+                .Replace("/", "_")
+                .Replace("=", "");
+        }
+
+        /// <summary>
+        /// Hash token bằng SHA256 để lưu vào DB
+        /// </summary>
+        private static string HashToken(string rawToken)
+        {
+            var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(rawToken));
+            return Convert.ToHexString(bytes).ToLower();
+        }
+
+        // RemoveDiacritics moved to StringHelper
+    }
+}

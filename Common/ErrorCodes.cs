@@ -24,8 +24,42 @@ public static class ErrorCodes
     public const string OtpLimitExceeded = "OTP_LIMIT_EXCEEDED";
     public const string TokenInvalid     = "TOKEN_INVALID";
     public const string EmailExists      = "EMAIL_EXISTS";
+    public const string EmailNotVerified = "EMAIL_NOT_VERIFIED";
     public const string NameDuplicate    = "NAME_DUPLICATE";
     public const string AccountLocked    = "ACCOUNT_LOCKED";
+    public const string SlotUnavailable  = "SLOT_UNAVAILABLE";
+    public const string SlotUnavailableNotifyRegistered = "SLOT_UNAVAILABLE_NOTIFY_REGISTERED";
+
+    // ─── Branch Management ───────────────────────────────────────────────
+    public const string BranchNotFound         = "BRANCH_NOT_FOUND";
+    public const string UserNotFound           = "USER_NOT_FOUND";
+    public const string ManagerNotFound        = "MANAGER_NOT_FOUND";
+    public const string ManagerAlreadyExists   = "MANAGER_ALREADY_EXISTS";
+    public const string InvalidManagerUser     = "INVALID_MANAGER_USER";
+    public const string StaffNotFound          = "STAFF_NOT_FOUND";
+    public const string StaffAlreadyExists     = "STAFF_ALREADY_EXISTS";
+    public const string InvalidStaffUser       = "INVALID_STAFF_USER";
+    public const string InvalidBulkOperation   = "INVALID_BULK_OPERATION";
+
+    // ─── User Management ─────────────────────────────────────────────────
+    public const string UserAlreadyExists      = "USER_ALREADY_EXISTS";
+    public const string InvalidRole            = "INVALID_ROLE";
+    public const string CannotLockSelf         = "CANNOT_LOCK_SELF";
+    public const string CannotResetOwnPassword = "CANNOT_RESET_OWN_PASSWORD";
+    public const string UserAlreadyLocked      = "USER_ALREADY_LOCKED";
+    public const string UserNotLocked          = "USER_NOT_LOCKED";
+    public const string UserAlreadyInactive    = "USER_ALREADY_INACTIVE";
+    public const string UserNotInactive        = "USER_NOT_INACTIVE";
+    public const string LastBranchManager      = "LAST_BRANCH_MANAGER";
+    public const string UserHasNoBranch        = "USER_HAS_NO_BRANCH";
+
+    // ─── Profile & Session Management ───────────────────────────────────
+    public const string InvalidPassword              = "INVALID_PASSWORD";
+    public const string PasswordMustBeDifferent      = "PASSWORD_MUST_BE_DIFFERENT";
+    public const string OAuthUserCannotChangePassword = "OAUTH_USER_CANNOT_CHANGE_PASSWORD";
+    public const string SessionNotFound              = "SESSION_NOT_FOUND";
+    public const string CannotLogoutCurrentSession   = "CANNOT_LOGOUT_CURRENT_SESSION";
+    public const string SessionAlreadyRevoked        = "SESSION_ALREADY_REVOKED";
 
     // ─── Server errors (5xx) ─────────────────────────────────────────────
     public const string InternalError    = "INTERNAL_ERROR";

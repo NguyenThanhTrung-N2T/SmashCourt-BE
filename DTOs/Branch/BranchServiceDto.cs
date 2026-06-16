@@ -12,6 +12,7 @@ namespace SmashCourt_BE.DTOs.Branch
         public decimal DefaultPrice { get; set; }   // Giá mặc định từ system
         public decimal EffectivePrice { get; set; } // Giá thực tế áp dụng tại chi nhánh
         public BranchServiceStatus Status { get; set; }
+        public string? ServiceDisplayUrl { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
     }

@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using SmashCourt_BE.Configurations;
 using SmashCourt_BE.Models.Entities;
@@ -51,15 +51,16 @@ public class TokenService : ITokenService
         return Convert.ToBase64String(bytes);
     }
 
-    // Temp token dùng cho bước 2FA — JWT ngắn hạn 5 phút, chỉ chứa userId
-    public string GenerateTempToken(Guid userId)
+    // Temp token dùng cho bước 2FA hoặc MustChangePassword — JWT ngắn hạn 5 phút
+    // tokenType: "2fa_temp" hoặc "change_password_temp"
+    public string GenerateTempToken(Guid userId, string tokenType = "2fa_temp")
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwt.Key));
 
         var claims = new[]
         {
             new Claim(JwtRegisteredClaimNames.Sub, userId.ToString()),
-            new Claim("token_type", "2fa_temp")
+            new Claim("token_type", tokenType)
         };
 
         var token = new JwtSecurityToken(
@@ -73,8 +74,8 @@ public class TokenService : ITokenService
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
-    // Validate temp token → trả về userId nếu hợp lệ
-    public Guid? ValidateTempToken(string tempToken)
+    // Validate temp token → trả về userId nếu hợp lệ và token type khớp
+    public Guid? ValidateTempToken(string tempToken, string? expectedTokenType = null)
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwt.Key));
 
@@ -95,22 +96,17 @@ public class TokenService : ITokenService
                 },
                 out var validatedToken);
 
-            // Log để debug
-            _logger.LogInformation("Token claims: {Claims}",
-                string.Join(", ", principal.Claims.Select(c => $"{c.Type}={c.Value}")));
-
             var tokenType = principal.FindFirstValue("token_type");
-            _logger.LogInformation("Token type: {TokenType}", tokenType);
-
-            if (tokenType != "2fa_temp")
-            {
-                _logger.LogWarning("Token type mismatch: {TokenType}", tokenType);
+            
+            // Nếu expectedTokenType được chỉ định, phải khớp
+            if (expectedTokenType != null && tokenType != expectedTokenType)
                 return null;
-            }
+            
+            // Nếu không chỉ định, chấp nhận cả 2fa_temp và change_password_temp (backward compatibility)
+            if (expectedTokenType == null && tokenType != "2fa_temp" && tokenType != "change_password_temp")
+                return null;
 
             var sub = principal.FindFirstValue(JwtRegisteredClaimNames.Sub);
-            _logger.LogInformation("Sub: {Sub}", sub);
-
             return Guid.TryParse(sub, out var userId) ? userId : null;
         }
         catch (Exception ex)

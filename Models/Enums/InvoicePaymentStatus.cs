@@ -5,6 +5,7 @@
         UNPAID = 0,
         PARTIALLY_PAID = 1,
         PAID = 2,
-        REFUNDED = 3
+        REFUNDED = 3,
+        EXPIRED = 4,
     }
 }

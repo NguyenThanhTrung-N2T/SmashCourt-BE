@@ -1,0 +1,889 @@
+using SmashCourt_BE.Common;
+using SmashCourt_BE.Data;
+using SmashCourt_BE.DTOs.Booking;
+using SmashCourt_BE.Helpers;
+using SmashCourt_BE.Models.Entities;
+using SmashCourt_BE.Models.Enums;
+using SmashCourt_BE.Repositories.IRepository;
+using Microsoft.EntityFrameworkCore;
+
+namespace SmashCourt_BE.Repositories
+{
+    public class BookingRepository : IBookingRepository
+    {
+        private readonly SmashCourtContext _context;
+
+        public BookingRepository(SmashCourtContext context)
+        {
+            _context = context;
+        }
+
+        // Lấy danh sách booking với filter + phân quyền
+        // Owner → thấy tất cả, Manager/Staff → chỉ thấy booking của chi nhánh mình
+        private async Task<Guid?> ResolveScopedBranchIdAsync(Guid? requestedBranchId, string userRole, Guid userId)
+        {
+            if (userRole != UserRole.BRANCH_MANAGER.ToString() &&
+                userRole != UserRole.STAFF.ToString())
+            {
+                return requestedBranchId;
+            }
+
+            return await _context.UserBranches
+                .AsNoTracking()
+                .Where(ub => ub.UserId == userId && ub.IsActive)
+                .Select(ub => (Guid?)ub.BranchId)
+                .FirstOrDefaultAsync();
+        }
+
+        public async Task<PagedResult<Booking>> GetAllAsync(
+            BookingListQuery query, string userRole, Guid userId)
+        {
+            var q = _context.Bookings
+                .AsNoTracking()
+                .Include(b => b.Branch)
+                .Include(b => b.Customer)
+                .Include(b => b.BookingCourts)
+                    .ThenInclude(bc => bc.Court)
+                .Include(b => b.Invoice)
+                    .ThenInclude(i => i!.Payments)
+                        .ThenInclude(p => p.Refunds)
+                .AsQueryable();
+
+            // OWNER → thấy tất cả
+            // MANAGER/STAFF → chỉ thấy chi nhánh mình
+            var scopedBranchId = await ResolveScopedBranchIdAsync(query.BranchId, userRole, userId);
+            if (scopedBranchId.HasValue)
+                q = q.Where(b => b.BranchId == scopedBranchId.Value);
+
+            // Filter
+            if (query.Status.HasValue)
+                q = q.Where(b => b.Status == query.Status);
+
+            if (query.PaymentStatus.HasValue)
+                q = q.Where(b => b.Invoice != null && b.Invoice.PaymentStatus == query.PaymentStatus);
+
+            if (query.CourtId.HasValue)
+                q = q.Where(b => b.BookingCourts.Any(bc => bc.CourtId == query.CourtId.Value));
+
+            if (query.Date.HasValue)
+                q = q.Where(b => b.BookingDate == DateOnly.FromDateTime(query.Date.Value));
+
+            if (query.FromDate.HasValue)
+                q = q.Where(b => b.BookingDate >= DateOnly.FromDateTime(query.FromDate.Value));
+
+            if (query.ToDate.HasValue)
+                q = q.Where(b => b.BookingDate <= DateOnly.FromDateTime(query.ToDate.Value));
+
+            if (!string.IsNullOrWhiteSpace(query.BookingCode))
+            {
+                var code = query.BookingCode.Trim().ToLower();
+                q = q.Where(b => b.BookingCode.ToLower().Contains(code));
+            }
+
+            var keyword = query.CustomerKeyword;
+
+            if (!string.IsNullOrWhiteSpace(keyword))
+            {
+                var search = keyword.Trim().ToLower();
+                var normalizedSearch = StringHelper.NormalizeVietnamese(keyword.Trim());
+                q = q.Where(b =>
+                    (b.Customer != null && b.Customer.FullNameNormalized != null && b.Customer.FullNameNormalized.Contains(normalizedSearch)) ||
+                    (b.Customer != null && b.Customer.Phone != null && b.Customer.Phone.Contains(search)) ||
+                    (b.GuestName != null && b.GuestName.ToLower().Contains(search)) ||
+                    (b.GuestPhone != null && b.GuestPhone.Contains(search)) ||
+                    b.BookingCode.ToLower().Contains(search) ||
+                    (b.Invoice != null && b.Invoice.InvoiceCode.ToLower().Contains(search)));
+            }
+
+            var sortBy = query.SortBy?.Trim().ToLowerInvariant();
+            var sortDesc = !string.Equals(query.SortOrder, "asc", StringComparison.OrdinalIgnoreCase);
+            q = sortBy switch
+            {
+                "bookingdate" or "date" => sortDesc
+                    ? q.OrderByDescending(b => b.BookingDate)
+                    : q.OrderBy(b => b.BookingDate),
+                "status" => sortDesc
+                    ? q.OrderByDescending(b => b.Status)
+                    : q.OrderBy(b => b.Status),
+                "customername" or "customer" => sortDesc
+                    ? q.OrderByDescending(b => b.Customer != null ? b.Customer.FullName : b.GuestName)
+                    : q.OrderBy(b => b.Customer != null ? b.Customer.FullName : b.GuestName),
+                "finaltotal" or "total" => sortDesc
+                    ? q.OrderByDescending(b => b.Invoice != null ? b.Invoice.FinalTotal : 0)
+                    : q.OrderBy(b => b.Invoice != null ? b.Invoice.FinalTotal : 0),
+                _ => sortDesc
+                    ? q.OrderByDescending(b => b.CreatedAt)
+                    : q.OrderBy(b => b.CreatedAt)
+            };
+
+            var totalItems = await q.CountAsync();
+            var items = await q
+                .Skip((query.Page - 1) * query.PageSize)
+                .Take(query.PageSize)
+                .ToListAsync();
+
+            return new PagedResult<Booking>
+            {
+                Items = items,
+                TotalItems = totalItems,
+                Page = query.Page,
+                PageSize = query.PageSize
+            };
+        }
+
+        /// <summary>
+        /// Lấy lịch booking theo sân trong một ngày.
+        /// Query tất cả sân trong branch và booking tương ứng, sau đó group theo sân.
+        /// </summary>
+        /// <param name="query">Query parameters: BranchId, Date</param>
+        /// <param name="userRole">Role của user (OWNER, BRANCH_MANAGER, STAFF)</param>
+        /// <param name="userId">User ID (dùng để resolve branch scoping)</param>
+        /// <returns>Danh sách sân kèm lịch booking trong ngày</returns>
+        /// <exception cref="AppException">Throw 400 nếu không có BranchId (sau khi resolve scoping)</exception>
+        /// <remarks>
+        /// **Query strategy:**
+        /// 1. Resolve branch scoping (OWNER vs MANAGER/STAFF)
+        /// 2. Load tất cả sân trong branch (không bao gồm sân INACTIVE)
+        /// 3. Load tất cả booking_courts trong ngày (chỉ booking có status ACTIVE)
+        /// 4. Group booking_courts theo CourtId in-memory
+        /// 5. Map vào DTO
+        /// 
+        /// **Performance:**
+        /// - 2 queries: 1 cho courts, 1 cho booking_courts
+        /// - AsNoTracking (read-only)
+        /// - GroupBy in-memory (sau khi load data)
+        /// 
+        /// **Business logic:**
+        /// - Chỉ hiển thị booking có status ACTIVE (PENDING, CONFIRMED, PAID_ONLINE, IN_PROGRESS, PENDING_PAYMENT)
+        /// - Không hiển thị booking đã hủy hoặc NO_SHOW
+        /// - Sắp xếp sân theo tên, booking theo thời gian bắt đầu
+        /// </remarks>
+        public async Task<List<BookingScheduleCourtDto>> GetScheduleAsync(
+            BookingScheduleQuery query, string userRole, Guid userId)
+        {
+            // 1. Resolve branch scoping (OWNER có thể xem tất cả, MANAGER/STAFF chỉ xem branch mình)
+            var branchId = await ResolveScopedBranchIdAsync(query.BranchId, userRole, userId);
+            if (!branchId.HasValue)
+                throw new AppException(400, "Vui lòng chọn chi nhánh", ErrorCodes.BadRequest);
+
+            var date = DateOnly.FromDateTime(query.Date);
+
+            // Lấy danh sách status active từ helper (single source of truth)
+            var activeStatuses = BookingStatusTransition.GetActiveStatuses();
+
+            // 2. Load tất cả sân trong branch (không bao gồm sân INACTIVE)
+            var courts = await _context.Courts
+                .AsNoTracking()
+                .Where(c => c.BranchId == branchId.Value && c.Status != CourtStatus.INACTIVE)
+                .OrderBy(c => c.Name)
+                .Select(c => new { c.Id, c.Name })
+                .ToListAsync();
+
+            // 3. Load tất cả booking_courts trong ngày (chỉ booking có status ACTIVE)
+            var bookingCourts = await _context.BookingCourts
+                .AsNoTracking()
+                .Where(bc => bc.Court.BranchId == branchId.Value &&
+                             bc.Date == date &&
+                             bc.IsActive &&
+                             activeStatuses.Contains(bc.Booking.Status))
+                .Select(bc => new
+                {
+                    bc.CourtId,
+                    bc.BookingId,
+                    bc.StartTime,
+                    bc.EndTime,
+                    Status = bc.Booking.Status
+                })
+                .OrderBy(bc => bc.StartTime)
+                .ToListAsync();
+
+            // 4. Group booking_courts theo CourtId in-memory
+            var bookingsByCourt = bookingCourts
+                .GroupBy(bc => bc.CourtId)
+                .ToDictionary(g => g.Key, g => g.Select(bc => new BookingScheduleItemDto
+                {
+                    BookingId = bc.BookingId,
+                    StartTime = bc.StartTime.ToString("HH:mm"),
+                    EndTime = bc.EndTime.ToString("HH:mm"),
+                    Status = bc.Status.ToString()
+                }).ToList());
+
+            // 5. Map vào DTO (sân không có booking sẽ có Bookings = [])
+            return courts.Select(c => new BookingScheduleCourtDto
+            {
+                CourtId = c.Id,
+                CourtName = c.Name,
+                Bookings = bookingsByCourt.GetValueOrDefault(c.Id, [])
+            }).ToList();
+        }
+
+        /// <summary>
+        /// Lấy thống kê nhanh cho dashboard booking hôm nay.
+        /// Aggregate dữ liệu từ bookings, invoices, và refunds.
+        /// </summary>
+        /// <param name="query">Query parameters: BranchId (optional)</param>
+        /// <param name="userRole">Role của user (OWNER, BRANCH_MANAGER, STAFF)</param>
+        /// <param name="userId">User ID (dùng để resolve branch scoping)</param>
+        /// <returns>Thống kê tổng quan booking hôm nay</returns>
+        /// <remarks>
+        /// **Query strategy:**
+        /// 1. Resolve branch scoping (OWNER vs MANAGER/STAFF)
+        /// 2. Query bookings hôm nay, group theo status
+        /// 3. Query revenue hôm nay (chỉ tính booking đã thanh toán)
+        /// 4. Query pending refunds (tất cả đơn chờ hoàn tiền, không chỉ hôm nay)
+        /// 5. Aggregate kết quả
+        /// 
+        /// **Performance:**
+        /// - 3 queries: bookings, invoices, refunds
+        /// - AsNoTracking (read-only)
+        /// - GroupBy và SUM ở database level
+        /// 
+        /// **Business logic:**
+        /// - TodayBookings: Tổng số booking hôm nay (tất cả status)
+        /// - ActiveBookings: Chỉ tính booking có status IN_PROGRESS
+        /// - CompletedBookings: Chỉ tính booking có status COMPLETED
+        /// - CancelledBookings: Tính tất cả booking đã hủy (CANCELLED, CANCELLED_PENDING_REFUND, CANCELLED_REFUNDED)
+        /// - TodayRevenue: Chỉ tính invoice có PaymentStatus = PAID và booking không bị hủy
+        /// - PendingRefunds: Tổng số refund có status PENDING (không chỉ hôm nay)
+        /// </remarks>
+       public async Task<BookingDashboardSummaryDto> GetDashboardSummaryAsync(
+            BookingDashboardSummaryQuery query,
+            string userRole,
+            Guid userId)
+        {
+            // 1. Resolve branch scoping
+            var branchId = await ResolveScopedBranchIdAsync(
+                query.BranchId,
+                userRole,
+                userId);
+
+            var today = DateTimeHelper.GetTodayInVietnam();
+
+            // Status definitions
+            var activeStatuses = new[]
+            {
+                BookingStatus.IN_PROGRESS
+            };
+
+            var cancelledStatuses = new[]
+            {
+                BookingStatus.CANCELLED,
+                BookingStatus.CANCELLED_PENDING_REFUND,
+                BookingStatus.CANCELLED_REFUNDED
+            };
+
+            // 2. Query bookings hôm nay, group theo status
+            var bookings = _context.Bookings
+                .AsNoTracking()
+                .Where(b => b.BookingDate == today);
+
+            if (branchId.HasValue)
+            {
+                bookings = bookings.Where(b => b.BranchId == branchId.Value);
+            }
+
+            var statusCounts = await bookings
+                .GroupBy(b => b.Status)
+                .Select(g => new
+                {
+                    Status = g.Key,
+                    Count = g.Count()
+                })
+                .ToListAsync();
+
+            // 3. Revenue hôm nay
+            // Chỉ tính invoice đã thanh toán và booking không bị hủy
+            var todayRevenue = await _context.Invoices
+                .AsNoTracking()
+                .Where(i =>
+                    i.Booking.BookingDate == today &&
+                    i.PaymentStatus == InvoicePaymentStatus.PAID &&
+                    !cancelledStatuses.Contains(i.Booking.Status) &&
+                    (!branchId.HasValue || i.Booking.BranchId == branchId.Value))
+                .SumAsync(i => i.FinalTotal);
+
+            // 4. Pending refunds
+            var pendingRefunds = await _context.Refunds
+                .AsNoTracking()
+                .Where(r =>
+                    r.Status == RefundStatus.PENDING &&
+                    (!branchId.HasValue ||
+                    r.Payment.Invoice.Booking.BranchId == branchId.Value))
+                .CountAsync();
+
+            // 5. Aggregate
+            return new BookingDashboardSummaryDto
+            {
+                // Exclude cancelled bookings
+                TodayBookings = statusCounts
+                    .Where(s => !cancelledStatuses.Contains(s.Status))
+                    .Sum(s => s.Count),
+
+                ActiveBookings = statusCounts
+                    .Where(s => activeStatuses.Contains(s.Status))
+                    .Sum(s => s.Count),
+
+                CompletedBookings = statusCounts
+                    .Where(s => s.Status == BookingStatus.COMPLETED)
+                    .Sum(s => s.Count),
+
+                CancelledBookings = statusCounts
+                    .Where(s => cancelledStatuses.Contains(s.Status))
+                    .Sum(s => s.Count),
+
+                TodayRevenue = todayRevenue,
+
+                PendingRefunds = pendingRefunds
+            };
+        }
+
+        /// <summary>
+        /// Lấy dữ liệu heatmap booking theo tháng.
+        /// Tính toán occupancy rate, booking count, và revenue cho từng ngày trong tháng.
+        /// </summary>
+        /// <param name="query">Query parameters: Year, Month, BranchId (optional)</param>
+        /// <param name="userRole">Role của user (OWNER, BRANCH_MANAGER, STAFF)</param>
+        /// <param name="userId">User ID (dùng để resolve branch scoping)</param>
+        /// <returns>Danh sách dữ liệu booking theo từng ngày trong tháng (31 items max)</returns>
+        /// <remarks>
+        /// **Query strategy:**
+        /// 1. Resolve branch scoping (OWNER vs MANAGER/STAFF)
+        /// 2. Tính dailyAvailableHours = (closeTime - openTime) × số sân
+        /// 3. Query booking counts theo ngày (group by BookingDate)
+        /// 4. Query booked hours theo ngày (sum duration của booking_courts)
+        /// 5. Query revenue theo ngày (sum FinalTotal của invoices)
+        /// 6. Loop qua từng ngày trong tháng, tính occupancy rate
+        /// 
+        /// **Performance:**
+        /// - 5 queries: branches, courts, bookings, booking_courts, invoices
+        /// - AsNoTracking (read-only)
+        /// - GroupBy và SUM ở database level
+        /// - ToDictionary để lookup nhanh
+        /// 
+        /// **Business logic:**
+        /// - Chỉ tính booking có status hợp lệ (PENDING, CONFIRMED, PAID_ONLINE, IN_PROGRESS, PENDING_PAYMENT, COMPLETED)
+        /// - Không tính booking đã hủy hoặc NO_SHOW
+        /// - OccupancyRate = bookedHours / dailyAvailableHours
+        /// - Nếu không có sân nào → occupancyRate = 0
+        /// 
+        /// **Cách tính OccupancyRate:**
+        /// - Ví dụ: Branch có 5 sân, mở cửa 8h-22h (14 giờ/ngày)
+        /// - dailyAvailableHours = 14 × 5 = 70 giờ
+        /// - Ngày 1/1: có 45 giờ đã đặt → occupancyRate = 45/70 = 0.64 (64%)
+        /// - Ngày 2/1: có 60 giờ đã đặt → occupancyRate = 60/70 = 0.86 (86%)
+        /// </remarks>
+        public async Task<List<BookingCalendarHeatmapDto>> GetCalendarHeatmapAsync(
+            BookingCalendarHeatmapQuery query, string userRole, Guid userId)
+        {
+            // 1. Resolve branch scoping
+            var branchId = await ResolveScopedBranchIdAsync(query.BranchId, userRole, userId);
+            var startDate = new DateOnly(query.Year, query.Month, 1);
+            var endDate = startDate.AddMonths(1).AddDays(-1);
+
+            // 2. Load branches (để lấy OpenTime, CloseTime)
+            var branchesQuery = _context.Branches.AsNoTracking().AsQueryable();
+            if (branchId.HasValue)
+                branchesQuery = branchesQuery.Where(b => b.Id == branchId.Value);
+
+            var branches = await branchesQuery
+                .Select(b => new { b.Id, b.OpenTime, b.CloseTime })
+                .ToListAsync();
+
+            var branchIds = branches.Select(b => b.Id).ToList();
+
+            // 3. Đếm số sân của mỗi branch (không tính sân INACTIVE hoặc SUSPENDED)
+            var courtCounts = await _context.Courts
+                .AsNoTracking()
+                .Where(c => branchIds.Contains(c.BranchId) &&
+                            c.Status != CourtStatus.INACTIVE &&
+                            c.Status != CourtStatus.SUSPENDED)
+                .GroupBy(c => c.BranchId)
+                .Select(g => new { BranchId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.BranchId, x => x.Count);
+
+            // 4. Tính dailyAvailableHours = tổng (closeTime - openTime) × số sân
+            var dailyAvailableHours = branches.Sum(b =>
+                (decimal)((b.CloseTime - b.OpenTime).TotalHours * courtCounts.GetValueOrDefault(b.Id, 0)));
+
+            // 5. Danh sách status hợp lệ (không tính booking đã hủy hoặc NO_SHOW)
+            var countedStatuses = new[]
+            {
+                BookingStatus.PENDING,
+                BookingStatus.CONFIRMED,
+                BookingStatus.PAID_ONLINE,
+                BookingStatus.IN_PROGRESS,
+                BookingStatus.PENDING_PAYMENT,
+                BookingStatus.COMPLETED
+            };
+
+            // 6. Query booking counts theo ngày (group by BookingDate)
+            var bookingCounts = await _context.Bookings
+                .AsNoTracking()
+                .Where(b => b.BookingDate >= startDate &&
+                            b.BookingDate <= endDate &&
+                            countedStatuses.Contains(b.Status) &&
+                            (!branchId.HasValue || b.BranchId == branchId.Value))
+                .GroupBy(b => b.BookingDate)
+                .Select(g => new { Date = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.Date, x => x.Count);
+
+            // 7. Query booked hours theo ngày (sum duration của booking_courts)
+            var bookedHours = await _context.BookingCourts
+                .AsNoTracking()
+                .Where(bc => bc.Date >= startDate &&
+                             bc.Date <= endDate &&
+                             countedStatuses.Contains(bc.Booking.Status) &&
+                             (!branchId.HasValue || bc.Booking.BranchId == branchId.Value))
+                .GroupBy(bc => bc.Date)
+                .Select(g => new
+                {
+                    Date = g.Key,
+                    Hours = g.Sum(bc => (decimal)(bc.EndTime - bc.StartTime).TotalHours)
+                })
+                .ToDictionaryAsync(x => x.Date, x => x.Hours);
+
+            // 8. Query revenue theo ngày (sum FinalTotal của invoices đã thanh toán)
+            var revenue = await _context.Invoices
+                .AsNoTracking()
+                .Where(i => i.Booking.BookingDate >= startDate &&
+                            i.Booking.BookingDate <= endDate &&
+                            i.PaymentStatus == InvoicePaymentStatus.PAID &&
+                            (!branchId.HasValue || i.Booking.BranchId == branchId.Value))
+                .GroupBy(i => i.Booking.BookingDate)
+                .Select(g => new { Date = g.Key, Revenue = g.Sum(i => i.FinalTotal) })
+                .ToDictionaryAsync(x => x.Date, x => x.Revenue);
+
+            // 9. Loop qua từng ngày trong tháng, tính occupancy rate
+            var result = new List<BookingCalendarHeatmapDto>();
+            for (var date = startDate; date <= endDate; date = date.AddDays(1))
+            {
+                // Tính occupancy rate = bookedHours / dailyAvailableHours
+                var occupancyRate = dailyAvailableHours > 0
+                    ? Math.Round(bookedHours.GetValueOrDefault(date, 0) / dailyAvailableHours, 2)
+                    : 0;
+
+                result.Add(new BookingCalendarHeatmapDto
+                {
+                    Date = date.ToString("yyyy-MM-dd"),
+                    BookingCount = bookingCounts.GetValueOrDefault(date, 0),
+                    OccupancyRate = occupancyRate,
+                    Revenue = revenue.GetValueOrDefault(date, 0)
+                });
+            }
+
+            return result;
+        }
+
+        public async Task<PagedResult<Booking>> GetByCustomerIdAsync(
+            Guid customerId, BookingListQuery query)
+        {
+            var q = _context.Bookings
+                .Include(b => b.Branch)
+                .Include(b => b.Customer)
+                .Include(b => b.BookingCourts)
+                    .ThenInclude(bc => bc.Court)
+                        .ThenInclude(c => c.CourtType) // ✅ ADDED: Include CourtType
+                .Include(b => b.BookingCourts)
+                    .ThenInclude(bc => bc.BookingPriceItems) // ✅ ADDED: Include BookingPriceItems
+                .Include(b => b.Invoice)
+                    .ThenInclude(i => i!.Payments)
+                        .ThenInclude(p => p.Refunds)
+                .Where(b => b.CustomerId == customerId);
+
+            // Apply filters
+            if (query.BranchId.HasValue)
+                q = q.Where(b => b.BranchId == query.BranchId.Value);
+
+            if (query.Status.HasValue)
+                q = q.Where(b => b.Status == query.Status.Value);
+
+            // Filter exact booking date
+            if (query.Date.HasValue)
+            {
+                var date = DateOnly.FromDateTime(query.Date.Value);
+                q = q.Where(b => b.BookingDate == date);
+            }
+
+            if (query.Date.HasValue)
+            {
+                var date = DateOnly.FromDateTime(query.Date.Value);
+                q = q.Where(b => b.BookingDate == date);
+            }
+            else
+            {
+                if (query.FromDate.HasValue)
+                {
+                    var fromDate = DateOnly.FromDateTime(query.FromDate.Value);
+                    q = q.Where(b => b.BookingDate >= fromDate);
+                }
+
+                if (query.ToDate.HasValue)
+                {
+                    var toDate = DateOnly.FromDateTime(query.ToDate.Value);
+                    q = q.Where(b => b.BookingDate <= toDate);
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(query.BookingCode))
+            {
+                var code = query.BookingCode.Trim().ToLower();
+                q = q.Where(b => b.BookingCode.ToLower().Contains(code));
+            }
+
+            if (!string.IsNullOrWhiteSpace(query.CustomerKeyword))
+            {
+                var search = query.CustomerKeyword.Trim().ToLower();
+                var normalizedSearch = StringHelper.NormalizeVietnamese(query.CustomerKeyword.Trim());
+                q = q.Where(b =>
+                    (b.Customer != null && b.Customer.FullNameNormalized != null && b.Customer.FullNameNormalized.Contains(normalizedSearch)) ||
+                    (b.Customer != null && b.Customer.Phone != null && b.Customer.Phone.Contains(search)) ||
+                    (b.GuestName != null && b.GuestName.ToLower().Contains(search)) ||
+                    (b.GuestPhone != null && b.GuestPhone.Contains(search)) ||
+                    b.BookingCode.ToLower().Contains(search) ||
+                    (b.Invoice != null && b.Invoice.InvoiceCode.ToLower().Contains(search))
+                );
+            }
+
+            q = q.OrderByDescending(b => b.CreatedAt);
+
+            var totalItems = await q.CountAsync();
+            var items = await q
+                .Skip((query.Page - 1) * query.PageSize)
+                .Take(query.PageSize)
+                .ToListAsync();
+
+            return new PagedResult<Booking>
+            {
+                Items = items,
+                TotalItems = totalItems,
+                Page = query.Page,
+                PageSize = query.PageSize
+            };
+        }
+
+        // Lấy thông tin booking theo id, có phân quyền
+        public async Task<Booking?> GetByIdWithDetailsAsync(Guid id)
+        {
+            return await _context.Bookings
+                .Include(b => b.Branch)
+                .Include(b => b.Customer)
+                .Include(b => b.BookingCourts)
+                    .ThenInclude(bc => bc.Court)
+                .Include(b => b.BookingCourts)
+                    .ThenInclude(bc => bc.BookingPriceItems)
+                        .ThenInclude(bpi => bpi.TimeSlot)
+                .Include(b => b.BookingServices)
+                .Include(b => b.Invoice)
+                    .ThenInclude(i => i!.Payments)   // cần để tạo refund record khi hủy
+                        .ThenInclude(p => p.Refunds)  // cần để tính tổng refund amount
+                .Include(b => b.BookingPromotion)
+                .FirstOrDefaultAsync(b => b.Id == id);
+        }
+
+        /// <summary>
+        /// Lấy booking status (lightweight query - chỉ lấy status)
+        /// Dùng để re-check status trong transaction, tránh race condition
+        /// </summary>
+        /// <param name="id">Booking ID</param>
+        /// <returns>BookingStatus hiện tại</returns>
+        public async Task<BookingStatus> GetBookingStatusAsync(Guid id)
+        {
+            return await _context.Bookings
+                .Where(b => b.Id == id)
+                .Select(b => b.Status)
+                .FirstOrDefaultAsync();
+        }
+
+
+        // Lấy thông tin booking theo token hủy (dùng cho khách hàng hủy booking online)
+        public async Task<Booking?> GetByCancelTokenAsync(string tokenHash)
+        {
+            return await _context.Bookings
+                .Include(b => b.Branch)
+                .Include(b => b.Customer)
+                .Include(b => b.BookingCourts)
+                    .ThenInclude(bc => bc.Court)
+                .Include(b => b.Invoice)
+                    .ThenInclude(i => i!.Payments)   // cần để tạo refund record khi hủy
+                        .ThenInclude(p => p.Refunds)  // cần để tính tổng refund amount
+                .FirstOrDefaultAsync(b => b.CancelTokenHash == tokenHash);
+        }
+
+        // Check slot có bị đặt chưa — check booking_courts active VÀ booking status active
+        public async Task<bool> HasOverlapAsync(
+            Guid courtId, DateOnly date,
+            TimeOnly startTime, TimeOnly endTime)
+        {
+            // Lấy danh sách status active từ BookingStatusTransition helper
+            var activeStatuses = BookingStatusTransition.GetActiveStatuses();
+
+            return await _context.BookingCourts
+                .Where(bc =>
+                    bc.CourtId == courtId &&
+                    bc.Date == date &&
+                    bc.IsActive &&
+                    activeStatuses.Contains(bc.Booking.Status) &&  // Chỉ tính booking đang active
+                    bc.StartTime < endTime &&
+                    bc.EndTime > startTime)
+                .AnyAsync();
+        }
+
+        // Batch load tất cả BookingCourt active cho court trong ngày — dùng cho TimeGrid
+        public async Task<List<BookingCourt>> GetActiveByCourtAndDateAsync(
+            Guid courtId, DateOnly date)
+        {
+            // Source of truth: Booking.Status (không phụ thuộc IsActive)
+            // IsActive là derived state → có thể bị bug khi update
+            // Chỉ lọc theo status thực sự chiếm sân
+            var validStatuses = new[]
+            {
+                BookingStatus.PENDING,
+                BookingStatus.CONFIRMED,
+                BookingStatus.PAID_ONLINE,
+                BookingStatus.IN_PROGRESS
+            };
+
+            return await _context.BookingCourts
+                .Include(bc => bc.Booking)
+                .Where(bc =>
+                    bc.CourtId == courtId &&
+                    bc.Date == date &&
+                    validStatuses.Contains(bc.Booking.Status))  // ✅ Chỉ dựa vào Status
+                .ToListAsync();
+        }
+
+        // tạo mới booking
+        public async Task<Booking> CreateAsync(Booking booking)
+        {
+            _context.Bookings.Add(booking);
+            await _context.SaveChangesAsync();
+            return booking;
+        }
+
+        // cập nhật booking
+        public async Task UpdateAsync(Booking booking)
+        {
+            _context.Bookings.Update(booking);
+            await _context.SaveChangesAsync();
+        }
+
+        // Thêm mới booking court
+        public async Task<BookingCourt> AddCourtAsync(BookingCourt bookingCourt)
+        {
+            _context.BookingCourts.Add(bookingCourt);
+            await _context.SaveChangesAsync();
+            return bookingCourt; // Id đã được gen
+        }
+
+        // thêm nhiều booking price item cùng lúc
+        public async Task AddPriceItemsAsync(List<BookingPriceItem> items)
+        {
+            _context.BookingPriceItems.AddRange(items);
+            await _context.SaveChangesAsync();
+        }
+
+        // Thêm promotion vào booking
+        public async Task AddPromotionAsync(BookingPromotion promotion)
+        {
+            _context.BookingPromotions.Add(promotion);
+            await _context.SaveChangesAsync();
+        }
+
+        // Thêm dịch vụ vào booking
+        public async Task AddServiceAsync(BookingService service)
+        {
+            _context.BookingServices.Add(service);
+            await _context.SaveChangesAsync();
+        }
+
+        // Cập nhật dịch vụ trong booking
+        public async Task UpdateServiceAsync(BookingService service)
+        {
+            _context.BookingServices.Update(service);
+            await _context.SaveChangesAsync();
+        }
+
+        /// <summary>
+        /// Cập nhật quantity của service một cách atomic để tránh race condition
+        /// Sử dụng ExecuteUpdateAsync với SET quantity = quantity + @delta
+        /// </summary>
+        /// <param name="serviceId">ID của booking service</param>
+        /// <param name="quantityToAdd">Số lượng cần thêm (có thể âm để trừ)</param>
+        /// <returns>Quantity mới sau khi update</returns>
+        /// <remarks>
+        /// Race condition protection:
+        /// - Thread A và B cùng đọc quantity = 1
+        /// - Nếu dùng read-modify-write: cả 2 đều update thành 2 (lost update)
+        /// - Dùng atomic update: UPDATE SET quantity = quantity + @delta
+        /// - DB đảm bảo serializable → không bị lost update
+        /// </remarks>
+        public async Task<int> UpdateServiceQuantityAtomicAsync(Guid serviceId, int quantityToAdd)
+        {
+            // Atomic update: UPDATE booking_services SET quantity = quantity + @quantityToAdd
+            // WHERE id = @serviceId
+            await _context.BookingServices
+                .Where(s => s.Id == serviceId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(x => x.Quantity, x => x.Quantity + quantityToAdd));
+
+            // Đọc lại giá trị mới để return
+            var newQuantity = await _context.BookingServices
+                .Where(s => s.Id == serviceId)
+                .Select(s => s.Quantity)
+                .FirstOrDefaultAsync();
+
+            return newQuantity;
+        }
+
+        // Tính tổng service fee của booking (query từ DB, không dùng memory)
+        public async Task<decimal> CalculateServiceFeeAsync(Guid bookingId)
+        {
+            return await _context.BookingServices
+                .Where(s => s.BookingId == bookingId)
+                .SumAsync(s => s.UnitPrice * s.Quantity);
+        }
+
+        // Xóa dịch vụ khỏi booking
+        public async Task RemoveServiceAsync(BookingService service)
+        {
+            _context.BookingServices.Remove(service);
+            await _context.SaveChangesAsync();
+        }
+
+        // Cập nhật trạng thái active của booking court (dùng để check-in/check-out)
+        public async Task UpdateCourtActiveStatusAsync(Guid bookingId, bool isActive)
+        {
+            await _context.BookingCourts
+                .Where(bc => bc.BookingId == bookingId)
+                .ExecuteUpdateAsync(s =>
+                    s.SetProperty(bc => bc.IsActive, isActive));
+        }
+
+        /// <summary>
+        /// Atomic consume cancel token để tránh race condition khi hủy booking qua link
+        /// Sử dụng WHERE condition để đảm bảo chỉ 1 request thành công (first-come-first-served)
+        /// </summary>
+        /// <param name="bookingId">Booking ID</param>
+        /// <param name="tokenHash">Token hash (SHA256)</param>
+        /// <param name="consumedAt">Thời gian consume token</param>
+        /// <returns>true nếu consume thành công, false nếu token đã được dùng</returns>
+        /// <remarks>
+        /// Race condition protection:
+        /// - User 1 và User 2 click cùng link → cả 2 gọi TryConsumeTokenAsync
+        /// - WHERE condition: CancelTokenUsedAt == null
+        /// - Chỉ 1 request thắng (rowsAffected = 1), request kia thua (rowsAffected = 0)
+        /// - Request thua sẽ nhận "Link đã được sử dụng"
+        /// </remarks>
+        public async Task<bool> TryConsumeTokenAsync(Guid bookingId, string tokenHash, DateTime consumedAt)
+        {
+            // ExecuteUpdateAsync với WHERE condition = Atomic operation
+            // UPDATE bookings SET cancel_token_used_at = @consumedAt
+            // WHERE id = @bookingId AND cancel_token_hash = @tokenHash AND cancel_token_used_at IS NULL
+            var rowsAffected = await _context.Bookings
+                .Where(b => b.Id == bookingId &&
+                           b.CancelTokenHash == tokenHash &&
+                           b.CancelTokenUsedAt == null)  // Chỉ update nếu chưa dùng
+                .ExecuteUpdateAsync(s =>
+                    s.SetProperty(b => b.CancelTokenUsedAt, consumedAt));
+
+            // rowsAffected = 1 → thành công (token chưa dùng)
+            // rowsAffected = 0 → thất bại (token đã dùng hoặc không tồn tại)
+            return rowsAffected > 0;
+        }
+
+        /// <summary>
+        /// Cập nhật booking status với conditional update để tránh race condition
+        /// Sử dụng WHERE condition để đảm bảo chỉ update nếu status vẫn đúng như mong đợi
+        /// </summary>
+        /// <param name="bookingId">ID của booking</param>
+        /// <param name="newStatus">Status mới</param>
+        /// <param name="expectedStatus">Status mong đợi (status cũ trước khi update)</param>
+        /// <returns>Số rows affected (1 = thành công, 0 = conflict)</returns>
+        /// <remarks>
+        /// Race condition protection cho checkout:
+        /// - Staff A và Staff B cùng checkout 1 booking
+        /// - WHERE condition: status = expectedStatus (IN_PROGRESS hoặc PENDING_PAYMENT)
+        /// - Chỉ 1 request thắng (rowsAffected = 1), request kia thua (rowsAffected = 0)
+        /// - Request thua sẽ nhận "Đơn đã được checkout bởi người khác"
+        /// 
+        /// DB-level atomic operation:
+        /// UPDATE bookings SET status = @newStatus, updated_at = NOW()
+        /// WHERE id = @bookingId AND status = @expectedStatus
+        /// </remarks>
+        public async Task<int> UpdateWithStatusCheckAsync(
+            Guid bookingId,
+            BookingStatus newStatus,
+            BookingStatus expectedStatus)
+        {
+            // ExecuteUpdateAsync với WHERE condition = Atomic operation
+            // Pass giá trị trực tiếp, KHÔNG dùng entity tracking
+            var rowsAffected = await _context.Bookings
+                .Where(b => b.Id == bookingId && b.Status == expectedStatus)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(b => b.Status, newStatus)  // ← Pass giá trị trực tiếp
+                    .SetProperty(b => b.UpdatedAt, DateTime.UtcNow));
+
+            // rowsAffected = 1 → thành công (status đúng như mong đợi)
+            // rowsAffected = 0 → conflict (status đã thay đổi bởi request khác)
+            return rowsAffected;
+        }
+
+        /// <summary>
+        /// Atomic update booking khi thanh toán thành công (VNPay IPN)
+        /// Update TẤT CẢ fields trong 1 operation duy nhất để tránh race condition
+        /// </summary>
+        /// <param name="bookingId">ID của booking</param>
+        /// <param name="expectedStatus">Status mong đợi (PENDING)</param>
+        /// <param name="cancelTokenHash">Cancel token hash</param>
+        /// <param name="cancelTokenExpiry">Cancel token expiry</param>
+        /// <param name="now">Timestamp hiện tại</param>
+        /// <returns>Số rows affected (1 = thành công, 0 = conflict)</returns>
+        /// <remarks>
+        /// Race condition protection cho VNPay payment:
+        /// - IPN và Confirm có thể gọi cùng lúc
+        /// - WHERE condition: status = PENDING
+        /// - Chỉ 1 request thắng (rowsAffected = 1), request kia thua (rowsAffected = 0)
+        /// 
+        /// DB-level atomic operation (1 UPDATE statement duy nhất):
+        /// UPDATE bookings 
+        /// SET status = 'PAID_ONLINE',
+        ///     expires_at = NULL,
+        ///     cancel_token_hash = @hash,
+        ///     cancel_token_expires_at = @expiry,
+        ///     updated_at = @now
+        /// WHERE id = @bookingId AND status = @expectedStatus
+        /// </remarks>
+        public async Task<int> AtomicUpdatePaymentSuccessAsync(
+            Guid bookingId,
+            BookingStatus expectedStatus,
+            string cancelTokenHash,
+            DateTime cancelTokenExpiry,
+            DateTime now)
+        {
+            // ATOMIC: Tất cả updates trong 1 ExecuteUpdateAsync duy nhất
+            var rowsAffected = await _context.Bookings
+                .Where(b => b.Id == bookingId && b.Status == expectedStatus)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(b => b.Status, BookingStatus.PAID_ONLINE)
+                    .SetProperty(b => b.CancelTokenHash, cancelTokenHash)
+                    .SetProperty(b => b.CancelTokenExpiresAt, cancelTokenExpiry)
+                    .SetProperty(b => b.UpdatedAt, now));
+
+            return rowsAffected;
+        }
+
+        public async Task<int> GetCompletedBookingCountAsync(Guid customerId)
+        {
+            return await _context.Bookings
+                .Where(b => b.CustomerId == customerId && b.Status == BookingStatus.COMPLETED)
+                .CountAsync();
+        }
+        public async Task SetActualEndPlayTimeAsync(Guid bookingId, TimeOnly actualEnd)
+        {
+            await _context.BookingCourts
+                .Where(bc => bc.BookingId == bookingId && bc.IsActive && bc.EndTime > actualEnd)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(bc => bc.ActualEndPlayTime, actualEnd));
+        }
+    }
+}

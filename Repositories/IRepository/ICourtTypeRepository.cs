@@ -1,8 +1,8 @@
 using SmashCourt_BE.Common;
-using SmashCourt_BE.DTOs.CourtType;
 using SmashCourt_BE.Models.Entities;
+using SmashCourt_BE.Models.ViewModels;
 
-namespace SmashCourt_BE.Repositories.Interfaces;
+namespace SmashCourt_BE.Repositories.IRepository;
 
 public interface ICourtTypeRepository
 {

@@ -1,9 +1,10 @@
-﻿using SmashCourt_BE.Common;
+using SmashCourt_BE.Common;
 using SmashCourt_BE.Data;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
 using Microsoft.EntityFrameworkCore;
+using SmashCourt_BE.DTOs.Branch;
 namespace SmashCourt_BE.Repositories
 {
     public class BranchRepository : IBranchRepository
@@ -20,6 +21,8 @@ namespace SmashCourt_BE.Repositories
             int page, int pageSize, bool includeSuspended)
         {
             var query = _context.Branches
+                .Include(b => b.UserBranches.Where(ub => ub.Role == UserBranchRole.MANAGER && ub.IsActive))
+                    .ThenInclude(ub => ub.User)
                 .Where(b => b.Status != BranchStatus.INACTIVE);
 
             // CUSTOMER / chưa đăng nhập → chỉ thấy ACTIVE
@@ -160,6 +163,41 @@ namespace SmashCourt_BE.Repositories
                 .ToListAsync();
         }
 
+        public async Task<List<BranchCourtTypeDto>> GetAllCourtTypeDetailsAsync(Guid branchId)
+        {
+            var systemCourtTypes = await _context.CourtTypes
+                .Where(ct => ct.Status == CourtTypeStatus.ACTIVE)
+                .OrderBy(ct => ct.Name)
+                .ToListAsync();
+
+            var branchCourtTypes = await _context.BranchCourtTypes
+                .Where(bct => bct.BranchId == branchId)
+                .ToDictionaryAsync(bct => bct.CourtTypeId);
+
+            var courtCounts = await _context.Courts
+                .Where(c => c.BranchId == branchId && c.Status != CourtStatus.INACTIVE)
+                .GroupBy(c => c.CourtTypeId)
+                .Select(g => new { CourtTypeId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.CourtTypeId, x => x.Count);
+
+            return systemCourtTypes.Select(ct =>
+            {
+                var bct = branchCourtTypes.GetValueOrDefault(ct.Id);
+                var count = courtCounts.GetValueOrDefault(ct.Id, 0);
+
+                return new BranchCourtTypeDto
+                {
+                    Id = bct?.Id,
+                    CourtTypeId = ct.Id,
+                    CourtTypeName = ct.Name,
+                    CourtTypeDescription = ct.Description,
+                    IsActive = bct?.IsActive ?? false,
+                    CreatedAt = bct?.CreatedAt,
+                    CourtCount = count
+                };
+            }).ToList();
+        }
+
         // lấy thông tin loại sân của chi nhánh theo courtTypeId
         public async Task<BranchCourtType?> GetBranchCourtTypeAsync(Guid branchId, Guid courtTypeId)
         {
@@ -189,16 +227,29 @@ namespace SmashCourt_BE.Repositories
         }
 
         // lấy danh sách dịch vụ của chi nhánh , chỉ lấy ACTIVE
-        public async Task<List<BranchService>> GetServicesAsync(Guid branchId)
+        public async Task<PagedResult<BranchService>> GetServicesAsync(Guid branchId, int page, int pageSize)
         {
-            return await _context.BranchServices
+            var query = _context.BranchServices
                 .Include(bs => bs.Service)
                 .Where(bs =>
                     bs.BranchId == branchId &&
                     bs.Status == BranchServiceStatus.ENABLED &&
                     bs.Service.Status == ServiceStatus.ACTIVE)
-                .OrderBy(bs => bs.Service.Name)
+                .OrderBy(bs => bs.Service.Name);
+
+            var totalItems = await query.CountAsync();
+            var items = await query
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
                 .ToListAsync();
+
+            return new PagedResult<BranchService>
+            {
+                Items = items,
+                TotalItems = totalItems,
+                Page = page,
+                PageSize = pageSize
+            };
         }
 
         // lấy thông tin dịch vụ của chi nhánh theo serviceId
