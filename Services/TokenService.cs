@@ -81,7 +81,7 @@ public class TokenService : ITokenService
 
         try
         {
-            var principal = new JwtSecurityTokenHandler().ValidateToken(
+            var principal = new JwtSecurityTokenHandler { MapInboundClaims = false }.ValidateToken(
                 tempToken,
                 new TokenValidationParameters
                 {
@@ -146,7 +146,7 @@ public class TokenService : ITokenService
 
         try
         {
-            var principal = new JwtSecurityTokenHandler().ValidateToken(
+            var principal = new JwtSecurityTokenHandler { MapInboundClaims = false }.ValidateToken(
                 token,
                 new TokenValidationParameters
                 {

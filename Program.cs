@@ -115,6 +115,9 @@ builder.Services.Configure<Microsoft.AspNetCore.Http.Json.JsonOptions>(options =
     options.SerializerOptions.Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping;
 });
 
+// Đăng ký Unit of Work
+builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
+
 // Đăng ký DI cho Repositories và Services
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IOtpRepository, OtpRepository>();

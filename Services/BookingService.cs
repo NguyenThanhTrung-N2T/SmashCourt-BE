@@ -41,7 +41,7 @@ namespace SmashCourt_BE.Services
         private readonly EmailService _emailService;
         private readonly ICodeGeneratorService _codeGeneratorService;
         private readonly ISlotInterestRepository _slotInterestRepo;
-        private readonly SmashCourtContext _context;
+        private readonly IUnitOfWork _unitOfWork;
         private readonly ILogger<BookingService> _logger;
         private readonly IConfiguration _configuration;
         private readonly IBroadcastService _broadcast;
@@ -68,7 +68,7 @@ namespace SmashCourt_BE.Services
             EmailService emailService,
             ICodeGeneratorService codeGeneratorService,
             ISlotInterestRepository slotInterestRepo,
-            SmashCourtContext context,
+            IUnitOfWork unitOfWork,
             ILogger<BookingService> logger,
             IConfiguration configuration,
             IBroadcastService broadcast)
@@ -94,7 +94,7 @@ namespace SmashCourt_BE.Services
             _emailService = emailService;
             _codeGeneratorService = codeGeneratorService;
             _slotInterestRepo = slotInterestRepo;
-            _context = context;
+            _unitOfWork = unitOfWork;
             _logger = logger;
             _configuration = configuration;
             _broadcast = broadcast;
@@ -479,7 +479,7 @@ namespace SmashCourt_BE.Services
                     // KHÔNG rethrow ở đây — để using block thoát bình thường và gọi Dispose(),
                     // Dispose() sẽ issue ROLLBACK + reset PG connection về trạng thái sạch.
                     // CreateSlotUnavailableExceptionAsync (có ghi DB) sẽ được gọi SAU using block.
-                    _context.ChangeTracker.Clear();
+                    _unitOfWork.ClearChangeTracker();
                     isRaceCondition = true;
                 }
             } // ← TransactionScope.Dispose() chạy tại đây: ROLLBACK + PG connection reset
@@ -756,7 +756,7 @@ namespace SmashCourt_BE.Services
                     // using block sẽ bắt exception này khi unwind, gọi Dispose() → ROLLBACK.
                     _logger.LogWarning(ex,
                         "EXCLUDE constraint violated — race condition detected for walk-in booking");
-                    _context.ChangeTracker.Clear();
+                    _unitOfWork.ClearChangeTracker();
                     throw new AppException(400,
                         "Sân đã được đặt bởi người khác, vui lòng chọn slot khác",
                         ErrorCodes.BadRequest);
