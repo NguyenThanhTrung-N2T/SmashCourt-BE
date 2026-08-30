@@ -22,6 +22,9 @@ public class PromotionEngineService
     /// </summary>
     public async Task<PromotionValidationResult> ValidatePromotionAsync(string code, PromotionContext context)
     {
+        if (string.IsNullOrWhiteSpace(code))
+            return Fail("Mã khuyến mãi không được để trống");
+
         // 1. Tìm promotion theo code + không bị xóa (kèm conditions)
         var promotion = await _promotionRepo.GetByCodeNotDeletedAsync(code);
 
