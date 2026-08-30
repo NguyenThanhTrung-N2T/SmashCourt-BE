@@ -33,6 +33,17 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Remove="SmashCourt-BE.Tests\**" />
+    <Content Remove="SmashCourt-BE.Tests\**" />
+    <EmbeddedResource Remove="SmashCourt-BE.Tests\**" />
+    <None Remove="SmashCourt-BE.Tests\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include=".github\copilot-instructions.md" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Update="Templates\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
