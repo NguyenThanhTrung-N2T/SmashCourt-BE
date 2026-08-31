@@ -107,4 +107,49 @@ public class OtpServiceTests
         Assert.NotNull(hash);
         Assert.NotEmpty(hash);
     }
+
+    [Fact]
+    public void GenerateCode_WhenCalledManyTimes_AlwaysReturnsCodeInRange()
+    {
+        var service = new OtpService(TestConfigurationFactory.Create());
+
+        var codes = Enumerable.Range(0, 50).Select(_ => service.GenerateCode()).ToList();
+
+        Assert.All(codes, code =>
+        {
+            Assert.True(int.Parse(code) >= 0);
+            Assert.True(int.Parse(code) <= 999999);
+        });
+    }
+
+    [Fact]
+    public void HashCode_WhenSecretIsMissing_ThrowsConfigurationError()
+    {
+        var configuration = TestConfigurationFactory.Create(
+            new Dictionary<string, string?> { ["Otp:HmacSecret"] = null });
+        var service = new OtpService(configuration);
+
+        Assert.Throws<InvalidOperationException>(() => service.HashCode("123456"));
+    }
+
+    [Fact]
+    public void HashCode_WhenConfigured_ReturnsSha256SizedHexValue()
+    {
+        var service = new OtpService(TestConfigurationFactory.Create());
+
+        var hash = service.HashCode(TestConstants.ValidOtpCode);
+
+        Assert.Equal(64, hash.Length);
+        Assert.Matches("^[0-9a-f]{64}$", hash);
+    }
+
+    [Fact]
+    public void VerifyCode_WhenStoredHashIsInvalid_ReturnsFalse()
+    {
+        var service = new OtpService(TestConfigurationFactory.Create());
+
+        var result = service.VerifyCode(TestConstants.ValidOtpCode, "invalid");
+
+        Assert.False(result);
+    }
 }

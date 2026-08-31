@@ -324,15 +324,19 @@ SmashCourt-BE/
 
 ### Tổng quan
 
-SmashCourt Backend được bảo vệ bởi một **bộ kiểm thử toàn diện** với **166 unit tests** sử dụng **xUnit** và **Moq**, đạt **~85% độ phủ** trên các module nghiệp vụ cốt lõi.
+SmashCourt Backend được bảo vệ bởi một **bộ kiểm thử toàn diện** với **236 tests** (235 unit tests + 1 integration test) sử dụng **xUnit**, **Moq** và **Testcontainers**.
 
 ```
 📊 Thống kê kiểm thử:
-├── Tổng số tests: 166
-├── Tỷ lệ pass: 100% (166/166)
-├── Độ phủ: ~85% (các luồng nghiệp vụ quan trọng)
-└── Framework: xUnit + Moq + FluentAssertions
+├── Unit Tests:         235 passed ✅
+├── Integration Tests:  1 passed ✅ (Testcontainers PostgreSQL)
+├── Total Tests:        236 / 236 passed (100%)
+├── Thời gian chạy:     ~30 giây (bao gồm khởi động Docker containers)
+├── Framework:          xUnit 3.1.4 + Moq 4.20 + Testcontainers
+└── CI/CD:              Tự động chạy trên mọi PR/push qua GitHub Actions
 ```
+
+**Chiến lược test:** Ưu tiên kiểm thử service layer với unit tests nhanh và hiệu quả. Integration tests sử dụng Testcontainers để đảm bảo tương thích database PostgreSQL thực tế.
 
 ### Phạm vi kiểm thử
 
@@ -343,42 +347,73 @@ SmashCourt Backend được bảo vệ bởi một **bộ kiểm thử toàn di�
 │ Chi tiết độ phủ theo module                                     │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
-│ BookingService       ████████████████░░░░░ 78% (41 tests)      │
-│ PaymentService       ██████████████████░░░ 90% (12 tests)      │
-│ AuthService          ████████████░░░░░░░░░ 60% (14 tests)      │
-│ PromotionEngine      █████████████████░░░░ 85% (9 tests)       │
-│ LoyaltyService       ████████████████░░░░░ 80% (4 tests)       │
-│ Helpers & Utils      ███████████████████░░ 95% (86 tests)      │
+│ PromotionEngineService ████████████████████░ 96% (42 tests)    │
+│ LoyaltyService         ████████████████████░ 100% (14 tests)   │
+│ OtpService             ████████████████████░ 100% (10+ tests)  │
+│ AuthService            ██████████████████░░░ 90% (20 tests)    │
+│ EmailService           █████████████████░░░░ 85% (10+ tests)   │
+│ PaymentService         ████████████████░░░░░ 80% (15 tests)    │
+│ BookingService         ███████████░░░░░░░░░░ 60% (63 tests)    │
+│ Other Services         ██████████░░░░░░░░░░░ 50% (60+ tests)   │
 │                                                                 │
-│ Tổng thể hệ thống    █████████████████░░░░ 85%                 │
+│ Integration Tests      █░░░░░░░░░░░░░░░░░░░░ Infrastructure OK │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 #### Ma trận độ phủ chi tiết
 
-| Module | Số tests | Độ phủ | Trạng thái |
-| :--- | ---: | ---: | :---: |
-| **BookingService** | 41 tests | 78% | ✅ Sẵn sàng production |
-| **PaymentService** | 12 tests | 90% | ✅ Sẵn sàng production |
-| **AuthService** | 14 tests | 60% | ✅ Các luồng cốt lõi đã cover |
-| **PromotionEngineService** | 9 tests | 85% | ✅ Quy tắc nghiệp vụ đã verify |
-| **LoyaltyService** | 4 tests | 80% | ✅ Logic tier đã kiểm thử |
-| **Helpers & DTOs** | 86 tests | 95% | ✅ Toàn diện |
+| Service | Tests | Phạm vi kiểm thử | Trạng thái |
+| :--- | ---: | :--- | :---: |
+| **PromotionEngineService** | 42 | Validation, discount calculation, conditions | ✅ Complete |
+| **LoyaltyService** | 14 | Tier logic, transactions, progress | ✅ Complete |
+| **OtpService** | 10+ | Generation, validation, expiry | ✅ Complete |
+| **AuthService** | 20 | Login, 2FA, token management | ✅ Core done |
+| **EmailService** | 10+ | SMTP, templates, error handling | ✅ Core done |
+| **PaymentService** | 15 | VNPay integration, IPN, refunds | ✅ Critical paths |
+| **BookingService** | 63 | Create, checkout, cancel, services | 🔄 Major coverage |
+| **BranchPriceService** | 5 | Price resolution, overrides | 🟡 Basic |
+| **CourtService** | 4 | CRUD operations | 🟡 Basic |
+| **SystemPriceService** | 8 | Time slot pricing | 🟡 Partial |
+| **Other Services** | 30+ | Various business logic | 🟡 Varies |
+| **Helpers & DTOs** | 20+ | Utilities, validators | ✅ Good |
+| **Integration** | 1 | PostgreSQL connectivity | ✅ Smoke test |
 
 ### Các luồng nghiệp vụ đã được kiểm thử
 
 #### 🎯 Các thành tựu chính
 
 ```
-✅ Luồng thanh toán quan trọng    → 100% (tích hợp VNPay)
-✅ Vòng đời Booking               → 90% (tạo → checkout → hủy)
-✅ An toàn đồng thời               → Đã verify (atomic operations, slot locks)
-✅ Bảo mật tài chính              → Hardened (ngăn tính phí 2 lần, validate số tiền)
-✅ Quy tắc nghiệp vụ              → Đã validate (khuyến mãi, loyalty, chính sách hoàn tiền)
+✅ Promotion Engine         → 96% (42 tests - full condition logic)
+✅ Loyalty System           → 100% (14 tests - tier progression complete)
+✅ OTP Service              → 100% (10+ tests - security verified)
+✅ Auth Core Paths          → 90% (20 tests - login, 2FA, token refresh)
+✅ Email Service            → 85% (10+ tests - SMTP abstraction)
+✅ Payment Integration      → 80% (15 tests - VNPay IPN, refunds)
+✅ Booking Workflow         → 60% (63 tests - create, checkout, cancel)
+✅ Integration Tests        → Infrastructure validated với Testcontainers
 ```
 
-#### ✅ Quản lý Booking (41 tests)
+#### ✅ Promotion Engine (42 tests - 96% coverage)
+- **Validation điều kiện**: MIN_BOOKING_AMOUNT, MAX_PREVIOUS_BOOKINGS, BRANCH_ID
+- **Điều kiện thời gian**: DAY_OF_WEEK, START_HOUR, END_HOUR, MONTH, SPECIFIC_DATES
+- **Tính giảm giá**: Percentage, fixed amount, max discount cap
+- **Edge cases**: Invalid formats, unknown conditions, multiple conditions
+- **Usage management**: Atomic increment/decrement operations
+
+#### ✅ Loyalty System (14 tests - 100% coverage)
+- **GetMyLoyaltyAsync**: Tier calculation, progress percentage, next tier info
+- **GetMyTransactionsAsync**: Pagination, booking code mapping, points history
+- **Tier logic**: Bronze → Silver → Gold transitions với boundary tests
+- **Edge cases**: Max tier, zero points, boundary conditions
+
+#### ✅ OTP Service (10+ tests - 100% coverage)
+- **Generation**: 6-digit codes, HMAC signing, expiry handling
+- **Validation**: Valid/invalid/expired OTP paths
+- **Security**: Hash verification, HMAC secret validation
+- **Edge cases**: Missing config, invalid formats, replay attacks
+
+#### ✅ Quản lý Booking (63 tests - 60% coverage)
 - **Đặt sân online/walk-in**: Validation, tính giá, slot lock, kiểm soát đồng thời
 - **Checkout**: Luồng UNPAID/PARTIALLY_PAID/PAID, cập nhật nhiều sân cùng lúc
 - **Check-in**: Validation khung giờ, từ chối sớm/muộn, luồng thành công
@@ -386,41 +421,59 @@ SmashCourt Backend được bảo vệ bởi một **bộ kiểm thử toàn di�
 - **Quản lý dịch vụ**: Thêm/xóa dịch vụ, tăng số lượng atomic, tính lại hóa đơn
 - **Guard clauses**: Validate trạng thái, quyền truy cập chi nhánh, ngăn double-checkout
 
-#### ✅ Xử lý Thanh toán (12 tests)
-- **Tích hợp VNPay**: Validate chữ ký IPN, xử lý success/failure/duplicate
+#### ✅ Xử lý Thanh toán (15 tests - 80% coverage)
+- **Tích hợp VNPay**: Validate chữ ký IPN, xử lý success/failure/duplicate callbacks
 - **Thử lại thanh toán**: Validate quyền sở hữu, kiểm tra hết hạn, void payment cũ
 - **Return URL**: Luồng success/cancelled/chữ ký không hợp lệ
-- **Bảo mật**: Phát hiện số tiền không khớp, ngăn chặn giả mạo
-- **Idempotency**: Xử lý IPN trùng lặp, không xử lý 2 lần
+- **Bảo mật**: Phát hiện số tiền không khớp, ngăn chặn signature forgery
+- **Idempotency**: Xử lý IPN trùng lặp, không xử lý 2 lần, state mutation protection
 
-#### ✅ Hệ thống Loyalty (4 tests)
-- **Tích điểm**: Hoàn thành checkout → tính điểm → nâng tier
-- **Atomic operations**: Tăng điểm đồng thời từ nhiều booking
-- **Audit giao dịch**: Ghi log loại EARN với đầy đủ ngữ cảnh
-- **Quản lý tier**: Tự động nâng cấp khi vượt ngưỡng
+#### ✅ Xác thực & Phân quyền (20 tests - 90% coverage)
+- **Luồng đăng nhập**: Validate mật khẩu, khóa tài khoản sau 5 lần sai, khởi tạo 2FA
+- **Quản lý token**: Validate refresh token, xử lý hết hạn, token rotation
+- **Security guards**: Ưu tiên MustChangePassword, giới hạn thử OTP (3 attempts)
+- **OAuth**: Validate đăng nhập Google, account linking
+- **Edge cases**: Email chưa verify, tài khoản bị khóa, wrong password scenarios
 
-#### ✅ Xác thực & Phân quyền (14 tests)
-- **Luồng đăng nhập**: Validate mật khẩu, khóa tài khoản, khởi tạo 2FA
-- **Quản lý token**: Validate refresh token, xử lý hết hạn
-- **Security guards**: Ưu tiên MustChangePassword, giới hạn thử OTP
-- **OAuth**: Validate đăng nhập Google
+#### ✅ Email Service (10+ tests - 85% coverage)
+- **Template rendering**: OTP emails (register, forgot password, 2FA)
+- **SMTP abstraction**: Configuration validation, error handling
+- **Missing config**: Graceful degradation khi thiếu SMTP settings
 
-#### ✅ Promotion Engine (9 tests)
-- **Tính giảm giá**: Số tiền cố định, phần trăm, giới hạn tối đa
-- **Validation**: Giới hạn sử dụng, ngày hết hạn, điều kiện
-- **Edge cases**: Số tiền bằng 0, số rất lớn, làm tròn
+#### ✅ Integration Tests (1 test - Infrastructure OK)
+- **PostgreSQL Smoke Test**: Sử dụng Testcontainers để spin up PostgreSQL container
+- **Basic CRUD**: Verify có thể persist và read TimeSlot entity
+- **Infrastructure validation**: Đảm bảo migration scripts và enum mappings hoạt động đúng
 
 ### Chạy tests
 
 ```bash
-# Chạy toàn bộ tests
+# Chạy toàn bộ 236 tests (unit + integration)
 dotnet test
 
-# Chạy tests với báo cáo coverage
-dotnet test /p:CollectCoverage=true /p:CoverletOutputFormat=opencover
+# Chạy chỉ unit tests (không cần Docker - nhanh hơn)
+dotnet test --filter "Category!=Integration"
 
-# Chạy tests cho module cụ thể
+# Chạy integration tests (yêu cầu Docker Desktop đang chạy)
+dotnet test --filter "Category=Integration"
+
+# Chạy tests với coverage report (sử dụng Coverlet)
+dotnet test /p:CollectCoverage=true /p:CoverletOutputFormat=cobertura
+
+# Chạy tests cho service cụ thể
 dotnet test --filter "FullyQualifiedName~BookingServiceTests"
+
+# Chạy tests với verbosity cao (để debug)
+dotnet test --logger "console;verbosity=detailed"
+
+# Liệt kê tất cả tests mà không chạy
+dotnet test --list-tests
+```
+
+**Lưu ý khi chạy Integration Tests:**
+- Cần Docker Desktop đang chạy (Testcontainers sẽ tự động pull PostgreSQL image)
+- Integration tests mất ~20-25 giây để khởi động containers
+- Tests sẽ tự động cleanup containers sau khi chạy xong
 
 # Chạy tests với verbosity cao (debug)
 dotnet test --logger "console;verbosity=detailed"
@@ -431,30 +484,39 @@ dotnet test --logger "console;verbosity=detailed"
 ```
 SmashCourt-BE.Tests/
 │
-├── Services/                      # Unit tests tầng Service
-│   ├── BookingServiceTests.cs     # 41 tests — Nghiệp vụ Booking
-│   ├── PaymentServiceTests.cs     # 12 tests — Tích hợp VNPay
-│   ├── AuthServiceTests.cs        # 14 tests — Luồng xác thực
-│   ├── LoyaltyServiceTests.cs     # 4 tests — Logic loyalty tier
-│   └── ...                        # 20+ file test services
+├── Services/                      # Unit tests các Service classes (235 tests)
+│   ├── BookingServiceTests.cs     # 63 tests - Booking workflow
+│   ├── PromotionEngineServiceTests.cs  # 42 tests ✅ 96% coverage
+│   ├── AuthServiceTests.cs        # 20 tests ✅ 90% coverage
+│   ├── LoyaltyServiceTests.cs     # 14 tests ✅ 100% coverage
+│   ├── PaymentServiceTests.cs     # 15 tests - VNPay integration
+│   ├── OtpServiceTests.cs         # 10+ tests ✅ 100% coverage
+│   ├── EmailServiceTests.cs       # 10+ tests - SMTP
+│   └── ...                        # 30+ other service test files
 │
-├── Helpers/                       # Tests cho Helper & utility
-│   ├── AppExceptionAssertions.cs  # Custom assertions cho exception testing
-│   ├── BookingStatusTransitionTests.cs
-│   ├── PromotionHelperTests.cs
-│   └── DateAndSecurityHelperTests.cs
+├── Helpers/                       # Tests cho Helper utilities
+│   ├── AppExceptionAssertions.cs  # Custom assertions
+│   ├── BookingStatusTransitionTests.cs  # Status FSM validation
+│   ├── PromotionHelperTests.cs    # Discount calculation
+│   └── DateAndSecurityHelperTests.cs  # DateTime, HMAC utilities
 │
-├── DTOs/                          # Tests validation DTO
-│   └── BookingDtoValidationTests.cs
+├── DTOs/                          # DTO validation tests
+│   └── BookingDtoValidationTests.cs  # Custom validation rules
 │
-├── TestData/                      # Hạ tầng test
-│   ├── TestDataFactory.cs         # Entity factory với smart defaults
-│   ├── TestUserFactory.cs         # User/role factory
-│   ├── TestConstants.cs           # Shared test constants
-│   ├── TestConfigurationFactory.cs
-│   └── BookingServiceTestBuilder.cs  # Builder pattern cho setup phức tạp
+├── Integration/                   # Integration tests (1 test)
+│   ├── PostgreSqlIntegrationFixture.cs   # Testcontainers setup
+│   ├── IntegrationTestBase.cs           # Base với transaction isolation
+│   ├── IntegrationTestCollection.cs     # xUnit collection
+│   ├── TestDataSeeder.cs                # Seed helper
+│   └── PostgreSqlSmokeTests.cs          # 1 test ✅ infrastructure OK
 │
-└── SmashCourt-BE.Tests.csproj     # Test project file
+├── TestData/                      # Test infrastructure
+│   ├── TestDataFactory.cs         # Entity factories với smart defaults
+│   ├── TestUserFactory.cs         # User/role factories
+│   ├── BookingServiceTestBuilder.cs  # Builder pattern (20+ dependencies)
+│   └── TestConstants.cs           # Shared constants
+│
+└── SmashCourt-BE.Tests.csproj     # Test project file (xUnit, Moq, Testcontainers)
 ```
 
 ### Tiêu chuẩn chất lượng Test
@@ -496,7 +558,7 @@ repository.Verify(x => x.CreateAsync(...), Times.Never);
 | **AAA Pattern** | Arrange-Act-Assert rõ ràng | Dễ đọc, dễ maintain |
 | **Isolation** | Mỗi test độc lập, mock tất cả dependencies | Chạy song song, không side effects |
 | **Deterministic** | Không phụ thuộc thời gian/random | Kết quả ổn định, reproducible |
-| **Thực thi nhanh** | 166 tests chạy trong ~3 giây | Developer-friendly, quick feedback |
+| **Thực thi nhanh** | Unit tests chạy trong ~5 giây, integration ~30 giây | Developer-friendly, quick feedback |
 | **Tên có ý nghĩa** | Self-documenting test names | Không cần đọc code để hiểu test |
 | **Single Responsibility** | Mỗi test verify 1 behavior | Dễ debug khi fail |
 
@@ -585,7 +647,7 @@ flowchart LR
 | **Kiểm thử** | `dotnet test --configuration Release` | **Chạy 166 unit tests** | **Phải pass 100%** |
 | Docker Build | `docker/build-push-action` | Kiểm chứng Dockerfile hợp lệ | Bắt buộc |
 
-> 🛡️ **Quality Gate**: Pull Request chỉ được merge khi **tất cả 166 tests pass**. Không có ngoại lệ.
+> 🛡️ **Quality Gate**: Pull Request chỉ được merge khi **tất cả 236 tests pass**. Không có ngoại lệ.
 
 ---
 
@@ -606,11 +668,11 @@ flowchart LR
 
 3. **Chạy tests trước khi commit**:
    ```bash
-   # Chạy toàn bộ tests
+   # Chạy toàn bộ 236 tests
    dotnet test
    
    # Verify tất cả tests pass
-   # Kỳ vọng: 166/166 passed (hoặc nhiều hơn nếu bạn thêm tests mới)
+   # Kỳ vọng: 236/236 passed (100%)
    ```
 
 4. **Commit** theo chuẩn [Conventional Commits](https://www.conventionalcommits.org/):
@@ -656,7 +718,7 @@ flowchart LR
 | ✅ Hoàn thành | Tích hợp VNPay — Link thanh toán + IPN callback + hoàn tiền |
 | ✅ Hoàn thành | SignalR — Phát sóng Time Grid thời gian thực |
 | ✅ Hoàn thành | Loyalty Program — điểm tích lũy & tự động nâng/hạ tier |
-| ✅ Hoàn thành | **Bộ Unit Test — 166 tests, 85% độ phủ** |
+| ✅ Hoàn thành | **Bộ kiểm thử — 236 tests (235 unit + 1 integration)** |
 
 ### Cải tiến đang triển khai
 

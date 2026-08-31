@@ -1203,6 +1203,61 @@ public class BookingServiceTests
             booking.Id, BookingStatus.COMPLETED, BookingStatus.PENDING_PAYMENT), Times.Once);
     }
 
+    [Fact]
+    public async Task CheckoutAsync_WhenGuestBooking_DoesNotEarnLoyaltyPoints()
+    {
+        var builder = new BookingServiceTestBuilder();
+        var invoice = TestDataFactory.CreateInvoice(finalTotal: 250_000m);
+        var booking = CreateCheckoutBooking(BookingStatus.IN_PROGRESS, invoice);
+        booking.CustomerId = null;
+        builder.BookingRepository.Setup(x => x.GetByIdWithDetailsAsync(booking.Id)).ReturnsAsync(booking);
+        builder.BookingRepository.Setup(x => x.UpdateWithStatusCheckAsync(
+                booking.Id, BookingStatus.COMPLETED, BookingStatus.IN_PROGRESS))
+            .ReturnsAsync(1);
+        builder.InvoiceRepository.Setup(x => x.GetByBookingIdAsync(booking.Id)).ReturnsAsync(invoice);
+
+        await builder.Build().CheckoutAsync(booking.Id, Guid.NewGuid(), UserRole.OWNER.ToString());
+
+        Assert.Equal(BookingStatus.COMPLETED, booking.Status);
+        builder.LoyaltyRepository.Verify(x => x.GetByUserIdAsync(It.IsAny<Guid>()), Times.Never);
+        builder.LoyaltyRepository.Verify(x => x.AddPointsAtomicAsync(It.IsAny<Guid>(), It.IsAny<int>()), Times.Never);
+        builder.LoyaltyTransactionRepository.Verify(
+            x => x.AddAsync(It.IsAny<LoyaltyTransaction>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CreateOnlineAsync_WhenCourtIsInactive_ThrowsBadRequest()
+    {
+        var builder = new BookingServiceTestBuilder();
+        var court = TestDataFactory.CreateCourt(status: CourtStatus.INACTIVE);
+        builder.CourtRepository.Setup(x => x.GetByIdsAsync(It.IsAny<IEnumerable<Guid>>()))
+            .ReturnsAsync([court]);
+
+        var exception = await Assert.ThrowsAsync<AppException>(() => builder.Build().CreateOnlineAsync(
+            CreateOnlineBookingDto(court.Id), Guid.NewGuid()));
+
+        exception.ShouldBeAppException(400, ErrorCodes.BadRequest, "không còn hoạt động");
+        builder.BookingRepository.Verify(x => x.CreateAsync(It.IsAny<Booking>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(BookingStatus.IN_PROGRESS)]
+    [InlineData(BookingStatus.COMPLETED)]
+    public async Task CancelByCustomerAsync_WhenBookingIsNotCancellable_ThrowsBadRequest(BookingStatus status)
+    {
+        var builder = new BookingServiceTestBuilder();
+        var customerId = Guid.NewGuid();
+        var booking = TestDataFactory.CreateBooking(customerId, status: status);
+        builder.BookingRepository.Setup(x => x.GetByIdWithDetailsAsync(booking.Id)).ReturnsAsync(booking);
+
+        var exception = await Assert.ThrowsAsync<AppException>(() => builder.Build()
+            .CancelByCustomerAsync(booking.Id, customerId));
+
+        exception.ShouldBeAppException(400, ErrorCodes.BadRequest, "không thể hủy");
+        builder.BookingRepository.Verify(x => x.UpdateWithStatusCheckAsync(
+            It.IsAny<Guid>(), It.IsAny<BookingStatus>(), It.IsAny<BookingStatus>()), Times.Never);
+    }
+
     private static Booking CreateCheckoutBooking(BookingStatus status, Invoice invoice)
     {
         var branch = new Branch { Id = Guid.NewGuid(), Name = "Test branch" };
