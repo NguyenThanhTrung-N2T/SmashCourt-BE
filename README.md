@@ -320,27 +320,27 @@ SmashCourt-BE/
 
 ---
 
-## 🧪 Test Suite & Quality Assurance
+## 🧪 Bộ kiểm thử & Đảm bảo chất lượng (Test Suite & Quality Assurance)
 
-### Tổng quan (Overview)
+### Tổng quan
 
-SmashCourt Backend được bảo vệ bởi một **test suite toàn diện** với **166 unit tests** sử dụng **xUnit** và **Moq**, đạt **~85% coverage** trên các module nghiệp vụ cốt lõi.
+SmashCourt Backend được bảo vệ bởi một **bộ kiểm thử toàn diện** với **166 unit tests** sử dụng **xUnit** và **Moq**, đạt **~85% độ phủ** trên các module nghiệp vụ cốt lõi.
 
 ```
-📊 Test Statistics:
-├── Total Tests: 166
-├── Pass Rate: 100% (166/166)
-├── Coverage: ~85% (critical paths)
+📊 Thống kê kiểm thử:
+├── Tổng số tests: 166
+├── Tỷ lệ pass: 100% (166/166)
+├── Độ phủ: ~85% (các luồng nghiệp vụ quan trọng)
 └── Framework: xUnit + Moq + FluentAssertions
 ```
 
-### Phạm vi kiểm thử (Test Coverage)
+### Phạm vi kiểm thử
 
-#### Coverage by Module
+#### Độ phủ theo module
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ Module Coverage Breakdown                                       │
+│ Chi tiết độ phủ theo module                                     │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │ BookingService       ████████████████░░░░░ 78% (41 tests)      │
@@ -350,73 +350,73 @@ SmashCourt Backend được bảo vệ bởi một **test suite toàn diện** v
 │ LoyaltyService       ████████████████░░░░░ 80% (4 tests)       │
 │ Helpers & Utils      ███████████████████░░ 95% (86 tests)      │
 │                                                                 │
-│ Overall System       █████████████████░░░░ 85%                 │
+│ Tổng thể hệ thống    █████████████████░░░░ 85%                 │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-#### Detailed Coverage Matrix
+#### Ma trận độ phủ chi tiết
 
-| Module | Tests | Coverage | Status |
+| Module | Số tests | Độ phủ | Trạng thái |
 | :--- | ---: | ---: | :---: |
-| **BookingService** | 41 tests | 78% | ✅ Production-ready |
-| **PaymentService** | 12 tests | 90% | ✅ Production-ready |
-| **AuthService** | 14 tests | 60% | ✅ Core flows covered |
-| **PromotionEngineService** | 9 tests | 85% | ✅ Business rules verified |
-| **LoyaltyService** | 4 tests | 80% | ✅ Tier logic tested |
-| **Helpers & DTOs** | 86 tests | 95% | ✅ Comprehensive |
+| **BookingService** | 41 tests | 78% | ✅ Sẵn sàng production |
+| **PaymentService** | 12 tests | 90% | ✅ Sẵn sàng production |
+| **AuthService** | 14 tests | 60% | ✅ Các luồng cốt lõi đã cover |
+| **PromotionEngineService** | 9 tests | 85% | ✅ Quy tắc nghiệp vụ đã verify |
+| **LoyaltyService** | 4 tests | 80% | ✅ Logic tier đã kiểm thử |
+| **Helpers & DTOs** | 86 tests | 95% | ✅ Toàn diện |
 
-### Các luồng nghiệp vụ đã được kiểm thử (Tested Business Flows)
+### Các luồng nghiệp vụ đã được kiểm thử
 
-#### 🎯 Key Achievements
+#### 🎯 Các thành tựu chính
 
 ```
-✅ Critical Payment Flows      → 100% covered (VNPay integration)
-✅ Booking Lifecycle           → 90% covered (create → checkout → cancel)
-✅ Concurrency Safety          → Verified (atomic operations, slot locks)
-✅ Financial Security          → Hardened (double charge prevention, amount validation)
-✅ Business Rules              → Validated (promotion, loyalty, refund policies)
+✅ Luồng thanh toán quan trọng    → 100% (tích hợp VNPay)
+✅ Vòng đời Booking               → 90% (tạo → checkout → hủy)
+✅ An toàn đồng thời               → Đã verify (atomic operations, slot locks)
+✅ Bảo mật tài chính              → Hardened (ngăn tính phí 2 lần, validate số tiền)
+✅ Quy tắc nghiệp vụ              → Đã validate (khuyến mãi, loyalty, chính sách hoàn tiền)
 ```
 
-#### ✅ Booking Management (41 tests)
-- **Đặt sân online/walk-in**: Validation, pricing, slot lock, concurrency control
-- **Checkout**: UNPAID/PARTIALLY_PAID/PAID flows, multiple courts batch update
-- **Check-in**: Time window validation, early/late rejection, success flow
-- **Cancellation**: Staff/customer cancel, refund calculation, policy enforcement
-- **Service management**: Add/remove services, atomic quantity increment, invoice recalculation
-- **Guard clauses**: Status validation, branch access, double-checkout prevention
+#### ✅ Quản lý Booking (41 tests)
+- **Đặt sân online/walk-in**: Validation, tính giá, slot lock, kiểm soát đồng thời
+- **Checkout**: Luồng UNPAID/PARTIALLY_PAID/PAID, cập nhật nhiều sân cùng lúc
+- **Check-in**: Validation khung giờ, từ chối sớm/muộn, luồng thành công
+- **Hủy sân**: Hủy bởi nhân viên/khách hàng, tính toán hoàn tiền, áp dụng chính sách
+- **Quản lý dịch vụ**: Thêm/xóa dịch vụ, tăng số lượng atomic, tính lại hóa đơn
+- **Guard clauses**: Validate trạng thái, quyền truy cập chi nhánh, ngăn double-checkout
 
-#### ✅ Payment Processing (12 tests)
-- **VNPay Integration**: IPN signature validation, success/failure/duplicate handling
-- **Payment retry**: Ownership validation, expiry check, old payment voiding
-- **Return URL**: Success/cancelled/invalid signature flows
-- **Security**: Amount mismatch detection, tampering prevention
-- **Idempotency**: Duplicate IPN handling, no double-processing
+#### ✅ Xử lý Thanh toán (12 tests)
+- **Tích hợp VNPay**: Validate chữ ký IPN, xử lý success/failure/duplicate
+- **Thử lại thanh toán**: Validate quyền sở hữu, kiểm tra hết hạn, void payment cũ
+- **Return URL**: Luồng success/cancelled/chữ ký không hợp lệ
+- **Bảo mật**: Phát hiện số tiền không khớp, ngăn chặn giả mạo
+- **Idempotency**: Xử lý IPN trùng lặp, không xử lý 2 lần
 
-#### ✅ Loyalty System (4 tests)
-- **Points earning**: Checkout completion → points calculation → tier upgrade
-- **Atomic operations**: Concurrent booking points increment
-- **Transaction audit**: EARN type logging with full context
-- **Tier management**: Automatic upgrade when crossing threshold
+#### ✅ Hệ thống Loyalty (4 tests)
+- **Tích điểm**: Hoàn thành checkout → tính điểm → nâng tier
+- **Atomic operations**: Tăng điểm đồng thời từ nhiều booking
+- **Audit giao dịch**: Ghi log loại EARN với đầy đủ ngữ cảnh
+- **Quản lý tier**: Tự động nâng cấp khi vượt ngưỡng
 
-#### ✅ Authentication & Authorization (14 tests)
-- **Login flows**: Password validation, account locking, 2FA initiation
-- **Token management**: Refresh token validation, expiry handling
-- **Security guards**: MustChangePassword priority, OTP attempt limits
-- **OAuth**: Google sign-in validation
+#### ✅ Xác thực & Phân quyền (14 tests)
+- **Luồng đăng nhập**: Validate mật khẩu, khóa tài khoản, khởi tạo 2FA
+- **Quản lý token**: Validate refresh token, xử lý hết hạn
+- **Security guards**: Ưu tiên MustChangePassword, giới hạn thử OTP
+- **OAuth**: Validate đăng nhập Google
 
 #### ✅ Promotion Engine (9 tests)
-- **Discount calculation**: Fixed amount, percentage, max cap
-- **Validation**: Usage limit, expiry date, conditions
-- **Edge cases**: Zero amount, very large numbers, rounding
+- **Tính giảm giá**: Số tiền cố định, phần trăm, giới hạn tối đa
+- **Validation**: Giới hạn sử dụng, ngày hết hạn, điều kiện
+- **Edge cases**: Số tiền bằng 0, số rất lớn, làm tròn
 
-### Chạy tests (Running Tests)
+### Chạy tests
 
 ```bash
 # Chạy toàn bộ tests
 dotnet test
 
-# Chạy tests với coverage report
+# Chạy tests với báo cáo coverage
 dotnet test /p:CollectCoverage=true /p:CoverletOutputFormat=opencover
 
 # Chạy tests cho module cụ thể
@@ -431,37 +431,37 @@ dotnet test --logger "console;verbosity=detailed"
 ```
 SmashCourt-BE.Tests/
 │
-├── Services/                      # Service layer unit tests
-│   ├── BookingServiceTests.cs     # 41 tests — Booking nghiệp vụ
-│   ├── PaymentServiceTests.cs     # 12 tests — VNPay integration
-│   ├── AuthServiceTests.cs        # 14 tests — Authentication flows
-│   ├── LoyaltyServiceTests.cs     # 4 tests — Loyalty tier logic
-│   └── ...                        # 20+ service test files
+├── Services/                      # Unit tests tầng Service
+│   ├── BookingServiceTests.cs     # 41 tests — Nghiệp vụ Booking
+│   ├── PaymentServiceTests.cs     # 12 tests — Tích hợp VNPay
+│   ├── AuthServiceTests.cs        # 14 tests — Luồng xác thực
+│   ├── LoyaltyServiceTests.cs     # 4 tests — Logic loyalty tier
+│   └── ...                        # 20+ file test services
 │
-├── Helpers/                       # Helper & utility tests
+├── Helpers/                       # Tests cho Helper & utility
 │   ├── AppExceptionAssertions.cs  # Custom assertions cho exception testing
 │   ├── BookingStatusTransitionTests.cs
 │   ├── PromotionHelperTests.cs
 │   └── DateAndSecurityHelperTests.cs
 │
-├── DTOs/                          # DTO validation tests
+├── DTOs/                          # Tests validation DTO
 │   └── BookingDtoValidationTests.cs
 │
-├── TestData/                      # Test infrastructure
+├── TestData/                      # Hạ tầng test
 │   ├── TestDataFactory.cs         # Entity factory với smart defaults
 │   ├── TestUserFactory.cs         # User/role factory
 │   ├── TestConstants.cs           # Shared test constants
 │   ├── TestConfigurationFactory.cs
-│   └── BookingServiceTestBuilder.cs  # Builder pattern cho complex setup
+│   └── BookingServiceTestBuilder.cs  # Builder pattern cho setup phức tạp
 │
 └── SmashCourt-BE.Tests.csproj     # Test project file
 ```
 
-### Test Quality Standards
+### Tiêu chuẩn chất lượng Test
 
 Tất cả tests trong dự án tuân thủ các tiêu chuẩn sau:
 
-#### 📏 Naming Convention
+#### 📏 Quy ước đặt tên
 ```csharp
 [Fact]
 public async Task {Method}_When{Scenario}_{ExpectedResult}()
@@ -471,96 +471,96 @@ CheckoutAsync_WhenInvoiceIsUnpaid_CollectsFullAmountAndMarksInvoicePaid()
 AddServiceAsync_WhenStatusChangesDuringTransaction_ThrowsBadRequestWithoutMutation()
 ```
 
-#### ✅ Comprehensive Verification
+#### ✅ Verification toàn diện
 ```csharp
-// 1. Verify result/state
+// 1. Verify kết quả/trạng thái
 Assert.Equal(expectedStatus, actualStatus);
 
-// 2. Verify side effects (positive)
+// 2. Verify tác động phụ (positive)
 repository.Verify(x => x.UpdateAsync(entity), Times.Once);
 
-// 3. Verify no unintended side effects (negative)
+// 3. Verify không có tác động ngoài ý muốn (negative)
 repository.Verify(x => x.CreateAsync(...), Times.Never);
 ```
 
-#### 🏗️ Test Infrastructure
+#### 🏗️ Hạ tầng Test
 - **Builder Pattern**: `BookingServiceTestBuilder` cho setup phức tạp (20+ dependencies)
 - **Factory Pattern**: `TestDataFactory` cho entity creation với defaults hợp lý
 - **Custom Assertions**: `AppExceptionAssertions` cho exception testing rõ ràng
-- **Test Categories**: `[Trait("Category", "Unit")]` cho phân loại tests
+- **Phân loại Test**: `[Trait("Category", "Unit")]` cho phân loại tests
 
-#### 🎯 Best Practices Applied
+#### 🎯 Best Practices được áp dụng
 
-| Practice | Implementation | Benefit |
+| Practice | Triển khai | Lợi ích |
 | :--- | :--- | :--- |
 | **AAA Pattern** | Arrange-Act-Assert rõ ràng | Dễ đọc, dễ maintain |
 | **Isolation** | Mỗi test độc lập, mock tất cả dependencies | Chạy song song, không side effects |
 | **Deterministic** | Không phụ thuộc thời gian/random | Kết quả ổn định, reproducible |
-| **Fast Execution** | 166 tests chạy trong ~3 seconds | Developer-friendly, quick feedback |
-| **Meaningful Names** | Self-documenting test names | Không cần đọc code để hiểu test |
-| **Single Responsibility** | Mỗi test verify 1 behavior | Easy to debug khi fail |
+| **Thực thi nhanh** | 166 tests chạy trong ~3 giây | Developer-friendly, quick feedback |
+| **Tên có ý nghĩa** | Self-documenting test names | Không cần đọc code để hiểu test |
+| **Single Responsibility** | Mỗi test verify 1 behavior | Dễ debug khi fail |
 
-#### 🔒 Security Testing
+#### 🔒 Kiểm thử bảo mật
 
 ```csharp
-// VNPay signature validation
+// Validate chữ ký VNPay
 HandleVnPayIpnAsync_WhenSignatureIsInvalid_LogsAndDoesNotMutateState()
 
-// Amount tampering detection
+// Phát hiện giả mạo số tiền
 HandleVnPayIpnAsync_WhenAmountMismatch_RejectsWithoutMutation()
 
-// Ownership validation
+// Validate quyền sở hữu
 CancelByCustomerAsync_WhenDifferentCustomer_ThrowsForbidden()
 
-// Token expiry
+// Token hết hạn
 RefreshTokenAsync_WhenTokenDoesNotExist_ThrowsTokenInvalidWithoutLoadingUser()
 ```
 
-#### ⚡ Performance Testing Patterns
+#### ⚡ Patterns kiểm thử hiệu năng
 
 ```csharp
-// Atomic operations (prevent lost updates)
+// Atomic operations (ngăn lost updates)
 AddServiceAsync_WhenServiceAlreadyExists_IncrementsQuantityAtomically()
 
-// Batch operations (reduce DB round-trips)
+// Batch operations (giảm DB round-trips)
 CheckoutAsync_WhenBookingHasMultipleCourts_UpdatesAllCourtsToAvailable()
 
-// Early returns (optimization verification)
+// Early returns (verify tối ưu hóa)
 AddServiceAsync_WhenQuantityIsZero_ThrowsBadRequestBeforeLoadingBooking()
 ```
 
---- Continuous Testing Strategy
+### Chiến lược kiểm thử liên tục
 
 ```mermaid
 flowchart TD
-    Dev[Developer Commit] --> Local[Run tests locally]
-    Local --> PR[Create Pull Request]
+    Dev[Developer Commit] --> Local[Chạy tests local]
+    Local --> PR[Tạo Pull Request]
     PR --> CI[GitHub Actions CI]
     
     CI --> Restore[dotnet restore]
     Restore --> Build[dotnet build]
     Build --> Test[dotnet test]
     
-    Test -->|All Pass| Merge[✅ Ready to merge]
-    Test -->|Any Fail| Block[❌ Block merge]
+    Test -->|Tất cả Pass| Merge[✅ Sẵn sàng merge]
+    Test -->|Có Fail| Block[❌ Block merge]
     
     Merge --> CD[CD Pipeline]
-    Block --> Fix[Fix tests]
+    Block --> Fix[Sửa tests]
     Fix --> Local
 ```
 
-### Test Coverage Goals & Roadmap
+### Mục tiêu & Lộ trình độ phủ Test
 
-| Priority | Area | Current | Target | Status |
+| Ưu tiên | Khu vực | Hiện tại | Mục tiêu | Trạng thái |
 | :---: | :--- | ---: | ---: | :---: |
-| 🔴 High | Loyalty deduction on refund | 0% | 100% | 📋 Planned |
-| 🔴 High | Promotion + Loyalty stacking | 0% | 100% | 📋 Planned |
-| 🟡 Medium | Auth happy paths | 60% | 90% | 📋 Planned |
-| 🟡 Medium | VNPay edge cases | 80% | 95% | 📋 Planned |
-| 🟢 Low | Integration tests (Testcontainers) | 0% | Core flows | 📋 Future |
-| 🟢 Low | Concurrency tests (real DB) | 0% | Critical paths | 📋 Future |
+| 🔴 Cao | Loyalty deduction on refund | 0% | 100% | 📋 Kế hoạch |
+| 🔴 Cao | Promotion + Loyalty stacking | 0% | 100% | 📋 Kế hoạch |
+| 🟡 Trung bình | Auth happy paths | 60% | 90% | 📋 Kế hoạch |
+| 🟡 Trung bình | VNPay edge cases | 80% | 95% | 📋 Kế hoạch |
+| 🟢 Thấp | Integration tests (Testcontainers) | 0% | Core flows | 📋 Tương lai |
+| 🟢 Thấp | Concurrency tests (real DB) | 0% | Critical paths | 📋 Tương lai |
 
-**Target**: 200+ tests với 95%+ coverage trong Q2 2026
+**Mục tiêu**: 200+ tests với 95%+ độ phủ trong Q2 2026
 
 ---
 
@@ -571,21 +571,21 @@ Pipeline tự động hóa kiểm định chất lượng được định nghĩ
 ```mermaid
 flowchart LR
     Push["Push / PR\nmaster · develop"] --> Checkout[Checkout code]
-    Checkout --> Setup["Setup .NET SDK 8.0"]
+    Checkout --> Setup["Cài đặt .NET SDK 8.0"]
     Setup --> Restore["dotnet restore ✅"]
     Restore --> Build["dotnet build --Release ✅"]
     Build --> Test["dotnet test --Release ✅\n166 tests"]
     Test --> Docker["Docker Build\nsmashcourt-be:ci ✅"]
 ```
 
-| Bước | Lệnh | Mục đích | Exit Gate |
+| Bước | Lệnh | Mục đích | Cổng kiểm tra |
 | :--- | :--- | :--- | :---: |
-| Restore | `dotnet restore` | Khôi phục NuGet packages | Required |
-| Build | `dotnet build --configuration Release` | Compile toàn bộ, phát hiện lỗi biên dịch | Required |
-| **Test** | `dotnet test --configuration Release` | **Chạy 166 unit tests** | **Must pass 100%** |
-| Docker Build | `docker/build-push-action` | Kiểm chứng Dockerfile hợp lệ | Required |
+| Khôi phục | `dotnet restore` | Khôi phục NuGet packages | Bắt buộc |
+| Biên dịch | `dotnet build --configuration Release` | Compile toàn bộ, phát hiện lỗi biên dịch | Bắt buộc |
+| **Kiểm thử** | `dotnet test --configuration Release` | **Chạy 166 unit tests** | **Phải pass 100%** |
+| Docker Build | `docker/build-push-action` | Kiểm chứng Dockerfile hợp lệ | Bắt buộc |
 
-> 🛡️ **Quality Gate**: Pull Request chỉ được merge khi **tất cả 166 tests pass**. Không có exception.
+> 🛡️ **Quality Gate**: Pull Request chỉ được merge khi **tất cả 166 tests pass**. Không có ngoại lệ.
 
 ---
 
@@ -600,9 +600,9 @@ flowchart LR
 
 2. **Viết code** đảm bảo:
    - Tuân thủ kiến trúc phân tầng — không để business logic trong Controller.
-   - **Viết unit test cho mọi Service method mới** (required).
+   - **Viết unit test cho mọi Service method mới** (bắt buộc).
    - Tất cả API endpoint phải có Swagger annotation (`[ProducesResponseType]`).
-   - Tuân thủ naming convention: `{Method}_When{Scenario}_{ExpectedResult}`.
+   - Tuân thủ quy ước đặt tên: `{Method}_When{Scenario}_{ExpectedResult}`.
 
 3. **Chạy tests trước khi commit**:
    ```bash
@@ -610,7 +610,7 @@ flowchart LR
    dotnet test
    
    # Verify tất cả tests pass
-   # Expected: 166/166 passed (hoặc nhiều hơn nếu bạn thêm tests mới)
+   # Kỳ vọng: 166/166 passed (hoặc nhiều hơn nếu bạn thêm tests mới)
    ```
 
 4. **Commit** theo chuẩn [Conventional Commits](https://www.conventionalcommits.org/):
@@ -625,67 +625,67 @@ flowchart LR
    - Ảnh hưởng đến hệ thống
    - Cách test (manual + automated)
    - **Screenshots/logs** nếu thay đổi liên quan đến UI/UX
-   - **Test coverage** cho code mới
+   - **Độ phủ test** cho code mới
 
-### Test Requirements cho Pull Request
+### Yêu cầu Test cho Pull Request
 
-| Loại thay đổi | Test requirement |
+| Loại thay đổi | Yêu cầu test |
 | :--- | :--- |
 | Thêm Service method mới | ✅ Unit tests cho happy path + edge cases |
-| Sửa business logic | ✅ Update existing tests + add regression tests |
-| Thêm API endpoint mới | ✅ Unit tests cho service + integration test (optional) |
+| Sửa business logic | ✅ Update existing tests + thêm regression tests |
+| Thêm API endpoint mới | ✅ Unit tests cho service + integration test (tùy chọn) |
 | Refactor code | ✅ Tất cả existing tests phải pass |
-| Bug fix | ✅ Thêm test tái hiện bug trước khi fix |
+| Sửa bug | ✅ Thêm test tái hiện bug trước khi fix |
 
 > 🚫 **Pull Request sẽ bị block** nếu:
 > - Có tests failing
 > - Thêm code mới mà không có tests
-> - Coverage giảm đáng kể (>5%)
+> - Độ phủ giảm đáng kể (>5%)
 
 ---
 
 ## 🗺️ Lộ trình phát triển (Roadmap)
 
-### Tính năng chính (Core Features)
+### Tính năng chính
 
 | Trạng thái | Tính năng |
 | :---: | :--- |
-| ✅ Done | Authentication — JWT + Refresh Token rotation + Google OAuth |
-| ✅ Done | Booking pipeline — Slot Lock, Slot Interest, double-booking prevention |
-| ✅ Done | Hangfire jobs — Email, auto-cancel, promotion sync |
-| ✅ Done | VNPay integration — Payment link + IPN callback + refund |
-| ✅ Done | SignalR — Real-time Time Grid broadcast |
-| ✅ Done | Loyalty Program — điểm tích lũy & tự động nâng/hạ tier |
-| ✅ Done | **Unit Test Suite — 166 tests, 85% coverage** |
+| ✅ Hoàn thành | Xác thực — JWT + Refresh Token rotation + Google OAuth |
+| ✅ Hoàn thành | Booking pipeline — Slot Lock, Slot Interest, ngăn double-booking |
+| ✅ Hoàn thành | Hangfire jobs — Email, tự động hủy, đồng bộ khuyến mãi |
+| ✅ Hoàn thành | Tích hợp VNPay — Link thanh toán + IPN callback + hoàn tiền |
+| ✅ Hoàn thành | SignalR — Phát sóng Time Grid thời gian thực |
+| ✅ Hoàn thành | Loyalty Program — điểm tích lũy & tự động nâng/hạ tier |
+| ✅ Hoàn thành | **Bộ Unit Test — 166 tests, 85% độ phủ** |
 
-### Cải tiến đang triển khai (In Progress)
+### Cải tiến đang triển khai
 
-| Trạng thái | Tính năng | Priority | Timeline |
+| Trạng thái | Tính năng | Ưu tiên | Thời gian |
 | :---: | :--- | :---: | :--- |
-| 🔄 In Progress | Rate Limiting nghiêm ngặt trên tất cả sensitive endpoints | High | Q1 2026 |
-| 🔄 In Progress | Loyalty deduction on refund + tier downgrade tests | High | Q1 2026 |
-| 🔄 In Progress | Promotion + Loyalty stacking calculation tests | High | Q1 2026 |
+| 🔄 Đang thực hiện | Rate Limiting nghiêm ngặt trên tất cả sensitive endpoints | Cao | Q1 2026 |
+| 🔄 Đang thực hiện | Loyalty deduction on refund + tier downgrade tests | Cao | Q1 2026 |
+| 🔄 Đang thực hiện | Promotion + Loyalty stacking calculation tests | Cao | Q1 2026 |
 
-### Kế hoạch phát triển (Planned)
+### Kế hoạch phát triển
 
-| Trạng thái | Tính năng | Priority | Timeline |
+| Trạng thái | Tính năng | Ưu tiên | Thời gian |
 | :---: | :--- | :---: | :--- |
-| 📋 Planned | Tích hợp Serilog + Seq cho centralized logging | Medium | Q2 2026 |
-| 📋 Planned | Integration tests với Testcontainers (PostgreSQL) | Medium | Q2 2026 |
-| 📋 Planned | Concurrency tests với real database | Medium | Q2 2026 |
-| 📋 Planned | Subscription booking — đặt sân định kỳ theo tháng | Low | Q3 2026 |
-| 📋 Planned | Tự động test load với NBomber | Low | Q3 2026 |
-| 📋 Planned | Redis caching layer cho high-traffic endpoints | Low | Q4 2026 |
+| 📋 Kế hoạch | Tích hợp Serilog + Seq cho centralized logging | Trung bình | Q2 2026 |
+| 📋 Kế hoạch | Integration tests với Testcontainers (PostgreSQL) | Trung bình | Q2 2026 |
+| 📋 Kế hoạch | Concurrency tests với real database | Trung bình | Q2 2026 |
+| 📋 Kế hoạch | Subscription booking — đặt sân định kỳ theo tháng | Thấp | Q3 2026 |
+| 📋 Kế hoạch | Tự động test load với NBomber | Thấp | Q3 2026 |
+| 📋 Kế hoạch | Redis caching layer cho high-traffic endpoints | Thấp | Q4 2026 |
 
-### Test Coverage Roadmap
+### Lộ trình độ phủ Test
 
-| Milestone | Target Coverage | Timeline |
+| Milestone | Độ phủ mục tiêu | Thời gian |
 | :--- | ---: | :--- |
-| ✅ **Current State** | **~85%** (166 tests) | ✅ Done |
-| 🎯 Phase 1: Loyalty & Promotion | ~88% (+12 tests) | Q1 2026 |
-| 🎯 Phase 2: VNPay & Auth | ~92% (+15 tests) | Q1 2026 |
-| 🎯 Phase 3: Integration Tests | ~95% (+10 tests) | Q2 2026 |
-| 🎯 Phase 4: Concurrency & Resilience | ~97% (+8 tests) | Q2 2026 |
+| ✅ **Hiện tại** | **~85%** (166 tests) | ✅ Hoàn thành |
+| 🎯 Giai đoạn 1: Loyalty & Promotion | ~88% (+12 tests) | Q1 2026 |
+| 🎯 Giai đoạn 2: VNPay & Auth | ~92% (+15 tests) | Q1 2026 |
+| 🎯 Giai đoạn 3: Integration Tests | ~95% (+10 tests) | Q2 2026 |
+| 🎯 Giai đoạn 4: Concurrency & Resilience | ~97% (+8 tests) | Q2 2026 |
 
 ---
 
