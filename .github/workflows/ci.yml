@@ -7,7 +7,7 @@ on:
     branches: [master, develop]
 
 jobs:
-  build:
+  build-and-test:
     name: Restore, Build, Test & Docker
     runs-on: ubuntu-latest
 
@@ -18,7 +18,7 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "8.0"
+          dotnet-version: "8.0.x"
 
       - name: Restore dependencies
         run: dotnet restore
@@ -26,9 +26,37 @@ jobs:
       - name: Build
         run: dotnet build --no-restore --configuration Release
 
-      - name: Test
-        run: dotnet test --no-build --configuration Release --verbosity normal
+      # Chạy 236 tests (235 Unit + Integration Tests) với Logger GitHubActions & TRX
+      - name: Execute Tests
+        run: >
+          dotnet test 
+          --no-build 
+          --configuration Release 
+          --verbosity normal 
+          --logger "GitHubActions" 
+          --logger "trx;LogFileName=test_results.trx" 
+          --collect:"XPlat Code Coverage" 
+          --results-directory ./TestResults
 
+      # Xuất bảng tổng hợp kết quả trực quan lên GitHub Summary
+      - name: Publish Test Results Summary
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Backend Tests Report
+          path: "TestResults/*.trx"
+          reporter: dotnet-trx
+          fail-on-error: true
+
+      # Lưu trữ Artifacts kết quả test và coverage
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: be-test-results
+          path: ./TestResults
+
+      # Chỉ build Docker image khi toàn bộ tests PASS
       - name: Build Docker image
         uses: docker/build-push-action@v5
         with:
