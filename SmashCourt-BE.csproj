@@ -44,6 +44,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\TADSS-Runtime\src\Shared.DecisionContractSDK\Shared.DecisionContractSDK.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Update="Templates\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
