@@ -1,5 +1,7 @@
 # Use Case UC-BOOKING-06: Check-out khách hàng
 
+> **Thay đổi ở Phase 6 (Đồ án 2, thiết kế chốt 18/10/2026).** Đặc tả dưới đây mô tả hành vi Đồ án 1. Số thu tại quầy = tổng tiền hiện tại − tổng đã thanh toán (gồm phần tiền sân chưa cọc, không chỉ dịch vụ phát sinh). Xem UC-DEPOSIT-08 và `docs/api/DEPOSIT_APPROVAL_API.md` Mục 3.5. Use case UC-DEPOSIT-xx nằm ở `TADSS-Runtime/docs/report/USE_CASES.md`.
+
 ## Bảng 3.10. Đặc tả Use case Check-out khách hàng
 
 | Thông tin | Nội dung |

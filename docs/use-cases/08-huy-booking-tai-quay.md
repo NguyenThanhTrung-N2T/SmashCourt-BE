@@ -1,5 +1,7 @@
 # Use Case UC-BOOKING-04: Hủy booking tại quầy
 
+> **Thay đổi ở Phase 6 (Đồ án 2, thiết kế chốt 18/10/2026).** Đặc tả dưới đây mô tả hành vi Đồ án 1. Nhân viên hủy được đơn `PENDING_APPROVAL`; tiền hoàn tính trên số đã thanh toán; không giảm lượt dùng khuyến mãi khi đơn chưa thu tiền; mọi lần hủy ghi lý do hủy. Xem `docs/api/DEPOSIT_APPROVAL_API.md` Mục 3.4. Use case UC-DEPOSIT-xx nằm ở `TADSS-Runtime/docs/report/USE_CASES.md`.
+
 ## Bảng 3.8. Đặc tả Use case Hủy booking tại quầy
 
 | Thông tin | Nội dung |

@@ -1,5 +1,7 @@
 # Use Case UC-PAYMENT-01: Thanh toán online qua VNPay
 
+> **Thay đổi ở Phase 6 (Đồ án 2, thiết kế chốt 18/10/2026).** Đặc tả dưới đây mô tả hành vi Đồ án 1. Số tiền thanh toán là **tiền cọc**; thanh toán thất bại **không** còn hủy booking (khách có tối đa 5 phút để thanh toán lại hoặc tự hủy); tiền về sau khi đơn đã hủy được hoàn 100 % qua hàng "Chờ hoàn tiền". Xem UC-DEPOSIT-02 và `docs/api/DEPOSIT_APPROVAL_API.md` Mục 3.3, 3.6. Use case UC-DEPOSIT-xx nằm ở `TADSS-Runtime/docs/report/USE_CASES.md`.
+
 ## Bảng 3.11. Đặc tả Use case Thanh toán online qua VNPay
 
 | Thông tin | Nội dung |

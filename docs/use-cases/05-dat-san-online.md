@@ -1,5 +1,7 @@
 # Use Case UC-BOOKING-01: Đặt sân online
 
+> **Thay đổi ở Phase 6 (Đồ án 2, thiết kế chốt 18/10/2026).** Đặc tả dưới đây mô tả hành vi Đồ án 1. Đặt sân online **bắt buộc đăng nhập `CUSTOMER`** (FE đã như vậy từ 12/05/2026); các bước nhập thông tin khách vãng lai (15–16, 16a) không còn áp dụng. Thanh toán theo **số tiền cọc** do TADSS quyết định, có thể chờ Quản lý duyệt hoặc bị từ chối; hạn giữ chỗ tối đa 15 phút. Xem UC-DEPOSIT-01 và `docs/api/DEPOSIT_APPROVAL_API.md` Mục 3.1, 11. Use case UC-DEPOSIT-xx nằm ở `TADSS-Runtime/docs/report/USE_CASES.md`.
+
 ## Bảng 3.5. Đặc tả Use case Đặt sân online
 
 | Thông tin | Nội dung |
