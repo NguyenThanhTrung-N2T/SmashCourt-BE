@@ -56,7 +56,7 @@ Policy lấy từ `Configurations/AuthorizationPolicies.cs` (tên thật):
   - 403 (đăng nhập nhưng sai vai trò so với policy, `OnForbidden`): `{ "message": "Forbidden", "detail": "Bạn không có quyền truy cập vào tài nguyên này !" }`.
   FE xử lý các trường hợp này theo **HTTP status**. 403 do *nghiệp vụ* (Manager thao tác chi nhánh khác) thì vẫn theo envelope với `code = "FORBIDDEN"`.
 - **FE phải rẽ nhánh theo `code`, không theo `message`**, nhất là với 5xx: `smashcourt-fe/src/api/core/apiParser.ts` thay `message` của mọi response ≥ 500 bằng thông báo chung, nên câu hiển thị cho `TADSS_UNAVAILABLE` (503) phải do FE tự chọn theo `code`.
-- **Thời gian trong REST** dùng `VietnamDateTimeConverter`: `DateTime` ra JSON dạng `"dd/MM/yyyy HH:mm:ss"` **giờ Việt Nam, không có offset** (khác TADSS dùng ISO 8601 kèm offset). `TimeSpan` ra `"HH:mm:ss"`. Trường kiểu `DateOnly` (DTO mới) ra `"yyyy-MM-dd"`. Chuỗi không có offset nên FE **phải** hiểu là giờ `+07:00` khi cần mốc tuyệt đối (đồng hồ đếm ngược tới `approvalExpiresAt`/`expiresAt`), không dùng múi giờ của trình duyệt (R-6).
+- **Thời gian trong REST** dùng `VietnamDateTimeConverter`: `DateTime` ra JSON dạng `"dd/MM/yyyy HH:mm:ss"` **giờ Việt Nam, không có offset** (khác TADSS dùng ISO 8601 kèm offset). `TimeSpan` ra `"HH:mm:ss"`. Trường kiểu `DateOnly` (DTO mới) ra `"yyyy-MM-dd"`. Chuỗi không có offset nên FE **phải** hiểu là giờ `+07:00` khi cần mốc tuyệt đối (đồng hồ đếm ngược tới `approvalExpiresAt`/`expiresAt`), không dùng múi giờ của trình duyệt (R-6). Chiều FE → BE: ngày gửi dạng `yyyy-MM-dd` (hoặc ISO 8601 có offset), **không** gửi lại chuỗi `dd/MM/yyyy` nhận từ BE vì BE đọc `DateTime` theo culture máy chủ.
 - **Thời gian trong SignalR** không đi qua converter trên (`AddSignalR()` dùng cấu hình JSON mặc định của SignalR, camelCase): `DateTime` UTC ra ISO 8601, ví dụ `"2026-11-18T02:15:01.1234567Z"`.
 - **Tiền** là số thập phân, đơn vị VND (BE không có trường `currency`). **Tỷ lệ cọc** là số thập phân trong `[0, 1]`, tối đa 4 chữ số thập phân (có thể hiện dạng `0.3000` nếu cột DB có scale 4).
 - **Enum** trong DTO là chuỗi (`Status = b.Status.ToString()`), ví dụ `"PENDING_APPROVAL"`; tham số query enum nhận tên (`status=PENDING_APPROVAL`).
@@ -316,6 +316,7 @@ Không đổi route, policy, request của `POST /api/me/bookings/{id}/cancel` (
 - **Giới hạn khuyến mãi mỗi khách (`UsagePerUserLimit`).** Hiện BE đếm mọi booking có khuyến mãi của khách, kể cả đơn đã hủy, nên khách mất lượt khi đơn hết hạn hoặc bị từ chối. Quy tắc mới: chỉ đếm booking không ở trạng thái hủy (`CANCELLED`, `CANCELLED_PENDING_REFUND`, `CANCELLED_REFUNDED`), nhất quán với việc giảm `UsedCount` khi hủy đơn đã thanh toán. Quản lý vừa duyệt/từ chối chen vào trước ⇒ cập nhật có điều kiện thất bại, trả lỗi hiện có của endpoint hủy và FE tải lại.
 - **Số tiền hoàn khi hủy booking đã cọc (Q12, R-1).** Hiện BE tính `refundAmount = FinalTotal × % hoàn`; khi khách chỉ cọc một phần, cách này **hoàn vượt số đã trả** (cọc 30 %, hủy sớm hoàn 100 % ⇒ hoàn 100 % tổng tiền). Quy tắc mới: `refundAmount = round(tổng các Payment SUCCESS của hóa đơn × % hoàn)`, VND không có số lẻ; % hoàn theo chính sách hủy hiện có (không đổi). Không bao giờ hoàn vượt số đã thanh toán. Booking online tạo trước Phase 6 (đã trả 100 %) cho cùng kết quả như cách tính cũ. Áp dụng cho cả ba đường hủy (khách, link hủy, nhân viên) và phần xem trước của link hủy (`GET /api/bookings/cancel/{token}`).
 - **Giờ tính % hoàn (P6-08).** Số giờ còn lại tới giờ chơi tính bằng giờ chơi đã quy đổi từ giờ Việt Nam sang UTC; mã hiện tại trừ giờ Việt Nam cho giờ UTC nên **dư 7 giờ** (khách hủy trước 18 giờ được tính như 25 giờ). Sau khi sửa, một số ca hủy sát mốc chính sách được hoàn ít hơn trước, đúng chính sách đã công bố. Hạn link hủy trong email sửa cùng cách.
+- **Khách không tự hủy sau giờ bắt đầu (P6-23).** Hiện khách hủy được đơn `CONFIRMED`/`PAID_ONLINE` cả sau giờ bắt đầu, trong khoảng chờ job đánh `NO_SHOW` (giờ bắt đầu + 15 phút, job chạy 5 phút/lần), nên đơn khách không đến bị ghi thành "khách hủy muộn" thay vì `NO_SHOW` và lịch sử gửi TADSS sai. Quy tắc mới: đường hủy của khách (`POST /api/me/bookings/{id}/cancel` và link hủy `POST /api/bookings/cancel/{token}`) trả 400 `BOOKING_ALREADY_STARTED` khi thời điểm hiện tại ≥ giờ bắt đầu sớm nhất của đơn (giờ Việt Nam quy đổi UTC); kiểm trước mọi thay đổi dữ liệu. Nhân viên vẫn hủy được. Hạn link hủy vốn đã không vượt giờ bắt đầu nên link hủy sau giờ bắt đầu trả lỗi hết hạn hiện có.
 
 ### 3.5. Check-out: thu phần còn lại (R-3)
 
@@ -617,6 +618,7 @@ Response lỗi — đã quá hạn duyệt (HTTP 409):
 | `ApprovalDecisionNotFound` | `APPROVAL_DECISION_NOT_FOUND` | 409 |
 | `TadssUnavailable` | `TADSS_UNAVAILABLE` | 503 |
 | `PaymentHoldExpired` | `PAYMENT_HOLD_EXPIRED` | 400 |
+| `BookingAlreadyStarted` | `BOOKING_ALREADY_STARTED` | 400 |
 
 Ánh xạ từng tình huống (cột "Thử lại" là việc Manager/FE nên làm):
 
@@ -640,9 +642,9 @@ Response lỗi — đã quá hạn duyệt (HTTP 409):
 | 16 | Duyệt: TADSS 401 `UNAUTHORIZED` (khóa `X-Api-Key` của BE sai/thiếu) | `TADSS_UNAVAILABLE` (mới) | 503 | Vô ích tới khi sửa cấu hình | Như #13; BE log mức Error để quản trị sửa khóa. Không cọc 100 %, booking vẫn chờ tới khi hết hạn |
 | 17 | Duyệt: TADSS 200 nhưng booking đã đổi trạng thái trong lúc gọi (request duyệt/từ chối khác ghi trước, job hết hạn, khách hủy chen vào — Q8) | `APPROVAL_ALREADY_RESOLVED`, `APPROVAL_EXPIRED` hoặc `BOOKING_NOT_PENDING_APPROVAL` (mới) theo quy tắc a/b/c ở 4.2 bước 4 | 409 | Không | Như #10/#11/#9. BE không hồi sinh booking; đối soát theo INTEGRATION_SPEC §4.3 |
 | 18 | Hàng chờ: `BRANCH_MANAGER` truyền `branchId` khác | `FORBIDDEN` (có sẵn) | 403 | Không | Như #7 |
-
 | 19 | Thanh toán lại (`retry-payment`) sau hạn giữ chỗ tuyệt đối (Mục 3.3) | `PAYMENT_HOLD_EXPIRED` (mới) | 400 | Không | "Đã hết thời gian giữ chỗ, vui lòng đặt lại"; tải lại chi tiết |
 | 20 | Đặt sân online khi chưa đăng nhập / không phải `CUSTOMER` (P6-01) | — (không envelope) | 401 / 403 | Không | Chuyển tới đăng nhập |
+| 21 | Khách hủy (trong app) khi đã tới giờ bắt đầu (P6-23, Mục 3.4) | `BOOKING_ALREADY_STARTED` (mới) | 400 | Không | "Đơn đã tới giờ chơi, không thể tự hủy; vui lòng liên hệ chi nhánh"; FE ẩn nút hủy khi đã tới giờ bắt đầu |
 
 Các mục 6–17 áp dụng giống nhau cho `POST /reject`. Với từ chối, #3/#4 chỉ còn phần `reason`.
 
@@ -740,6 +742,7 @@ Với từ chối: `"approvalResult": "REJECTED"`, `"status": "CANCELLED"`, `mes
 | **Bấm thanh toán lại liên tục** | Hạn không vượt hạn giữ chỗ tuyệt đối (15 phút từ lúc đặt hoặc lúc duyệt) | 400 `PAYMENT_HOLD_EXPIRED` khi hết |
 | **Tiền về sau khi đơn đã hủy** (Mục 3.6) | Refund 100 % `PENDING`, `CANCELLED_PENDING_REFUND` | Đơn "Chờ hoàn tiền" |
 | **Cọc dưới mức tối thiểu** (nhánh a′) | `CONFIRMED`, không VNPay | Trang kết quả "thanh toán tại quầy" |
+| **Khách hủy sau giờ bắt đầu** (P6-23) | 400 `BOOKING_ALREADY_STARTED`, đơn không đổi; khách không đến thì job đánh `NO_SHOW` | Nút hủy ẩn từ giờ bắt đầu; nếu vẫn gọi được thì báo liên hệ chi nhánh |
 
 ---
 
@@ -817,5 +820,7 @@ Sau khi lần theo luồng thực tế FE → BE trên mã hiện có, nhóm ch�
 | P6-09 | Khách tự hủy đơn chưa thanh toán (`PENDING`, `PENDING_APPROVAL`) | 3.4, Q8 |
 | P6-10 | Duyệt không tạo Payment/URL; khách lấy link bằng `retry-payment`; email không chứa URL VNPay | 3.3, 4.2, Q3 |
 | P6-15 | `PENDING_APPROVAL` là giá trị cuối của enum (số 10 phía FE) | 2.1 |
+| P6-22 | Quy tắc thời gian (rà soát 19/10/2026): BE so sánh và lưu thời điểm ở UTC, giờ chơi đổi bằng `DateTimeHelper.ToUtcFromVietnam` (sửa % hoàn, hạn link hủy online và tại quầy); request TADSS mọi trường thời gian có offset; FE lấy "hôm nay" theo giờ VN, đọc chuỗi giờ của BE bằng hàm chung, gửi ngày lên dạng `yyyy-MM-dd` | 1.3, 3.4 |
+| P6-23 | Khách không tự hủy khi đã tới giờ bắt đầu (chốt 19/10/2026) | 3.4, 5, 7 |
 
-Mã lỗi mới: `PAYMENT_HOLD_EXPIRED` (Mục 5). Không đổi hợp đồng BE ↔ TADSS.
+Mã lỗi mới: `PAYMENT_HOLD_EXPIRED`, `BOOKING_ALREADY_STARTED` (Mục 5). Không đổi hợp đồng BE ↔ TADSS.
