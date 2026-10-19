@@ -15,6 +15,8 @@ public static class PromotionHelper
     /// </summary>
     public static decimal CalculateDiscount(Promotion promotion, decimal amount)
     {
+        amount = Math.Max(0, amount);
+
         decimal discount;
 
         if (promotion.DiscountType == DiscountTypeEnum.PERCENT)
@@ -30,8 +32,8 @@ public static class PromotionHelper
             discount = promotion.DiscountValue;
         }
 
-        // Discount cannot exceed the total amount
-        discount = Math.Min(discount, amount);
+        // Discount cannot be negative or exceed the total amount
+        discount = Math.Clamp(discount, 0, amount);
 
         return Math.Round(discount, 0);
     }

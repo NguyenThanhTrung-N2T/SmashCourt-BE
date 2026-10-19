@@ -41,7 +41,7 @@ namespace SmashCourt_BE.Services
         private readonly EmailService _emailService;
         private readonly ICodeGeneratorService _codeGeneratorService;
         private readonly ISlotInterestRepository _slotInterestRepo;
-        private readonly SmashCourtContext _context;
+        private readonly IUnitOfWork _unitOfWork;
         private readonly ILogger<BookingService> _logger;
         private readonly IConfiguration _configuration;
         private readonly IBroadcastService _broadcast;
@@ -68,7 +68,7 @@ namespace SmashCourt_BE.Services
             EmailService emailService,
             ICodeGeneratorService codeGeneratorService,
             ISlotInterestRepository slotInterestRepo,
-            SmashCourtContext context,
+            IUnitOfWork unitOfWork,
             ILogger<BookingService> logger,
             IConfiguration configuration,
             IBroadcastService broadcast)
@@ -94,7 +94,7 @@ namespace SmashCourt_BE.Services
             _emailService = emailService;
             _codeGeneratorService = codeGeneratorService;
             _slotInterestRepo = slotInterestRepo;
-            _context = context;
+            _unitOfWork = unitOfWork;
             _logger = logger;
             _configuration = configuration;
             _broadcast = broadcast;
@@ -380,17 +380,17 @@ namespace SmashCourt_BE.Services
                     var loyalty = await _loyaltyRepo.GetByUserIdAsync(customerId.Value);
                     if (loyalty?.Tier != null)
                         loyaltyDiscountAmount = Math.Round(
-                            totalCourtFee * loyalty.Tier.DiscountRate / 100, 0);
+                            Math.Clamp(totalCourtFee * loyalty.Tier.DiscountRate / 100, 0, totalCourtFee), 0);
                 }
 
-                var totalAfterLoyalty = totalCourtFee - loyaltyDiscountAmount;
+                var totalAfterLoyalty = Math.Max(0, totalCourtFee - loyaltyDiscountAmount);
 
                 // 6. Promotion discount
                 var (promotion, promotionDiscountAmount) = await ValidateAndApplyPromotionAsync(
                     dto.PromotionId, customerId, branchId,
                     courtEntities, dto.BookingDate, totalAfterLoyalty);
 
-                finalTotal = totalAfterLoyalty - promotionDiscountAmount;
+                finalTotal = Math.Max(0, totalAfterLoyalty - promotionDiscountAmount);
 
                 // 7. Tạo booking PENDING
                 //    Dùng UTC để Npgsql lưu timestamptz đúng. Frontend tự convert sang VN time.
@@ -479,7 +479,7 @@ namespace SmashCourt_BE.Services
                     // KHÔNG rethrow ở đây — để using block thoát bình thường và gọi Dispose(),
                     // Dispose() sẽ issue ROLLBACK + reset PG connection về trạng thái sạch.
                     // CreateSlotUnavailableExceptionAsync (có ghi DB) sẽ được gọi SAU using block.
-                    _context.ChangeTracker.Clear();
+                    _unitOfWork.ClearChangeTracker();
                     isRaceCondition = true;
                 }
             } // ← TransactionScope.Dispose() chạy tại đây: ROLLBACK + PG connection reset
@@ -756,7 +756,7 @@ namespace SmashCourt_BE.Services
                     // using block sẽ bắt exception này khi unwind, gọi Dispose() → ROLLBACK.
                     _logger.LogWarning(ex,
                         "EXCLUDE constraint violated — race condition detected for walk-in booking");
-                    _context.ChangeTracker.Clear();
+                    _unitOfWork.ClearChangeTracker();
                     throw new AppException(400,
                         "Sân đã được đặt bởi người khác, vui lòng chọn slot khác",
                         ErrorCodes.BadRequest);
@@ -1036,6 +1036,13 @@ namespace SmashCourt_BE.Services
             using (var transaction = new System.Transactions.TransactionScope(
                 System.Transactions.TransactionScopeAsyncFlowOption.Enabled))
             {
+                var statusUpdated = await _bookingRepo.UpdateWithStatusCheckAsync(
+                    booking.Id, BookingStatus.CANCELLED, booking.Status);
+                if (statusUpdated == 0)
+                    throw new AppException(409,
+                        "Đơn đã được xử lý bởi người khác",
+                        ErrorCodes.Conflict);
+
                 // 7.1. Set booking status = CANCELLED (default, có thể đổi thành CANCELLED_PENDING_REFUND sau)
                 booking.Status = BookingStatus.CANCELLED;
                 booking.CancelledAt = now;
@@ -2179,6 +2186,12 @@ namespace SmashCourt_BE.Services
         /// </remarks>
         private void EnsureBookingModifiable(BookingStatus status, InvoicePaymentStatus paymentStatus)
         {
+            if (paymentStatus == InvoicePaymentStatus.PAID)
+            {
+                throw new AppException(400,
+                    "Không thể thêm/xóa dịch vụ - hóa đơn đã thanh toán",
+                    ErrorCodes.BadRequest);
+            }
 
             // 🟡 PRIORITY 2: Workflow State (Booking Status Check)
             // Check workflow state - quan trọng nhưng ít hơn PaymentStatus
@@ -2383,7 +2396,7 @@ namespace SmashCourt_BE.Services
                             CreatedAt = DateTime.UtcNow
                         });
                     }
-                    catch (DbUpdateException ex) when (ex.InnerException?.Message?.Contains("ux_loyalty_deduct_booking") == true)
+                    catch (DbUpdateException ex) when (IsDuplicateLoyaltyDeduction(ex))
                     {
                         // Unique index violation - duplicate deduction detected
                         // Another request already processed this deduction
@@ -2391,7 +2404,7 @@ namespace SmashCourt_BE.Services
                             "[LOYALTY] Duplicate deduction detected for booking {BookingId} (caught by unique index). " +
                             "Another request already processed this deduction. Skipping.",
                             booking.Id);
-                        return; // Skip gracefully - không rollback vì đã có request khác xử lý
+                        return;
                     }
 
                     // 9. Commit transaction
@@ -2409,6 +2422,17 @@ namespace SmashCourt_BE.Services
                     "Failed to deduct loyalty points for booking {BookingId}", booking.Id);
                 // Không throw - loyalty points không nên block refund process
             }
+        }
+
+        private static bool IsDuplicateLoyaltyDeduction(DbUpdateException exception)
+        {
+            for (Exception? current = exception; current != null; current = current.InnerException)
+            {
+                if (current.Message.Contains("ux_loyalty_deduct_booking", StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
         }
 
         // Helper method để lấy balance hiện tại (cho logging)
