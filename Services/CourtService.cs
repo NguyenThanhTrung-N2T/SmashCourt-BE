@@ -675,7 +675,8 @@ namespace SmashCourt_BE.Services
             status == BookingStatus.CONFIRMED ||
             status == BookingStatus.PAID_ONLINE ||
             status == BookingStatus.PENDING_PAYMENT ||
-            status == BookingStatus.PENDING;
+            status == BookingStatus.PENDING ||
+            status == BookingStatus.PENDING_APPROVAL;
 
         private async Task<List<TimeSlot>> GetTimelineSlotsForDateAsync(TimeOnly openTime, TimeOnly closeTime, DateOnly date)
         {
@@ -759,6 +760,7 @@ namespace SmashCourt_BE.Services
             BookingStatus.PENDING_PAYMENT => "Chờ TT",
             BookingStatus.IN_PROGRESS => "Đang chơi",
             BookingStatus.PENDING => "Chờ XN",
+            BookingStatus.PENDING_APPROVAL => "Chờ duyệt",
             BookingStatus.COMPLETED => "Hoàn tất",
             BookingStatus.CANCELLED => "Đã hủy",
             BookingStatus.CANCELLED_PENDING_REFUND => "Chờ hoàn",
@@ -773,6 +775,7 @@ namespace SmashCourt_BE.Services
                 BookingStatus.IN_PROGRESS => CourtTimelineSlotStatus.PLAYING,
 
                 BookingStatus.PENDING
+                or BookingStatus.PENDING_APPROVAL
                 or BookingStatus.CONFIRMED
                 or BookingStatus.PAID_ONLINE
                 or BookingStatus.PENDING_PAYMENT

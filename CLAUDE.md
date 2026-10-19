@@ -17,7 +17,8 @@ dotnet test  SmashCourt-BE.slnx -c Release --filter "Category=Integration"   # c
 dotnet run                                                      # http://localhost:5179, Swagger /swagger
 ```
 CI (`.github/workflows/ci.yml`): restore → build Release → test → build Docker image.
-Baseline hiện có 2 warning (MSB3277 xung đột EF Relational trong test project, CS8629 trong `BookingServiceTests`) — không thêm warning mới.
+Build hiện **0 warning** (đã dọn 20/10/2026: MSB3277 EF Relational và CS8629) — không thêm warning mới.
+Integration test (`SmashCourt-BE.Tests/Integration/`) chạy trên **PostgreSQL 17 thật nạp đúng schema production** (Testcontainers, `postgres:17.6-alpine`, nạp bằng `psql` trong container) nên ràng buộc CHECK, exclusion, enum có mặt; fixture dùng chung ánh xạ enum với app (`NpgsqlEnumMappingExtensions.MapSmashCourtEnums`). Schema lấy từ bản sao `SmashCourt-BE.Tests/TestData/Database/schema_smashcourt.sql`; bản chuẩn là `TADSS-Runtime/docs/database/schema_smashcourt.sql` (dump từ Neon `tadss-dev`). Đổi schema DB ⇒ dump lại bản chuẩn rồi chép đè bản sao (`SchemaCopySyncTests` đỏ nếu lệch khi có thư mục TADSS-Runtime cạnh repo). Fixture + 11 test integration chạy khoảng 10 giây khi image đã tải; lần đầu tải image PostgreSQL.
 
 ## Kiến trúc (chi tiết: skill `smashcourt-be-architecture`)
 ```

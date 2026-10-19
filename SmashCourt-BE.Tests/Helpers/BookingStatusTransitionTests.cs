@@ -78,4 +78,89 @@ public class BookingStatusTransitionTests
 
         Assert.False(result);
     }
+
+    // ── Phase 6: PENDING_APPROVAL (BE-UT-06, BE-UT-11) ──
+
+    [Fact]
+    [Trait("Catalog", "BE-UT-06")]
+    public void GetActiveStatuses_WhenPendingApproval_HoldsTheCourt()
+    {
+        Assert.Contains(BookingStatus.PENDING_APPROVAL, BookingStatusTransition.GetActiveStatuses());
+        Assert.DoesNotContain(BookingStatus.PENDING_APPROVAL, BookingStatusTransition.GetNonHoldingStatuses());
+    }
+
+    [Fact]
+    [Trait("Catalog", "BE-UT-06")]
+    public void GetNoShowEligibleStatuses_WhenPendingApproval_IsNotEligible()
+    {
+        Assert.DoesNotContain(BookingStatus.PENDING_APPROVAL, BookingStatusTransition.GetNoShowEligibleStatuses());
+    }
+
+    [Theory]
+    [Trait("Catalog", "BE-UT-06")]
+    [InlineData(BookingStatus.PENDING_APPROVAL, BookingStatus.PENDING)]     // duyệt, cọc > 0
+    [InlineData(BookingStatus.PENDING_APPROVAL, BookingStatus.CONFIRMED)]   // duyệt cọc 0%
+    [InlineData(BookingStatus.PENDING_APPROVAL, BookingStatus.CANCELLED)]   // từ chối / hết hạn duyệt / hủy
+    [InlineData(BookingStatus.PENDING, BookingStatus.CONFIRMED)]            // cọc áp dụng nhỏ hơn mức tối thiểu
+    [InlineData(BookingStatus.PAID_ONLINE, BookingStatus.CANCELLED)]        // hủy với hoàn 0%
+    [InlineData(BookingStatus.CANCELLED, BookingStatus.CANCELLED_PENDING_REFUND)] // tiền về sau khi hủy
+    public void CanTransition_WhenPhase6Edge_ReturnsTrue(BookingStatus from, BookingStatus to)
+    {
+        Assert.True(BookingStatusTransition.CanTransition(from, to));
+    }
+
+    [Fact]
+    [Trait("Catalog", "BE-UT-06")]
+    public void CanTransition_WhenLeavingPendingApproval_OnlyAllowsDocumentedTargets()
+    {
+        var allowed = Enum.GetValues<BookingStatus>()
+            .Where(to => BookingStatusTransition.CanTransition(BookingStatus.PENDING_APPROVAL, to))
+            .ToHashSet();
+
+        Assert.Equal(
+            new HashSet<BookingStatus> { BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.CANCELLED },
+            allowed);
+    }
+
+    [Fact]
+    [Trait("Catalog", "BE-UT-06")]
+    public void CanTransition_WhenEnteringPendingApproval_IsNeverAllowedFromAnyStatus()
+    {
+        // Đơn chỉ vào PENDING_APPROVAL lúc tạo (kết quả NEED_APPROVAL), không chuyển từ trạng thái khác
+        var sources = Enum.GetValues<BookingStatus>()
+            .Where(from => BookingStatusTransition.CanTransition(from, BookingStatus.PENDING_APPROVAL));
+
+        Assert.Empty(sources);
+    }
+
+    [Fact]
+    [Trait("Catalog", "BE-UT-11")]
+    public void BookingStatus_WhenAnyValue_IsClassifiedAsHoldingOrNonHolding()
+    {
+        // Thêm giá trị BookingStatus mới mà không phân loại ở BookingStatusTransition ⇒ test này đỏ
+        var holding = BookingStatusTransition.GetActiveStatuses().ToHashSet();
+        var nonHolding = BookingStatusTransition.GetNonHoldingStatuses().ToHashSet();
+
+        var unclassified = Enum.GetValues<BookingStatus>().Where(s => !holding.Contains(s) && !nonHolding.Contains(s)).ToList();
+
+        Assert.True(unclassified.Count == 0, $"BookingStatus chưa phân loại: {string.Join(", ", unclassified)}");
+    }
+
+    [Fact]
+    [Trait("Catalog", "BE-UT-11")]
+    public void BookingStatus_WhenClassified_NoValueIsBothHoldingAndNonHolding()
+    {
+        var overlap = BookingStatusTransition.GetActiveStatuses().Intersect(BookingStatusTransition.GetNonHoldingStatuses());
+
+        Assert.Empty(overlap);
+    }
+
+    [Fact]
+    [Trait("Catalog", "BE-UT-11")]
+    public void GetCancelledStatuses_WhenCalled_AreAllNonHolding()
+    {
+        Assert.Equal(3, BookingStatusTransition.GetCancelledStatuses().Length);
+        Assert.All(BookingStatusTransition.GetCancelledStatuses(),
+            s => Assert.Contains(s, BookingStatusTransition.GetNonHoldingStatuses()));
+    }
 }

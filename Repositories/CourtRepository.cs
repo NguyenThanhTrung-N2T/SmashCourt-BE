@@ -84,6 +84,7 @@ namespace SmashCourt_BE.Repositories
             var activeStatuses = new[]
             {
             BookingStatus.PENDING,
+            BookingStatus.PENDING_APPROVAL,
             BookingStatus.CONFIRMED,
             BookingStatus.PAID_ONLINE,
             BookingStatus.IN_PROGRESS
@@ -229,6 +230,7 @@ namespace SmashCourt_BE.Repositories
         private static BookingStatus[] GetTimelineStatuses() =>
         [
             BookingStatus.PENDING,
+            BookingStatus.PENDING_APPROVAL,
             BookingStatus.CONFIRMED,
             BookingStatus.PAID_ONLINE,
             BookingStatus.PENDING_PAYMENT,

@@ -39,32 +39,8 @@ AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", false);
 var dataSourceBuilder = new NpgsqlDataSourceBuilder(
     builder.Configuration.GetConnectionString("DefaultConnection"));
 
-// Sử dụng UpperCaseEnumTranslator để giữ nguyên tên enum khi map sang PostgreSQL
-var translator = new UpperCaseEnumTranslator();
-
-// Tự động map enum C# sang enum type của PostgreSQL
-dataSourceBuilder.MapEnum<UserRole>("user_role", translator);
-dataSourceBuilder.MapEnum<UserStatus>("user_status", translator);
-dataSourceBuilder.MapEnum<OtpType>("otp_type", translator);
-dataSourceBuilder.MapEnum<BranchStatus>("branch_status", translator);
-dataSourceBuilder.MapEnum<CourtTypeStatus>("court_type_status", translator);
-dataSourceBuilder.MapEnum<CourtStatus>("court_status", translator);
-dataSourceBuilder.MapEnum<UserBranchRole>("user_branch_role", translator);
-dataSourceBuilder.MapEnum<DayType>("day_type", translator);
-dataSourceBuilder.MapEnum<ServiceStatus>("service_status", translator);
-dataSourceBuilder.MapEnum<BranchServiceStatus>("branch_service_status", translator);
-dataSourceBuilder.MapEnum<LoyaltyTransactionType>("loyalty_transaction_type", translator);
-dataSourceBuilder.MapEnum<PromotionStatus>("promotion_status", translator);
-dataSourceBuilder.MapEnum<DiscountTypeEnum>("discount_type_enum", translator);
-dataSourceBuilder.MapEnum<BookingStatus>("booking_status", translator);
-dataSourceBuilder.MapEnum<BookingSource>("booking_source", translator);
-dataSourceBuilder.MapEnum<CancelSourceEnum>("cancel_source_enum", translator);
-dataSourceBuilder.MapEnum<InvoicePaymentStatus>("invoice_payment_status", translator);
-dataSourceBuilder.MapEnum<PaymentTiming>("payment_timing", translator);
-dataSourceBuilder.MapEnum<PaymentTxStatus>("payment_tx_status", translator);
-dataSourceBuilder.MapEnum<PaymentTxMethod>("payment_tx_method", translator);
-dataSourceBuilder.MapEnum<RefundStatus>("refund_status", translator);
-dataSourceBuilder.MapEnum<IpnProvider>("ipn_provider", translator);
+// Tự động map enum C# sang enum type của PostgreSQL (danh sách ở NpgsqlEnumMappingExtensions)
+dataSourceBuilder.MapSmashCourtEnums();
 
 var dataSource = dataSourceBuilder.Build();
 

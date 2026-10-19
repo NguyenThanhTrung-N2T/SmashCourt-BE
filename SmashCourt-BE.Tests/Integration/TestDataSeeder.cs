@@ -101,6 +101,50 @@ public sealed class TestDataSeeder
 
         return new BranchSeedData(branch, court, courtType);
     }
+
+    /// <summary>Tạo khách hàng (CUSTOMER) hợp lệ với schema thật.</summary>
+    public async Task<User> SeedCustomerAsync(DateTime? createdAt = null)
+    {
+        var now = createdAt ?? DateTime.UtcNow;
+        var user = new User
+        {
+            Id = Guid.NewGuid(),
+            Email = $"customer-{Guid.NewGuid():N}@test.local",
+            FullName = "Khách Test",
+            Role = UserRole.CUSTOMER,
+            Status = UserStatus.ACTIVE,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+
+        _context.Users.Add(user);
+        await _context.SaveChangesAsync();
+        return user;
+    }
+
+    /// <summary>Dựng (chưa lưu) booking hợp lệ với các ràng buộc CHECK của schema thật.</summary>
+    public static Booking NewBooking(Guid branchId, Guid customerId, BookingStatus status = BookingStatus.PENDING, DateTime? createdAt = null)
+    {
+        var now = createdAt ?? DateTime.UtcNow;
+        var booking = new Booking
+        {
+            Id = Guid.NewGuid(),
+            BookingCode = $"BK{Guid.NewGuid():N}"[..20],
+            BranchId = branchId,
+            CustomerId = customerId,
+            BookingDate = DateOnly.FromDateTime(now),
+            Status = status,
+            Source = BookingSource.ONLINE,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+
+        // chk_bookings_cancelled_at: trạng thái hủy bắt buộc có cancelled_at
+        if (status is BookingStatus.CANCELLED or BookingStatus.CANCELLED_PENDING_REFUND or BookingStatus.CANCELLED_REFUNDED)
+            booking.CancelledAt = now;
+
+        return booking;
+    }
 }
 
 public sealed record BasicSeedData(

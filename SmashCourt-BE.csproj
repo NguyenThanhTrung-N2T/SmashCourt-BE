@@ -19,6 +19,8 @@
     <PackageReference Include="Hangfire.PostgreSql" Version="1.21.1" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.Google" Version="8.0.25" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.25" />
+    <!-- Khai báo tường minh để project test cũng giải ra cùng phiên bản (Design có PrivateAssets=all nên không chảy sang) -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="8.0.25" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.25">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

@@ -1811,6 +1811,7 @@ public class ReportRepository : IReportRepository
     private static BookingStatus[] GetLiveCourtBookingStatuses() =>
     [
         BookingStatus.PENDING,
+        BookingStatus.PENDING_APPROVAL,
         BookingStatus.CONFIRMED,
         BookingStatus.PAID_ONLINE,
         BookingStatus.PENDING_PAYMENT,
@@ -1820,6 +1821,7 @@ public class ReportRepository : IReportRepository
     private static BookingStatus[] GetForecastBookingStatuses() =>
     [
         BookingStatus.PENDING,
+        BookingStatus.PENDING_APPROVAL,
         BookingStatus.CONFIRMED,
         BookingStatus.PAID_ONLINE,
         BookingStatus.IN_PROGRESS

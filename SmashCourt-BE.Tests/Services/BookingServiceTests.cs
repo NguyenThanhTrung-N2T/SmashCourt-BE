@@ -943,9 +943,10 @@ public class BookingServiceTests
                 booking.Id, BookingStatus.COMPLETED, BookingStatus.IN_PROGRESS))
             .ReturnsAsync(1);
         builder.InvoiceRepository.Setup(x => x.GetByBookingIdAsync(booking.Id)).ReturnsAsync(invoice);
-        builder.LoyaltyRepository.Setup(x => x.GetByUserIdAsync(booking.CustomerId!.Value))
-            .ReturnsAsync(new CustomerLoyalty { UserId = booking.CustomerId.Value, TierId = silverId });
-        builder.LoyaltyRepository.Setup(x => x.AddPointsAtomicAsync(booking.CustomerId.Value, 200))
+        var customerId = booking.CustomerId ?? throw new InvalidOperationException("Booking mẫu phải có CustomerId");
+        builder.LoyaltyRepository.Setup(x => x.GetByUserIdAsync(customerId))
+            .ReturnsAsync(new CustomerLoyalty { UserId = customerId, TierId = silverId });
+        builder.LoyaltyRepository.Setup(x => x.AddPointsAtomicAsync(customerId, 200))
             .ReturnsAsync(5_100);
         builder.LoyaltyTierRepository.Setup(x => x.GetAllLoyaltyTiersAsync())
             .ReturnsAsync([

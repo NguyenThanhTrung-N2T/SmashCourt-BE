@@ -15,6 +15,12 @@ namespace SmashCourt_BE.Models.Entities
         public InvoicePaymentStatus PaymentStatus { get; set; } = InvoicePaymentStatus.UNPAID;
         public PaymentTiming PaymentTiming { get; set; } = PaymentTiming.POSTPAID;  // Default: trả sau
         public DateTime? ExpiresAt { get; set; }
+
+        // Phase 6 — cọc TADSS (NULL = đơn không áp dụng cọc, hiểu là thu theo luồng cũ)
+        public decimal? DepositRate { get; set; }
+        public decimal? DepositAmount { get; set; }
+        public DepositSource? DepositSource { get; set; }
+        public DateTime? HoldDeadline { get; set; }                 // Hạn giữ chỗ tuyệt đối; NULL hiểu là CreatedAt + PaymentHoldMaxMinutes
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
 
