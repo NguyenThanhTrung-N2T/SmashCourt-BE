@@ -107,6 +107,7 @@ builder.Services.AddScoped<IGoogleAuthService, GoogleAuthService>();
 builder.Services.AddScoped<IOAuthAccountRepository, OAuthAccountRepository>();
 builder.Services.AddScoped<ILoyaltyService, LoyaltyService>();
 builder.Services.AddScoped<ICustomerLoyaltyRepository, CustomerLoyaltyRepository>();
+builder.Services.AddScoped<ICustomerHistoryRepository, CustomerHistoryRepository>();
 builder.Services.AddScoped<ILoyaltyTransactionRepository, LoyaltyTransactionRepository>();
 builder.Services.AddScoped<ICancelPolicyRepository, CancelPolicyRepository>();
 builder.Services.AddScoped<ICancelPolicyService, CancelPolicyService>();
@@ -181,6 +182,7 @@ builder.Services.AddSingleton<IValidateOptions<BookingPaymentSettings>, BookingP
 // Mã mới của Phase 6 lấy "bây giờ" qua TimeProvider để test được bằng FakeTimeProvider
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddTadssIntegration(builder.Configuration);
+builder.Services.AddScoped<IBookingDepositService, BookingDepositService>();
 
 builder.Services.AddScoped<EmailService>();
 builder.Services.AddScoped<OtpService>();

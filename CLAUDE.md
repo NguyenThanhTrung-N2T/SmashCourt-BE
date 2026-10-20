@@ -18,7 +18,7 @@ dotnet run                                                      # http://localho
 ```
 CI (`.github/workflows/ci.yml`): restore → build Release → test → build Docker image.
 Build hiện **0 warning** (đã dọn 20/10/2026: MSB3277 EF Relational và CS8629) — không thêm warning mới.
-Integration test (`SmashCourt-BE.Tests/Integration/`) chạy trên **PostgreSQL 17 thật nạp đúng schema production** (Testcontainers, `postgres:17.6-alpine`, nạp bằng `psql` trong container) nên ràng buộc CHECK, exclusion, enum có mặt; fixture dùng chung ánh xạ enum với app (`NpgsqlEnumMappingExtensions.MapSmashCourtEnums`). Schema lấy từ bản sao `SmashCourt-BE.Tests/TestData/Database/schema_smashcourt.sql`; bản chuẩn là `TADSS-Runtime/docs/database/schema_smashcourt.sql` (dump từ Neon `tadss-dev`). Đổi schema DB ⇒ dump lại bản chuẩn rồi chép đè bản sao (`SchemaCopySyncTests` đỏ nếu lệch khi có thư mục TADSS-Runtime cạnh repo). Fixture + 11 test integration chạy khoảng 10 giây khi image đã tải; lần đầu tải image PostgreSQL.
+Integration test (`SmashCourt-BE.Tests/Integration/`) chạy trên **PostgreSQL 17 thật nạp đúng schema production** (Testcontainers, `postgres:17.6-alpine`, nạp bằng `psql` trong container) nên ràng buộc CHECK, exclusion, enum có mặt; fixture dùng chung ánh xạ enum với app (`NpgsqlEnumMappingExtensions.MapSmashCourtEnums`). Schema lấy từ bản sao `SmashCourt-BE.Tests/TestData/Database/schema_smashcourt.sql`; bản chuẩn là `TADSS-Runtime/docs/database/schema_smashcourt.sql` (dump từ Neon `tadss-dev`). Đổi schema DB ⇒ dump lại bản chuẩn rồi chép đè bản sao (`SchemaCopySyncTests` đỏ nếu lệch khi có thư mục TADSS-Runtime cạnh repo). Toàn bộ test integration chạy khoảng 15 giây khi image đã tải; lần đầu tải image PostgreSQL. Một số test đối chiếu kết quả với bản gốc ở TADSS-Runtime (`export_smashcourt_bookings.sql`, JSON schema v2) và tự bỏ qua khi không có thư mục `TADSS-Runtime` cạnh repo (CI).
 
 ## Kiến trúc (chi tiết: skill `smashcourt-be-architecture`)
 ```
@@ -34,6 +34,7 @@ Common/                 → ApiResponse<T>, AppException, ErrorCodes, PagedResul
 Configurations/         → AuthorizationPolicies (OwnerOnly, OwnerOrManager, ManagerOnly, StaffAndAbove, CustomerOnly, AnyAuthenticated), *Settings
 Jobs/ + Interfaces/     → Hangfire jobs; lịch đăng ký trong Extensions/HangfireExtensions.cs (giờ VN)
 Integrations/AI/        → IFastApiClient/FastApiClient (JSON snake_case) gọi SmashCourt-AI
+Integrations/Tadss/     → ITadssClient/TadssClient (JSON camelCase, DateTimeOffset, không Polly) gọi TADSS v2; DTO riêng, kiểm theo JSON schema (bản sao ở Tests/TestData/Tadss/v2)
 Hubs/ Middlewares/ Helpers/ Factories/ Infrastructure/ Templates/
 Program.cs              → toàn bộ DI (AddScoped<IX, X>), auth, CORS "AllowFrontend", rate limit, middleware
 ```

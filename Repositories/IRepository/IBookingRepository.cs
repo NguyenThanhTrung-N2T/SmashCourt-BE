@@ -2,6 +2,7 @@ using SmashCourt_BE.Common;
 using SmashCourt_BE.DTOs.Booking;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
+using SmashCourt_BE.Models.ViewModels;
 
 namespace SmashCourt_BE.Repositories.IRepository
 {
@@ -104,5 +105,11 @@ namespace SmashCourt_BE.Repositories.IRepository
         /// <returns>Số lượng booking đã hoàn thành</returns>
         Task<int> GetCompletedBookingCountAsync(Guid customerId);
         Task SetActualEndPlayTimeAsync(Guid bookingId, TimeOnly actualEnd);
+
+        /// <summary>
+        /// Đọc một lần mọi dữ liệu của booking để dựng request quyết định cọc TADSS (chỉ đọc).
+        /// Trả null khi booking không tồn tại, không có khách hoặc chưa có hóa đơn (không đủ dữ liệu dựng request).
+        /// </summary>
+        Task<BookingDecisionSnapshot?> GetDecisionSnapshotAsync(Guid bookingId, CancellationToken cancellationToken = default);
     }
 }

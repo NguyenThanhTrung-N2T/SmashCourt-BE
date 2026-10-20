@@ -205,17 +205,7 @@ public sealed class Phase6SchemaTests(PostgreSqlIntegrationFixture fixture) : In
         // Hồi quy P6-13: quan hệ 1-1 cũ làm EF xóa lock thứ nhất khi thêm lock thứ hai (đặt online nhiều sân)
         var (booking, _, seed) = await SeedBookingAsync(BookingStatus.PENDING);
         var now = DateTime.UtcNow;
-        var secondCourt = new Court
-        {
-            Id = Guid.NewGuid(),
-            BranchId = seed.Branch.Id,
-            CourtTypeId = seed.CourtType.Id,
-            Name = $"Court-{Guid.NewGuid():N}",
-            Status = CourtStatus.AVAILABLE,
-            CreatedAt = now,
-            UpdatedAt = now
-        };
-        DbContext.Courts.Add(secondCourt);
+        var secondCourt = await Seeder.SeedCourtAsync(seed);
         DbContext.Bookings.Add(booking);
         await DbContext.SaveChangesAsync();
 

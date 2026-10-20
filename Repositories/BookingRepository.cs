@@ -4,6 +4,7 @@ using SmashCourt_BE.DTOs.Booking;
 using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
+using SmashCourt_BE.Models.ViewModels;
 using SmashCourt_BE.Repositories.IRepository;
 using Microsoft.EntityFrameworkCore;
 
@@ -886,6 +887,55 @@ namespace SmashCourt_BE.Repositories
                 .Where(bc => bc.BookingId == bookingId && bc.IsActive && bc.EndTime > actualEnd)
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(bc => bc.ActualEndPlayTime, actualEnd));
+        }
+
+        public async Task<BookingDecisionSnapshot?> GetDecisionSnapshotAsync(Guid bookingId, CancellationToken cancellationToken = default)
+        {
+            var row = await _context.Bookings
+                .AsNoTracking()
+                .Where(b => b.Id == bookingId)
+                .Select(b => new
+                {
+                    b.BranchId,
+                    b.CustomerId,
+                    b.CreatedAt,
+                    FinalTotal = b.Invoice != null ? (decimal?)b.Invoice.FinalTotal : null,
+                    PromotionCode = b.BookingPromotion != null ? b.BookingPromotion.PromotionCodeSnapshot : null,
+                    CustomerCreatedAt = b.Customer != null ? (DateTime?)b.Customer.CreatedAt : null,
+                    TierMinPoints = b.Customer != null && b.Customer.CustomerLoyalty != null
+                        ? (int?)b.Customer.CustomerLoyalty.Tier.MinPoints
+                        : null,
+                    Courts = b.BookingCourts.Select(c => new
+                    {
+                        c.CourtId,
+                        c.Court.CourtTypeId,
+                        c.Date,
+                        c.StartTime,
+                        c.EndTime,
+                        c.IsActive,
+                        Price = c.BookingPriceItems.Sum(p => (decimal?)p.UnitPrice) ?? 0m
+                    }).ToList()
+                })
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (row?.CustomerId == null || row.FinalTotal == null || row.CustomerCreatedAt == null)
+                return null;
+
+            // Thứ hạng theo min_points tăng dần của toàn bộ hạng (bảng nhỏ), không dựa vào tên hạng
+            int? tierRank = row.TierMinPoints == null
+                ? null
+                : await _context.LoyaltyTiers.CountAsync(t => t.MinPoints <= row.TierMinPoints, cancellationToken);
+
+            // Chỉ sân đang hoạt động; không còn sân nào hoạt động thì lấy tất cả (cùng quy tắc bản export Phase 5)
+            var active = row.Courts.Where(c => c.IsActive).ToList();
+            var courts = (active.Count > 0 ? active : row.Courts)
+                .OrderBy(c => c.Date).ThenBy(c => c.StartTime).ThenBy(c => c.CourtId)
+                .Select(c => new BookingDecisionCourt(c.CourtId, c.CourtTypeId, c.Date, c.StartTime, c.EndTime, c.Price))
+                .ToList();
+
+            return new BookingDecisionSnapshot(
+                bookingId, row.BranchId, row.CustomerId.Value, row.CreatedAt, row.FinalTotal.Value,
+                row.PromotionCode, row.CustomerCreatedAt.Value, tierRank, courts);
         }
     }
 }
