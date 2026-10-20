@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tadss.local/schemas/v2/override-request.schema.json",
+  "title": "OverrideRequest v2",
+  "description": "Body của POST /api/v2/decisions/{decisionId}/override — INTEGRATION_SPEC §3.6. APPROVE bắt buộc có deposit với đúng một trong rate/amount; REJECT không có deposit. Độ dài reason đếm theo ký tự Unicode (code point), khớp ContractLimits. Các ràng buộc cần dữ liệu của đơn (amount không vượt totalPrice, số chữ số thập phân theo tiền tệ) do runtime kiểm tra, không biểu diễn được ở schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["action", "reason"],
+  "properties": {
+    "action": { "enum": ["APPROVE", "REJECT"] },
+    "deposit": { "$ref": "#/$defs/overrideDeposit" },
+    "reason": { "type": "string", "minLength": 5, "maxLength": 500, "pattern": "\\S" }
+  },
+  "if": { "properties": { "action": { "const": "APPROVE" } } },
+  "then": { "required": ["deposit"] },
+  "else": { "not": { "required": ["deposit"] } },
+  "$defs": {
+    "overrideDeposit": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rate": { "type": "number", "minimum": 0, "maximum": 1, "multipleOf": 0.0001 },
+        "amount": { "type": "number", "minimum": 0 }
+      },
+      "oneOf": [{ "required": ["rate"] }, { "required": ["amount"] }]
+    }
+  }
+}

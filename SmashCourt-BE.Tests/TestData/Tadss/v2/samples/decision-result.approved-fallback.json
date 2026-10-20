@@ -1,0 +1,15 @@
+{
+  "decisionId": "0f9c7e5a-0000-4000-8000-00000000d002",
+  "reservationId": "5b0a6f0e-7c0d-4a0e-9a64-0c2e7f1b9a11",
+  "status": "APPROVED",
+  "deposit": { "rate": 1, "amount": 228000, "currency": "VND" },
+  "strategyName": "DefaultDecisionStrategy",
+  "strategyVersion": "2.1.0",
+  "executionType": "FALLBACK",
+  "fallbackUsed": true,
+  "reasonCode": "FALLBACK_STRATEGY_TIMEOUT",
+  "reasons": ["Strategy không phản hồi kịp nên áp dụng cọc 100%."],
+  "recommendations": [],
+  "approvalExpiresAt": null,
+  "evaluatedAt": "2026-11-18T02:15:00.541+00:00"
+}

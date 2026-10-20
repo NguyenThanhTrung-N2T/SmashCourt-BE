@@ -36,4 +36,6 @@ public static class TestCategories
     public const string Email = "Email";
     public const string Token = "Token";
     public const string Otp = "Otp";
+    public const string Tadss = "Tadss";
+    public const string Configuration = "Configuration";
 }

@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using Npgsql;
@@ -171,6 +172,15 @@ builder.Services.AddHttpClient<IFastApiClient, FastApiClient>((serviceProvider, 
     // Set timeout vô cực để tránh HttpClient tự động cancel request giữa chừng khi FastAPI mất nhiều thời gian phản hồi. Polly sẽ bắt lỗi timeout và trả về TimeoutRejectedException, cho phép chúng ta retry hoặc fallback một cách nhất quán.
     client.Timeout = Timeout.InfiniteTimeSpan;
 });
+
+// Đăng ký TADSS và cấu hình giữ chỗ (Phase 6): kiểm khi khởi động, đọc qua IOptionsMonitor
+builder.Services.AddOptions<BookingPaymentSettings>()
+    .Bind(builder.Configuration.GetSection(BookingPaymentSettings.SectionName))
+    .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<BookingPaymentSettings>, BookingPaymentSettingsValidator>();
+// Mã mới của Phase 6 lấy "bây giờ" qua TimeProvider để test được bằng FakeTimeProvider
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddTadssIntegration(builder.Configuration);
 
 builder.Services.AddScoped<EmailService>();
 builder.Services.AddScoped<OtpService>();
