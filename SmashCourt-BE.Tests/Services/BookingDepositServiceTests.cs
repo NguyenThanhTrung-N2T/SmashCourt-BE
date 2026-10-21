@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Moq;
 using SmashCourt_BE.Configurations;
@@ -10,6 +11,7 @@ using SmashCourt_BE.Models.ViewModels;
 using SmashCourt_BE.Repositories.IRepository;
 using SmashCourt_BE.Services;
 using SmashCourt_BE.Tests.Helpers;
+using SmashCourt_BE.Tests.TestData;
 
 namespace SmashCourt_BE.Tests.Services;
 
@@ -27,6 +29,8 @@ public class BookingDepositServiceTests
     private readonly Mock<ICustomerHistoryRepository> _history = new();
     private readonly Mock<ITadssClient> _client = new();
     private readonly TadssSettings _settings = new() { BranchTimeZone = "Asia/Ho_Chi_Minh" };
+    private readonly BookingPaymentSettings _paymentSettings = new() { MinOnlinePaymentAmount = 5000m };
+    private readonly ListLogger<BookingDepositService> _logger = new();
     private readonly List<string> _calls = [];
 
     private static BookingDecisionSnapshot Snapshot() => new(
@@ -53,7 +57,9 @@ public class BookingDepositServiceTests
             .ReturnsAsync(TadssCallResult<TadssDecisionResultDto>.Success(Approved(), 200, "corr"));
         var monitor = new Mock<IOptionsMonitor<TadssSettings>>();
         monitor.Setup(x => x.CurrentValue).Returns(_settings);
-        return new BookingDepositService(_bookings.Object, _history.Object, _client.Object, monitor.Object);
+        var paymentMonitor = new Mock<IOptionsMonitor<BookingPaymentSettings>>();
+        paymentMonitor.Setup(x => x.CurrentValue).Returns(_paymentSettings);
+        return new BookingDepositService(_bookings.Object, _history.Object, _client.Object, monitor.Object, paymentMonitor.Object, _logger);
     }
 
     private void CaptureRequestInto(List<TadssDecisionRequestDto> sent) =>
@@ -208,5 +214,224 @@ public class BookingDepositServiceTests
         Assert.Contains(BookingId.ToString(), ex.Message);
         _history.VerifyNoOtherCalls();
         _client.VerifyNoOtherCalls();
+    }
+
+    // ───────────────────────── DecideAsync (D2, D5, D6) ─────────────────────────
+
+    private static TadssDecisionResultDto Result(TadssDecisionStatus status, TadssDepositDto? deposit = null, DateTimeOffset? approvalExpiresAt = null) => new()
+    {
+        DecisionId = Guid.NewGuid(), ReservationId = BookingId, Status = status, Deposit = deposit,
+        StrategyName = "DefaultDecisionStrategy", StrategyVersion = "2.1.0", ExecutionType = "AUTOMATED", FallbackUsed = false,
+        ReasonCode = "TIER_DEPOSIT", Reasons = ["lý do"], Recommendations = [], ApprovalExpiresAt = approvalExpiresAt, EvaluatedAt = CreatedAt
+    };
+
+    private void ClientReturns(TadssCallResult<TadssDecisionResultDto> result) =>
+        _client.Setup(x => x.EvaluateAsync(It.IsAny<TadssDecisionRequestDto>(), BookingId, It.IsAny<CancellationToken>())).ReturnsAsync(result);
+
+    [Fact]
+    [Trait("Catalog", "BE-IT-04")]
+    public async Task DecideAsync_WhenFlagIsOff_NeverReadsDatabaseNorCallsTadssAndFallsBackToFullPayment()
+    {
+        _settings.EnableTadssDecision = false;
+        var service = CreateService(Snapshot());
+
+        var decision = await service.DecideAsync(BookingId, 228_000m);
+
+        Assert.Equal(DepositBranch.FullPaymentFallback, decision.Branch);
+        Assert.Equal(DepositSource.FULL_PAYMENT_FALLBACK, decision.DepositSource);
+        Assert.Equal(228_000m, decision.DepositAmount);
+        _client.VerifyNoOtherCalls();
+        _bookings.VerifyNoOtherCalls();
+        _history.VerifyNoOtherCalls();
+        Assert.Empty(_logger.Entries);
+    }
+
+    [Fact]
+    [Trait("Catalog", "BE-IT-24")]
+    public async Task DecideAsync_WhenFlagIsOffAndOrderBelowMinimum_ConfirmsWithoutOnlinePaymentAndLogsWarning()
+    {
+        _settings.EnableTadssDecision = false;
+        var service = CreateService(Snapshot());
+
+        var decision = await service.DecideAsync(BookingId, 3_000m);
+
+        Assert.Equal(DepositBranch.ConfirmWithoutOnlinePayment, decision.Branch);
+        var entry = Assert.Single(_logger.Entries);
+        Assert.Equal(LogLevel.Warning, entry.Level);
+        Assert.Contains(BookingId.ToString(), entry.Message);
+        _client.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    [Trait("Catalog", "BE-IT-02")]
+    public async Task DecideAsync_WhenFlagIsOnAndTadssApproves_CallsTadssOnceAndReturnsTadssDeposit()
+    {
+        _settings.EnableTadssDecision = true;
+        var service = CreateService(Snapshot());
+        var approved = Result(TadssDecisionStatus.APPROVED, new TadssDepositDto { Rate = 0.5m, Amount = 114_000m, Currency = "VND" });
+        ClientReturns(TadssCallResult<TadssDecisionResultDto>.Success(approved, 200, "corr"));
+
+        var decision = await service.DecideAsync(BookingId, 228_000m);
+
+        Assert.Equal(DepositBranch.TadssDeposit, decision.Branch);
+        Assert.Equal(approved.DecisionId, decision.TadssDecisionId);
+        Assert.Equal(114_000m, decision.DepositAmount);
+        _client.Verify(x => x.EvaluateAsync(It.IsAny<TadssDecisionRequestDto>(), BookingId, It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Empty(_logger.Entries);
+    }
+
+    [Fact]
+    [Trait("Catalog", "BE-IT-03")]
+    public async Task DecideAsync_WhenTadssNeedsApproval_ReturnsNeedApprovalWithUtcDeadlineAndLogsInformation()
+    {
+        _settings.EnableTadssDecision = true;
+        var service = CreateService(Snapshot());
+        ClientReturns(TadssCallResult<TadssDecisionResultDto>.Success(
+            Result(TadssDecisionStatus.NEED_APPROVAL, approvalExpiresAt: DateTimeOffset.Parse("2026-11-18T10:30:00+07:00")), 200, "corr"));
+
+        var decision = await service.DecideAsync(BookingId, 228_000m);
+
+        Assert.Equal(DepositBranch.NeedApproval, decision.Branch);
+        Assert.Equal(new DateTime(2026, 11, 18, 3, 30, 0, DateTimeKind.Utc), decision.ApprovalExpiresAtUtc);
+        Assert.Equal(LogLevel.Information, Assert.Single(_logger.Entries).Level);
+    }
+
+    [Fact]
+    [Trait("Catalog", "BE-IT-17")]
+    public async Task DecideAsync_WhenTadssRejects_ReturnsRejected()
+    {
+        _settings.EnableTadssDecision = true;
+        var service = CreateService(Snapshot());
+        ClientReturns(TadssCallResult<TadssDecisionResultDto>.Success(Result(TadssDecisionStatus.REJECTED), 200, "corr"));
+
+        var decision = await service.DecideAsync(BookingId, 0m);
+
+        Assert.Equal(DepositBranch.Rejected, decision.Branch);
+    }
+
+    [Theory]
+    [InlineData(TadssFailureKind.Timeout, null)]
+    [InlineData(TadssFailureKind.Network, null)]
+    [InlineData(TadssFailureKind.Http, 503)]
+    [InlineData(TadssFailureKind.Http, 401)]
+    [InlineData(TadssFailureKind.InvalidResponse, 200)]
+    [Trait("Catalog", "BE-IT-04")]
+    public async Task DecideAsync_WhenTadssFails_FallsBackToFullPaymentAndLogsWarning(TadssFailureKind kind, int? http)
+    {
+        _settings.EnableTadssDecision = true;
+        var service = CreateService(Snapshot());
+        ClientReturns(TadssCallResult<TadssDecisionResultDto>.Failure(kind, "corr-9", http));
+
+        var decision = await service.DecideAsync(BookingId, 228_000m);
+
+        Assert.Equal(DepositBranch.FullPaymentFallback, decision.Branch);
+        Assert.Null(decision.TadssDecisionId);
+        var entry = Assert.Single(_logger.Entries);
+        Assert.Equal(LogLevel.Warning, entry.Level);
+        Assert.Contains("corr-9", entry.Message);
+    }
+
+    [Theory]
+    [InlineData(400)]
+    [InlineData(409)]
+    [Trait("Catalog", "BE-IT-04")]
+    public async Task DecideAsync_WhenTadssReturns400Or409_LogsErrorAndStillFallsBack(int http)
+    {
+        _settings.EnableTadssDecision = true;
+        var service = CreateService(Snapshot());
+        ClientReturns(TadssCallResult<TadssDecisionResultDto>.Failure(TadssFailureKind.Http, "corr", http, "IDEMPOTENCY_KEY_REUSE"));
+
+        var decision = await service.DecideAsync(BookingId, 228_000m);
+
+        Assert.Equal(DepositBranch.FullPaymentFallback, decision.Branch);
+        Assert.Equal(LogLevel.Error, Assert.Single(_logger.Entries).Level);
+    }
+
+    [Fact]
+    [Trait("Catalog", "BE-IT-19")]
+    public async Task DecideAsync_ReadsTheFlagOnEveryCall_SoChangesTakeEffectWithoutRestart()
+    {
+        var service = CreateService(Snapshot());
+
+        _settings.EnableTadssDecision = false;
+        await service.DecideAsync(BookingId, 228_000m);
+        _client.Verify(x => x.EvaluateAsync(It.IsAny<TadssDecisionRequestDto>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+
+        _settings.EnableTadssDecision = true;
+        await service.DecideAsync(BookingId, 228_000m);
+        _client.Verify(x => x.EvaluateAsync(It.IsAny<TadssDecisionRequestDto>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Once);
+
+        _settings.EnableTadssDecision = false;
+        await service.DecideAsync(BookingId, 228_000m);
+        _client.Verify(x => x.EvaluateAsync(It.IsAny<TadssDecisionRequestDto>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task DecideAsync_ReadsTheMinimumPaymentAmountOnEveryCall()
+    {
+        _settings.EnableTadssDecision = false;
+        var service = CreateService(Snapshot());
+
+        _paymentSettings.MinOnlinePaymentAmount = 5_000m;
+        Assert.Equal(DepositBranch.FullPaymentFallback, (await service.DecideAsync(BookingId, 6_000m)).Branch);
+
+        _paymentSettings.MinOnlinePaymentAmount = 10_000m;
+        Assert.Equal(DepositBranch.ConfirmWithoutOnlinePayment, (await service.DecideAsync(BookingId, 6_000m)).Branch);
+    }
+
+    [Fact]
+    public async Task DecideAsync_WhenFlagIsOn_PassesTheCancellationTokenToRepositoriesAndClient()
+    {
+        _settings.EnableTadssDecision = true;
+        var service = CreateService(Snapshot());
+        using var cts = new CancellationTokenSource();
+
+        await service.DecideAsync(BookingId, 228_000m, cts.Token);
+
+        _bookings.Verify(x => x.GetDecisionSnapshotAsync(BookingId, cts.Token), Times.Once);
+        _client.Verify(x => x.EvaluateAsync(It.IsAny<TadssDecisionRequestDto>(), BookingId, cts.Token), Times.Once);
+    }
+
+    [Fact]
+    [Trait("Catalog", "BE-IT-04")]
+    public async Task DecideAsync_WhenCallerCancelsBeforeStart_ThrowsOperationCanceledAndLogsNothing()
+    {
+        // K-06: hợp đồng cho caller khác; CreateOnlineAsync truyền CancellationToken.None (D6)
+        _settings.EnableTadssDecision = true;
+        var service = CreateService(Snapshot());
+        _client.Setup(x => x.EvaluateAsync(It.IsAny<TadssDecisionRequestDto>(), BookingId, It.IsAny<CancellationToken>()))
+            .Returns<TadssDecisionRequestDto, Guid, CancellationToken>((_, _, ct) =>
+            {
+                ct.ThrowIfCancellationRequested();
+                return Task.FromResult(TadssCallResult<TadssDecisionResultDto>.Failure(TadssFailureKind.Timeout, "corr"));
+            });
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() => service.DecideAsync(BookingId, 228_000m, cts.Token));
+
+        Assert.Empty(_logger.Entries);
+    }
+
+    [Fact]
+    public async Task DecideAsync_WhenFlagIsOnButSnapshotIsMissing_ThrowsProgrammingError()
+    {
+        _settings.EnableTadssDecision = true;
+        var service = CreateService(snapshot: null);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.DecideAsync(BookingId, 228_000m));
+    }
+
+    [Fact]
+    public async Task DecideAsync_NeverWritesToTheDatabase()
+    {
+        _settings.EnableTadssDecision = true;
+        var service = CreateService(Snapshot());
+
+        await service.DecideAsync(BookingId, 228_000m);
+
+        // chỉ đọc snapshot; không hàm ghi nào của repository được gọi
+        _bookings.Verify(x => x.GetDecisionSnapshotAsync(BookingId, It.IsAny<CancellationToken>()), Times.Once);
+        _bookings.VerifyNoOtherCalls();
     }
 }

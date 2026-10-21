@@ -7,6 +7,7 @@ using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Models.ViewModels;
 using SmashCourt_BE.Repositories.IRepository;
 using Microsoft.EntityFrameworkCore;
+using System.Transactions;
 
 namespace SmashCourt_BE.Repositories
 {
@@ -873,6 +874,173 @@ namespace SmashCourt_BE.Repositories
                     .SetProperty(b => b.UpdatedAt, now));
 
             return rowsAffected;
+        }
+
+        public async Task<int> CancelWithStatusCheckAsync(
+            Guid bookingId,
+            IReadOnlyCollection<BookingStatus> expectedStatuses,
+            BookingStatus newStatus,
+            CancelSourceEnum source,
+            BookingCancelReason reason,
+            Guid? cancelledBy,
+            DateTime cancelledAtUtc)
+        {
+            if (expectedStatuses.Count == 0)
+                throw new ArgumentException("Phải có ít nhất một trạng thái nguồn.", nameof(expectedStatuses));
+            if (newStatus is not (BookingStatus.CANCELLED or BookingStatus.CANCELLED_PENDING_REFUND or BookingStatus.CANCELLED_REFUNDED))
+                throw new ArgumentOutOfRangeException(nameof(newStatus), newStatus, "Trạng thái mới phải là một trạng thái hủy.");
+            EnsureUtc(cancelledAtUtc, nameof(cancelledAtUtc));
+
+            var from = expectedStatuses.ToArray();
+
+            // Một lệnh UPDATE: điều kiện trạng thái và mọi cột hủy cùng lúc (chk_bookings_cancelled_at, chk_bookings_cancel_reason)
+            return await _context.Bookings
+                .Where(b => b.Id == bookingId && from.Contains(b.Status))
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(b => b.Status, newStatus)
+                    .SetProperty(b => b.CancelledAt, cancelledAtUtc)
+                    .SetProperty(b => b.CancelSource, source)
+                    .SetProperty(b => b.CancelReason, reason)
+                    .SetProperty(b => b.CancelledBy, cancelledBy)
+                    .SetProperty(b => b.UpdatedAt, cancelledAtUtc));
+        }
+
+        public async Task<bool> ApplyPaymentRequiredAsync(
+            Guid bookingId, Guid? tadssDecisionId, decimal depositRate, decimal depositAmount, DepositSource depositSource, DateTime nowUtc)
+        {
+            EnsureInTransaction();
+            EnsureUtc(nowUtc, nameof(nowUtc));
+
+            var won = await _context.Bookings
+                .Where(b => b.Id == bookingId && b.Status == BookingStatus.PENDING)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(b => b.TadssDecisionId, tadssDecisionId)
+                    .SetProperty(b => b.UpdatedAt, nowUtc)) == 1;
+            if (!won)
+                return false;
+
+            EnsureInvoiceUpdated(bookingId, await _context.Invoices
+                .Where(i => i.BookingId == bookingId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(i => i.DepositRate, (decimal?)depositRate)
+                    .SetProperty(i => i.DepositAmount, (decimal?)depositAmount)
+                    .SetProperty(i => i.DepositSource, (DepositSource?)depositSource)
+                    .SetProperty(i => i.UpdatedAt, nowUtc)));
+            return true;
+        }
+
+        public async Task<bool> ConfirmWithoutOnlinePaymentAsync(
+            Guid bookingId, Guid? tadssDecisionId, DepositSource depositSource, DateTime nowUtc)
+        {
+            EnsureInTransaction();
+            EnsureUtc(nowUtc, nameof(nowUtc));
+
+            var won = await _context.Bookings
+                .Where(b => b.Id == bookingId && b.Status == BookingStatus.PENDING)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(b => b.Status, BookingStatus.CONFIRMED)
+                    .SetProperty(b => b.TadssDecisionId, tadssDecisionId)
+                    .SetProperty(b => b.UpdatedAt, nowUtc)) == 1;
+            if (!won)
+                return false;
+
+            // Cọc áp dụng 0, thu tại quầy (D3): POSTPAID, không còn hạn thanh toán online
+            EnsureInvoiceUpdated(bookingId, await _context.Invoices
+                .Where(i => i.BookingId == bookingId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(i => i.DepositRate, (decimal?)0m)
+                    .SetProperty(i => i.DepositAmount, (decimal?)0m)
+                    .SetProperty(i => i.DepositSource, (DepositSource?)depositSource)
+                    .SetProperty(i => i.PaymentTiming, PaymentTiming.POSTPAID)
+                    .SetProperty(i => i.ExpiresAt, (DateTime?)null)
+                    .SetProperty(i => i.UpdatedAt, nowUtc)));
+
+            // Booking CONFIRMED đã giữ sân qua booking_courts nên không cần slot lock
+            await _context.SlotLocks.Where(sl => sl.BookingId == bookingId).ExecuteDeleteAsync();
+            return true;
+        }
+
+        public async Task<bool> HoldForApprovalAsync(
+            Guid bookingId, Guid tadssDecisionId, DateTime approvalExpiresAtUtc, string approvalReasonCode,
+            IReadOnlyCollection<string> approvalReasons, DateTime nowUtc)
+        {
+            EnsureInTransaction();
+            EnsureUtc(approvalExpiresAtUtc, nameof(approvalExpiresAtUtc));
+            EnsureUtc(nowUtc, nameof(nowUtc));
+
+            var reasons = approvalReasons.ToList();
+            var won = await _context.Bookings
+                .Where(b => b.Id == bookingId && b.Status == BookingStatus.PENDING)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(b => b.Status, BookingStatus.PENDING_APPROVAL)
+                    .SetProperty(b => b.TadssDecisionId, (Guid?)tadssDecisionId)
+                    .SetProperty(b => b.ApprovalExpiresAt, (DateTime?)approvalExpiresAtUtc)
+                    .SetProperty(b => b.ApprovalReasonCode, approvalReasonCode)
+                    .SetProperty(b => b.ApprovalReasons, reasons)
+                    .SetProperty(b => b.UpdatedAt, nowUtc)) == 1;
+            if (!won)
+                return false;
+
+            // Chưa có mức cọc và chưa có hạn thanh toán: Manager duyệt xong mới đặt (6A-3)
+            EnsureInvoiceUpdated(bookingId, await _context.Invoices
+                .Where(i => i.BookingId == bookingId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(i => i.DepositRate, (decimal?)null)
+                    .SetProperty(i => i.DepositAmount, (decimal?)null)
+                    .SetProperty(i => i.DepositSource, (DepositSource?)null)
+                    .SetProperty(i => i.ExpiresAt, (DateTime?)null)
+                    .SetProperty(i => i.UpdatedAt, nowUtc)));
+
+            await _context.SlotLocks
+                .Where(sl => sl.BookingId == bookingId)
+                .ExecuteUpdateAsync(s => s.SetProperty(sl => sl.ExpiresAt, approvalExpiresAtUtc));
+            return true;
+        }
+
+        public async Task<bool> RejectByPolicyAsync(Guid bookingId, Guid tadssDecisionId, DateTime nowUtc)
+        {
+            EnsureInTransaction();
+            var won = await CancelWithStatusCheckAsync(
+                bookingId, [BookingStatus.PENDING], BookingStatus.CANCELLED,
+                CancelSourceEnum.SYSTEM, BookingCancelReason.POLICY_REJECTED, cancelledBy: null, nowUtc) == 1;
+            if (!won)
+                return false;
+
+            // Lõi hủy không biết TADSS nên decision id ghi bằng lệnh riêng; dòng đã bị khóa bởi câu cổng
+            await _context.Bookings
+                .Where(b => b.Id == bookingId)
+                .ExecuteUpdateAsync(s => s.SetProperty(b => b.TadssDecisionId, (Guid?)tadssDecisionId));
+
+            // Nhả sân để đơn khác đặt lại cùng giờ; đơn chưa có Payment nên hóa đơn chỉ cần EXPIRED
+            await UpdateCourtActiveStatusAsync(bookingId, false);
+            await _context.SlotLocks.Where(sl => sl.BookingId == bookingId).ExecuteDeleteAsync();
+            EnsureInvoiceUpdated(bookingId, await _context.Invoices
+                .Where(i => i.BookingId == bookingId && i.PaymentStatus == InvoicePaymentStatus.UNPAID)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(i => i.PaymentStatus, InvoicePaymentStatus.EXPIRED)
+                    .SetProperty(i => i.UpdatedAt, nowUtc)));
+            return true;
+        }
+
+        // Các hàm theo nhánh ghi nhiều bảng sau câu cổng; không có transaction thì lỗi giữa chừng để lại đơn nửa vời. Chặn từ đầu, trước khi ghi gì.
+        // EF BeginTransaction (CurrentTransaction) hoặc TransactionScope của service (Transaction.Current) đều được chấp nhận.
+        private void EnsureInTransaction()
+        {
+            if (_context.Database.CurrentTransaction == null && Transaction.Current == null)
+                throw new InvalidOperationException("Hàm này ghi nhiều bảng sau câu cổng nên phải chạy trong transaction của caller (TransactionScope).");
+        }
+
+        private static void EnsureUtc(DateTime value, string paramName)
+        {
+            if (value.Kind != DateTimeKind.Utc)
+                throw new ArgumentException("Mốc thời gian phải có Kind = Utc (spec 7.14).", paramName);
+        }
+
+        // Thắng câu cổng mà hóa đơn không cập nhật được là dữ liệu hỏng (transaction 1 luôn tạo hóa đơn): ném để rollback
+        private static void EnsureInvoiceUpdated(Guid bookingId, int rows)
+        {
+            if (rows != 1)
+                throw new InvalidOperationException($"Booking {bookingId} không có đúng một hóa đơn cần cập nhật (cập nhật {rows} dòng).");
         }
 
         public async Task<int> GetCompletedBookingCountAsync(Guid customerId)

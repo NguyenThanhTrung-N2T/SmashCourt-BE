@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
 using SmashCourt_BE.Configurations;
@@ -32,7 +33,11 @@ public sealed class BookingDepositServiceIntegrationTests(PostgreSqlIntegrationF
             .ReturnsAsync(TadssCallResult<TadssDecisionResultDto>.Failure(TadssFailureKind.Timeout, "corr"));
         var monitor = new Mock<IOptionsMonitor<TadssSettings>>();
         monitor.Setup(x => x.CurrentValue).Returns(new TadssSettings { BranchTimeZone = "Asia/Ho_Chi_Minh" });
-        return new BookingDepositService(new BookingRepository(DbContext), new CustomerHistoryRepository(DbContext), client.Object, monitor.Object);
+        var paymentMonitor = new Mock<IOptionsMonitor<BookingPaymentSettings>>();
+        paymentMonitor.Setup(x => x.CurrentValue).Returns(new BookingPaymentSettings());
+        return new BookingDepositService(
+            new BookingRepository(DbContext), new CustomerHistoryRepository(DbContext), client.Object, monitor.Object,
+            paymentMonitor.Object, NullLogger<BookingDepositService>.Instance);
     }
 
     private async Task<Booking> AddHistoryBookingAsync(

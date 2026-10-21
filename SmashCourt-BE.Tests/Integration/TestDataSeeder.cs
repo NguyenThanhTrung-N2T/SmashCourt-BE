@@ -284,6 +284,20 @@ public sealed class TestDataSeeder
         CreatedAt = DateTime.UtcNow
     };
 
+    /// <summary>Dựng (chưa lưu) slot lock; excl_slot_locks_no_overlap áp theo (sân, ngày, khoảng giờ).</summary>
+    public static SlotLock NewSlotLock(
+        Guid bookingId, Guid courtId, DateOnly date, TimeOnly start, TimeOnly end, DateTime expiresAt) => new()
+    {
+        Id = Guid.NewGuid(),
+        BookingId = bookingId,
+        CourtId = courtId,
+        Date = date,
+        StartTime = start,
+        EndTime = end,
+        ExpiresAt = expiresAt,
+        CreatedAt = DateTime.UtcNow
+    };
+
     /// <summary>Dựng (chưa lưu) hóa đơn hợp lệ (chk_invoices_final_total_formula: không giảm giá, không phí dịch vụ).</summary>
     public static Invoice NewInvoice(Booking booking, decimal courtFee = 100_000m) => new()
     {
