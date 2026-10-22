@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Moq;
 using SmashCourt_BE.Common;
 using SmashCourt_BE.DTOs.Payment;
+using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
@@ -381,6 +382,96 @@ public class PaymentServiceTests
         bookings.Verify(x => x.UpdateAsync(booking), Times.Once);
         slots.Verify(x => x.UpdateExpiryByBookingIdAsync(
             booking.Id, It.Is<DateTime>(expiry => expiry > DateTime.UtcNow.AddMinutes(9))), Times.Once);
+    }
+
+    // ───────────────────────── Token hủy của đường IPN (T-2, D8) ─────────────────────────
+
+    /// <summary>Chạy IPN thành công cho đơn chơi lúc <paramref name="playStartUtc"/>; trả hash và hạn token BE ghi vào booking.</summary>
+    private static async Task<(string Hash, DateTime Expiry)> RunSuccessfulIpnAsync(DateTime playStartUtc)
+    {
+        var payments = new Mock<IPaymentRepository>();
+        var bookings = new Mock<IBookingRepository>();
+        var vnPay = new Mock<IVnPayService>();
+        var transactionRef = "TX-IPN-TOKEN";
+        var isSuccess = true;
+        var rawPayload = "payload";
+        var playStartVn = TimeZoneInfo.ConvertTimeFromUtc(playStartUtc, DateTimeHelper.VNTimezone);
+        var booking = TestDataFactory.CreateBooking(status: BookingStatus.PENDING);
+        booking.BookingDate = DateOnly.FromDateTime(playStartVn);
+        booking.Branch = new Branch { Id = booking.BranchId, Name = "Test branch" };
+        var court = TestDataFactory.CreateCourt(booking.BranchId, "Court 1");
+        booking.BookingCourts.Add(new BookingCourt
+        {
+            BookingId = booking.Id, CourtId = court.Id, Date = booking.BookingDate,
+            StartTime = TimeOnly.FromDateTime(playStartVn), EndTime = TimeOnly.FromDateTime(playStartVn).AddHours(1),
+            Court = court, IsActive = true
+        });
+        var invoice = TestDataFactory.CreateInvoice(booking.Id, finalTotal: 250_000m);
+        invoice.Booking = booking;
+        var payment = TestDataFactory.CreatePayment(invoice.Id, 250_000m, PaymentTxStatus.PENDING, PaymentTxMethod.VNPAY);
+        payment.TransactionRef = transactionRef;
+        payment.Invoice = invoice;
+        vnPay.Setup(x => x.VerifyIpn(It.IsAny<IQueryCollection>(), out transactionRef, out isSuccess, out rawPayload)).Returns(true);
+        payments.Setup(x => x.GetByTransactionRefAsync(transactionRef)).ReturnsAsync(payment);
+        string? hash = null;
+        DateTime expiry = default;
+        bookings.Setup(x => x.AtomicUpdatePaymentSuccessAsync(
+                booking.Id, BookingStatus.PENDING, It.IsAny<string>(), It.IsAny<DateTime>(), It.IsAny<DateTime>()))
+            .Callback((Guid _, BookingStatus _, string h, DateTime e, DateTime _) => { hash = h; expiry = e; })
+            .ReturnsAsync(1);
+
+        await CreateService(payments, bookings, vnPay).HandleVnPayIpnAsync(
+            new QueryCollection(new Dictionary<string, Microsoft.Extensions.Primitives.StringValues>
+            {
+                ["vnp_TxnRef"] = transactionRef,
+                ["vnp_ResponseCode"] = "00"
+            }),
+            new DefaultHttpContext().Request);
+
+        Assert.NotNull(hash);
+        return (hash, expiry);
+    }
+
+    private static DateTime UtcNowToMinute()
+    {
+        var now = DateTime.UtcNow;
+        return new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, DateTimeKind.Utc);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Token)]
+    [Trait("Catalog", "BE-UT-12")]
+    public async Task HandleVnPayIpnAsync_WhenPlayIsWithin24Hours_CancelTokenExpiresExactlyAtPlayStartUtc()
+    {
+        // T-2: trước khi sửa hạn = SpecifyKind(giờ VN, Utc), tức muộn hơn giờ chơi 7 giờ
+        var playStartUtc = UtcNowToMinute().AddHours(3);
+
+        var (_, expiry) = await RunSuccessfulIpnAsync(playStartUtc);
+
+        Assert.Equal(DateTimeKind.Utc, expiry.Kind);
+        Assert.Equal(playStartUtc, expiry);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Token)]
+    [Trait("Catalog", "BE-UT-12")]
+    public async Task HandleVnPayIpnAsync_WhenPlayIsDaysAway_CancelTokenExpiresTwentyFourHoursAfterPayment()
+    {
+        var before = DateTime.UtcNow;
+        var (_, expiry) = await RunSuccessfulIpnAsync(UtcNowToMinute().AddDays(3));
+        var after = DateTime.UtcNow;
+
+        Assert.Equal(DateTimeKind.Utc, expiry.Kind);
+        Assert.InRange(expiry, before.AddHours(24), after.AddHours(24));
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Token)]
+    public async Task HandleVnPayIpnAsync_WhenPaymentSucceeds_StoresLowercaseSha256HashOfAToken()
+    {
+        var (hash, _) = await RunSuccessfulIpnAsync(UtcNowToMinute().AddHours(5));
+
+        Assert.Matches("^[0-9a-f]{64}$", hash);
     }
 
     private static PaymentService CreateService(

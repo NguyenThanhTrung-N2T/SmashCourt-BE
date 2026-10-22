@@ -10,8 +10,6 @@ using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
 using SmashCourt_BE.Services.IService;
 using SmashCourt_BE.Factories;
-using System.Security.Cryptography;
-using System.Text;
 using Microsoft.Extensions.Configuration;
 using Microsoft.EntityFrameworkCore;
 
@@ -1199,7 +1197,7 @@ namespace SmashCourt_BE.Services
         // Lấy thông tin hủy booking theo token (dùng cho khách hàng hủy booking online)
         public async Task<CancelTokenInfoDto> GetCancelInfoAsync(string token)
         {
-            var tokenHash = HashToken(token);
+            var tokenHash = CancelTokenHelper.Hash(token);
             var booking = await _bookingRepo.GetByCancelTokenAsync(tokenHash);
 
             if (booking == null)
@@ -1260,7 +1258,7 @@ namespace SmashCourt_BE.Services
         public async Task CancelByTokenAsync(string token)
         {
             // 1. Hash token và tìm booking
-            var tokenHash = HashToken(token);
+            var tokenHash = CancelTokenHelper.Hash(token);
             var booking = await _bookingRepo.GetByCancelTokenAsync(tokenHash);
 
             if (booking == null)
@@ -2461,22 +2459,17 @@ namespace SmashCourt_BE.Services
                 var name = booking.Customer?.FullName ?? booking.GuestName;
                 if (string.IsNullOrEmpty(email)) return;
 
-                // Tạo cancel token
-                var rawToken = GenerateCancelToken();
-                var tokenHash = HashToken(rawToken);
-
                 // DTO đã validate các sân đều có chung thời gian (StartTime, EndTime)
                 var startTime = TimeOnly.FromTimeSpan(courts.First().Slot.StartTime);
-                var endTime = TimeOnly.FromTimeSpan(courts.First().Slot.EndTime);
 
-                // Lấy VN time để nhất quán với PaymentService.SendConfirmationWithCancelTokenAsync
-                var tokenExpiry = new DateTime[] {
-                    booking.BookingDate.ToDateTime(startTime),
-                    DateTimeHelper.GetUtcNow().AddHours(24)
-                }.Min();
+                // Giờ chơi là giờ tường VN: đổi sang UTC thật trước khi so với now (T-3: trộn Kind Unspecified làm Npgsql từ chối ghi)
+                var token = CancelTokenHelper.Generate(
+                    DateTimeHelper.ToUtcFromVietnam(booking.BookingDate, startTime),
+                    DateTimeHelper.GetUtcNow());
+                var rawToken = token.RawToken;
 
-                booking.CancelTokenHash = tokenHash;
-                booking.CancelTokenExpiresAt = tokenExpiry;
+                booking.CancelTokenHash = token.TokenHash;
+                booking.CancelTokenExpiresAt = token.ExpiresAtUtc;
                 await _bookingRepo.UpdateAsync(booking);
 
                 // Lấy frontend base URL từ config
@@ -2493,20 +2486,6 @@ namespace SmashCourt_BE.Services
                 _logger.LogError(ex, "Failed to send confirmation email for booking {BookingId}",
                     booking.Id);
             }
-        }
-
-        private static string GenerateCancelToken()
-        {
-            var bytes = new byte[32];
-            RandomNumberGenerator.Fill(bytes);
-            return Convert.ToBase64String(bytes)
-                .Replace("+", "-").Replace("/", "_").Replace("=", "");
-        }
-
-        private static string HashToken(string rawToken)
-        {
-            var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(rawToken));
-            return Convert.ToHexString(bytes).ToLower();
         }
 
         // map data từ entity Booking sang DTO BookingDto, bao gồm courts, price items và services

@@ -9,8 +9,6 @@ using SmashCourt_BE.DTOs.Booking;
 using SmashCourt_BE.DTOs.Payment;
 using SmashCourt_BE.DTOs.SignalR;
 using SmashCourt_BE.Factories;
-using System.Security.Cryptography;
-using System.Text;
 using Microsoft.Extensions.Configuration;
 
 namespace SmashCourt_BE.Services
@@ -501,30 +499,21 @@ namespace SmashCourt_BE.Services
         /// </summary>
         private (string rawToken, string tokenHash, DateTime tokenExpiry) GenerateCancelTokenData(Booking booking)
         {
-            var rawToken = GenerateCancelToken();
-            var tokenHash = HashToken(rawToken);
-
-            // Lấy first court slot để tính token expiry
-            // Safe vì booking luôn có ít nhất 1 court
-            var firstCourtSlot = booking.BookingCourts?.FirstOrDefault();
+            // Slot sớm nhất của đơn; safe vì booking luôn có ít nhất 1 court
+            var firstCourtSlot = booking.BookingCourts?
+                .OrderBy(bc => bc.Date).ThenBy(bc => bc.StartTime)
+                .FirstOrDefault();
             if (firstCourtSlot == null)
             {
                 throw new InvalidOperationException("Booking must have at least one court");
             }
 
-            var startTime = firstCourtSlot.StartTime;
+            // Giờ chơi là giờ tường VN: đổi sang UTC thật (T-2: SpecifyKind(Utc) cũ làm link sống thêm 7 giờ sau giờ chơi)
+            var token = CancelTokenHelper.Generate(
+                DateTimeHelper.ToUtcFromVietnam(firstCourtSlot.Date, firstCourtSlot.StartTime),
+                DateTimeHelper.GetUtcNow());
 
-            // Token expiry = min(booking start time, 24h from now)
-            // DateOnly.ToDateTime() returns Kind=Unspecified — must specify UTC for Npgsql/timestamptz
-            var bookingStartUtc = DateTime.SpecifyKind(
-                booking.BookingDate.ToDateTime(startTime), DateTimeKind.Utc);
-            var tokenExpiry = new DateTime[]
-            {
-                bookingStartUtc,
-                DateTimeHelper.GetUtcNow().AddHours(24)
-            }.Min();
-
-            return (rawToken, tokenHash, tokenExpiry);
+            return (token.RawToken, token.TokenHash, token.ExpiresAtUtc);
         }
 
 
@@ -572,28 +561,6 @@ namespace SmashCourt_BE.Services
             _logger.LogInformation("EmailService.SendBookingConfirmationAsync completed for {Email}", email);
         }
 
-        /// <summary>
-        /// Generate random cancel token (URL-safe base64)
-        /// </summary>
-        private static string GenerateCancelToken()
-        {
-            var bytes = new byte[32];
-            RandomNumberGenerator.Fill(bytes);
-            return Convert.ToBase64String(bytes)
-                .Replace("+", "-")
-                .Replace("/", "_")
-                .Replace("=", "");
-        }
-
-        /// <summary>
-        /// Hash token bằng SHA256 để lưu vào DB
-        /// </summary>
-        private static string HashToken(string rawToken)
-        {
-            var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(rawToken));
-            return Convert.ToHexString(bytes).ToLower();
-        }
-
-        // RemoveDiacritics moved to StringHelper
+        // Sinh/băm token hủy: CancelTokenHelper. RemoveDiacritics moved to StringHelper
     }
 }

@@ -68,11 +68,14 @@ public class TadssClient : ITadssClient
         return SendAsync<TadssOutcomeResponseDto>(call, allowRetry: false, null, cancellationToken);
     }
 
-    // INV-7 của contract: APPROVED ⇔ deposit, NEED_APPROVAL ⇔ approvalExpiresAt. Lệch thì không dùng được kết quả
+    // INV-7 của contract: APPROVED ⇔ deposit, NEED_APPROVAL ⇔ approvalExpiresAt; cùng phạm vi deposit của decision-result.schema.json
+    // (rate ∈ [0, 1], amount ≥ 0). Lệch thì không dùng được kết quả: ghi vào hóa đơn sẽ bị CHECK của DB chặn ở transaction 2 (F1)
     private static string? CheckDecisionResult(TadssDecisionResultDto result) => result.Status switch
     {
         TadssDecisionStatus.APPROVED when result.Deposit is null => "status APPROVED nhưng thiếu deposit",
         TadssDecisionStatus.NEED_APPROVAL when result.ApprovalExpiresAt is null => "status NEED_APPROVAL nhưng thiếu approvalExpiresAt",
+        _ when result.Deposit is { Rate: < 0m or > 1m } => "deposit.rate ngoài [0, 1]",
+        _ when result.Deposit is { Amount: < 0m } => "deposit.amount âm",
         _ => null
     };
 

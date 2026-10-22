@@ -1319,6 +1319,139 @@ public class BookingServiceTests
         };
     }
 
+    // ───────────────────────── Token hủy (T-3, D8) ─────────────────────────
+
+    /// <summary>
+    /// Tạo đơn tại quầy cho khách có email, chơi lúc <paramref name="playStartUtc"/>; trả booking mà BE đã ghi token hủy
+    /// (bắt qua UpdateAsync, ghi trước bước gửi email nên không cần SMTP thật).
+    /// </summary>
+    private static async Task<Booking> CreateWalkInWithEmailAsync(DateTime playStartUtc)
+    {
+        var builder = new BookingServiceTestBuilder();
+        var owner = TestDataFactory.CreateUser(role: UserRole.OWNER);
+        var court = TestDataFactory.CreateCourt();
+        var bookingId = Guid.NewGuid();
+        var playStartVn = TimeZoneInfo.ConvertTimeFromUtc(playStartUtc, DateTimeHelper.VNTimezone);
+        var persistedBooking = TestDataFactory.CreateBooking(branchId: court.BranchId, status: BookingStatus.CONFIRMED);
+        persistedBooking.Id = bookingId;
+        persistedBooking.BookingCode = "BK-WALKIN";
+        persistedBooking.Source = BookingSource.WALK_IN;
+        persistedBooking.BookingDate = DateOnly.FromDateTime(playStartVn);
+        persistedBooking.GuestName = "Khách tại quầy";
+        persistedBooking.GuestEmail = "walkin@example.com";
+        persistedBooking.Invoice = new Invoice
+        {
+            Id = Guid.NewGuid(), BookingId = bookingId, InvoiceCode = "INV-WALKIN",
+            CourtFee = TestConstants.StandardCourtPrice, FinalTotal = TestConstants.StandardCourtPrice
+        };
+        Booking? withToken = null;
+
+        builder.CourtRepository.Setup(x => x.GetByIdsAsync(It.IsAny<IEnumerable<Guid>>())).ReturnsAsync([court]);
+        builder.UserRepository.Setup(x => x.GetUserByIdAsync(owner.Id)).ReturnsAsync(owner);
+        builder.BookingRepository.Setup(x => x.HasOverlapAsync(
+                It.IsAny<Guid>(), It.IsAny<DateOnly>(), It.IsAny<TimeOnly>(), It.IsAny<TimeOnly>()))
+            .ReturnsAsync(false);
+        builder.BookingRepository.Setup(x => x.CreateAsync(It.IsAny<Booking>()))
+            .ReturnsAsync((Booking booking) => { booking.Id = bookingId; return booking; });
+        builder.BookingRepository.Setup(x => x.AddCourtAsync(It.IsAny<BookingCourt>()))
+            .ReturnsAsync((BookingCourt bookingCourt) => { bookingCourt.Id = Guid.NewGuid(); return bookingCourt; });
+        builder.BookingRepository.Setup(x => x.GetByIdWithDetailsAsync(bookingId)).ReturnsAsync(persistedBooking);
+        builder.BookingRepository.Setup(x => x.UpdateAsync(It.Is<Booking>(b => b.CancelTokenHash != null)))
+            .Callback((Booking b) => withToken = b)
+            .Returns(Task.CompletedTask);
+        builder.PriceService.Setup(x => x.CalculateForBookingAsync(court.BranchId, It.IsAny<CalculatePriceDto>()))
+            .ReturnsAsync(TestDataFactory.CreatePriceResult([court.Id]));
+        builder.TimeSlotRepository.Setup(x => x.GetAllAsync()).ReturnsAsync([]);
+        builder.InvoiceRepository.Setup(x => x.CreateAsync(It.IsAny<Invoice>()))
+            .ReturnsAsync((Invoice created) => { created.Id = persistedBooking.Invoice.Id; return created; });
+        builder.CodeGeneratorService.Setup(x => x.GenerateBookingCodeAsync()).ReturnsAsync("BK-WALKIN");
+        builder.CodeGeneratorService.Setup(x => x.GenerateInvoiceCodeAsync()).ReturnsAsync("INV-WALKIN");
+
+        var start = TimeOnly.FromDateTime(playStartVn);
+        await builder.Build().CreateWalkInAsync(new CreateWalkInBookingDto
+        {
+            BookingDate = playStartVn.Date,
+            GuestName = "Khách tại quầy",
+            GuestPhone = "0900000000",
+            GuestEmail = "walkin@example.com",
+            Courts = [new CourtSlotDto { CourtId = court.Id, StartTime = start.ToTimeSpan(), EndTime = start.AddMinutes(30).ToTimeSpan() }]
+        }, owner.Id);
+
+        Assert.NotNull(withToken);
+        return withToken;
+    }
+
+    private static DateTime UtcNowToMinute()
+    {
+        var now = DateTime.UtcNow;
+        return new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, DateTimeKind.Utc);
+    }
+
+    /// <summary>Giờ chơi trong vài giờ tới nhưng không vắt qua nửa đêm giờ VN (slot 30 phút phải cùng ngày).</summary>
+    private static DateTime PlayStartWithinHours(int hours)
+    {
+        var start = UtcNowToMinute().AddHours(hours);
+        var vn = TimeZoneInfo.ConvertTimeFromUtc(start, DateTimeHelper.VNTimezone);
+        return vn.Hour >= 23 ? start.AddHours(2) : start;
+    }
+
+    [Fact]
+    [TestCategory(TestCategories.Token)]
+    [Trait("Catalog", "BE-UT-12")]
+    public async Task CreateWalkInAsync_WhenPlayIsWithin24Hours_StoresCancelTokenExpiringAtPlayStartUtc()
+    {
+        // T-3: trước khi sửa hạn là giờ VN Kind = Unspecified (Npgsql từ chối khi ghi, catch nuốt ⇒ không có email)
+        var playStartUtc = PlayStartWithinHours(3);
+
+        var booking = await CreateWalkInWithEmailAsync(playStartUtc);
+
+        Assert.Equal(DateTimeKind.Utc, booking.CancelTokenExpiresAt!.Value.Kind);
+        Assert.Equal(playStartUtc, booking.CancelTokenExpiresAt);
+        Assert.Matches("^[0-9a-f]{64}$", booking.CancelTokenHash!);
+    }
+
+    [Fact]
+    [TestCategory(TestCategories.Token)]
+    [Trait("Catalog", "BE-UT-12")]
+    public async Task CreateWalkInAsync_WhenPlayIsDaysAway_StoresCancelTokenExpiringTwentyFourHoursLater()
+    {
+        var before = DateTime.UtcNow;
+        var booking = await CreateWalkInWithEmailAsync(PlayStartWithinHours(72));
+        var after = DateTime.UtcNow;
+
+        Assert.Equal(DateTimeKind.Utc, booking.CancelTokenExpiresAt!.Value.Kind);
+        Assert.InRange(booking.CancelTokenExpiresAt.Value, before.AddHours(24), after.AddHours(24));
+    }
+
+    [Fact]
+    [TestCategory(TestCategories.Token)]
+    public async Task GetCancelInfoAsync_LooksUpBookingByTheSharedTokenHash()
+    {
+        // Phía tra cứu băm cùng một hàm với phía phát token (IPN, tại quầy, a′)
+        var builder = new BookingServiceTestBuilder();
+        builder.BookingRepository.Setup(x => x.GetByCancelTokenAsync(It.IsAny<string>())).ReturnsAsync((Booking?)null);
+
+        await Assert.ThrowsAsync<AppException>(() => builder.Build().GetCancelInfoAsync("raw-token"));
+
+        builder.BookingRepository.Verify(x => x.GetByCancelTokenAsync(CancelTokenHelper.Hash("raw-token")), Times.Once);
+    }
+
+    [Fact]
+    [TestCategory(TestCategories.Token)]
+    public async Task CancelByTokenAsync_LooksUpAndConsumesByTheSharedTokenHash()
+    {
+        var builder = new BookingServiceTestBuilder();
+        var booking = TestDataFactory.CreateBooking(status: BookingStatus.CONFIRMED);
+        booking.CancelTokenExpiresAt = DateTime.UtcNow.AddHours(1);
+        var hash = CancelTokenHelper.Hash("raw-token");
+        builder.BookingRepository.Setup(x => x.GetByCancelTokenAsync(hash)).ReturnsAsync(booking);
+        builder.BookingRepository.Setup(x => x.TryConsumeTokenAsync(booking.Id, hash, It.IsAny<DateTime>())).ReturnsAsync(false);
+
+        await Assert.ThrowsAsync<AppException>(() => builder.Build().CancelByTokenAsync("raw-token"));
+
+        builder.BookingRepository.Verify(x => x.TryConsumeTokenAsync(booking.Id, hash, It.IsAny<DateTime>()), Times.Once);
+    }
+
     private static CreateWalkInBookingDto CreateWalkInBookingDto(Guid courtId) => new()
     {
         BookingDate = TestConstants.StandardDateTime,

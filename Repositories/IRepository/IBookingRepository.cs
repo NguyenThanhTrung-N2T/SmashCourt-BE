@@ -143,8 +143,13 @@ namespace SmashCourt_BE.Repositories.IRepository
         Task<bool> ApplyPaymentRequiredAsync(
             Guid bookingId, Guid? tadssDecisionId, decimal depositRate, decimal depositAmount, DepositSource depositSource, DateTime nowUtc);
 
-        /// <summary>Nhánh a′: PENDING → CONFIRMED, cọc áp dụng 0, hóa đơn POSTPAID không hạn, xóa slot lock.</summary>
-        Task<bool> ConfirmWithoutOnlinePaymentAsync(Guid bookingId, Guid? tadssDecisionId, DepositSource depositSource, DateTime nowUtc);
+        /// <summary>
+        /// Nhánh a′: PENDING → CONFIRMED kèm token hủy (D8, cùng câu cổng), cọc áp dụng 0, hóa đơn POSTPAID không hạn, xóa slot lock.
+        /// Token sinh bằng <c>CancelTokenHelper.Generate</c>; hash rỗng hoặc hạn khác Utc ⇒ ném trước khi ghi.
+        /// </summary>
+        Task<bool> ConfirmWithoutOnlinePaymentAsync(
+            Guid bookingId, Guid? tadssDecisionId, DepositSource depositSource, string cancelTokenHash, DateTime cancelTokenExpiresAtUtc,
+            DateTime nowUtc);
 
         /// <summary>Nhánh b: PENDING → PENDING_APPROVAL, hóa đơn bỏ hạn và cọc, slot lock gia hạn tới hạn duyệt.</summary>
         Task<bool> HoldForApprovalAsync(

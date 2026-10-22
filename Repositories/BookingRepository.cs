@@ -930,16 +930,22 @@ namespace SmashCourt_BE.Repositories
         }
 
         public async Task<bool> ConfirmWithoutOnlinePaymentAsync(
-            Guid bookingId, Guid? tadssDecisionId, DepositSource depositSource, DateTime nowUtc)
+            Guid bookingId, Guid? tadssDecisionId, DepositSource depositSource, string cancelTokenHash, DateTime cancelTokenExpiresAtUtc,
+            DateTime nowUtc)
         {
             EnsureInTransaction();
+            ArgumentException.ThrowIfNullOrWhiteSpace(cancelTokenHash);
+            EnsureUtc(cancelTokenExpiresAtUtc, nameof(cancelTokenExpiresAtUtc));
             EnsureUtc(nowUtc, nameof(nowUtc));
 
+            // Đơn CONFIRMED không qua IPN nên token hủy (D8) ghi ngay trong câu cổng: thua cổng thì không có token
             var won = await _context.Bookings
                 .Where(b => b.Id == bookingId && b.Status == BookingStatus.PENDING)
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(b => b.Status, BookingStatus.CONFIRMED)
                     .SetProperty(b => b.TadssDecisionId, tadssDecisionId)
+                    .SetProperty(b => b.CancelTokenHash, cancelTokenHash)
+                    .SetProperty(b => b.CancelTokenExpiresAt, (DateTime?)cancelTokenExpiresAtUtc)
                     .SetProperty(b => b.UpdatedAt, nowUtc)) == 1;
             if (!won)
                 return false;

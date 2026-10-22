@@ -445,7 +445,79 @@ public class TadssClientTests
         Assert.Null(result.ErrorCode);
     }
 
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest, 1)]
+    [InlineData(HttpStatusCode.BadGateway, 2)]
+    public async Task EvaluateAsync_WhenErrorBodyIsEmpty_ClassifiesByStatusOnly(HttpStatusCode status, int expectedAttempts)
+    {
+        // Proxy/ngrok trả lỗi không có body: không đọc problem nhưng vẫn phân loại và thử lại theo mã HTTP
+        var sut = CreateReplying(() => new HttpResponseMessage(status) { Content = new StringContent("") });
+
+        var result = await Evaluate(sut);
+
+        Assert.Equal(TadssFailureKind.Http, result.FailureKind);
+        Assert.Equal((int)status, result.HttpStatus);
+        Assert.Null(result.ErrorCode);
+        Assert.Null(result.RetryAfter);
+        Assert.Equal(expectedAttempts, sut.Handler.Requests.Count);
+    }
+
+    private static HttpResponseMessage TooManyRequests(Action<System.Net.Http.Headers.HttpResponseHeaders> headers, string body = "")
+    {
+        var response = new HttpResponseMessage((HttpStatusCode)429) { Content = new StringContent(body) };
+        headers(response.Headers);
+        return response;
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_When429RetryAfterIsFutureHttpDate_ReturnsRemainingWait()
+    {
+        var at = DateTimeOffset.UtcNow.AddMinutes(10);
+        var sut = CreateReplying(() => TooManyRequests(h => h.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(at)));
+
+        var result = await Evaluate(sut);
+
+        // Header dạng ngày chỉ chính xác tới giây; thời gian chạy test nằm trong khoảng cho phép
+        Assert.NotNull(result.RetryAfter);
+        Assert.InRange(result.RetryAfter.Value, TimeSpan.FromMinutes(9), TimeSpan.FromMinutes(10));
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_When429RetryAfterIsPastHttpDate_ReturnsZeroNotNegative()
+    {
+        var sut = CreateReplying(() => TooManyRequests(h =>
+            h.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(DateTimeOffset.UtcNow.AddMinutes(-5))));
+
+        var result = await Evaluate(sut);
+
+        Assert.Equal(TimeSpan.Zero, result.RetryAfter);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_WhenRetryAfterInHeaderAndBody_HeaderWins()
+    {
+        var sut = CreateReplying(() => TooManyRequests(
+            h => h.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(2)),
+            """{"code":"RATE_LIMITED","status":429,"retryAfterSeconds":9}"""));
+
+        var result = await Evaluate(sut);
+
+        Assert.Equal(TimeSpan.FromSeconds(2), result.RetryAfter);
+        Assert.Equal("RATE_LIMITED", result.ErrorCode);
+    }
+
     // ── Phản hồi 2xx không dùng được ─────────────────────────────────────────────
+
+    [Fact]
+    public async Task EvaluateAsync_When2xxBodyIsUnusableWithoutContentType_LogsDashForContentType()
+    {
+        var sut = CreateReplying(() => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent("oops"u8.ToArray()) });
+
+        var result = await Evaluate(sut);
+
+        Assert.Equal(TadssFailureKind.InvalidResponse, result.FailureKind);
+        Assert.Contains("ContentType=-", Assert.Single(sut.Logger.Entries, e => e.Level == LogLevel.Error).Message);
+    }
 
     public static IEnumerable<object[]> InvalidSuccessBodies()
     {
@@ -456,6 +528,10 @@ public class TadssClientTests
         yield return ["status lạ", ApprovedJson.Replace("\"APPROVED\"", "\"MAYBE\""), "application/json"];
         yield return ["thiếu trường bắt buộc", ApprovedJson.Replace("\"decisionId\"", "\"decisionIdX\""), "application/json"];
         yield return ["APPROVED thiếu deposit", ApprovedJson.Replace("\"deposit\": { \"rate\": 0.5, \"amount\": 114000, \"currency\": \"VND\" }", "\"deposit\": null"), "application/json"];
+        // F1: vi phạm phạm vi của decision-result.schema.json (rate ∈ [0, 1], amount ≥ 0)
+        yield return ["deposit.rate > 1", ApprovedJson.Replace("\"rate\": 0.5", "\"rate\": 1.5"), "application/json"];
+        yield return ["deposit.rate âm", ApprovedJson.Replace("\"rate\": 0.5", "\"rate\": -0.1"), "application/json"];
+        yield return ["deposit.amount âm", ApprovedJson.Replace("\"amount\": 114000", "\"amount\": -1"), "application/json"];
         yield return ["NEED_APPROVAL thiếu approvalExpiresAt",
             TadssContractFiles.Sample("decision-result.need-approval.json").Replace("\"approvalExpiresAt\": \"2026-11-18T14:15:00+07:00\"", "\"approvalExpiresAt\": null"),
             "application/json"];
@@ -475,6 +551,21 @@ public class TadssClientTests
         Assert.Equal(200, result.HttpStatus);
         Assert.Single(sut.Handler.Requests);
         Assert.Single(sut.Logger.Entries, e => e.Level == LogLevel.Error);
+    }
+
+    [Theory]
+    [InlineData("0", "0")]
+    [InlineData("1", "228000")]
+    [InlineData("0.0001", "23")]
+    public async Task EvaluateAsync_WhenDepositIsAtTheSchemaBoundaries_IsAccepted(string rate, string amount)
+    {
+        var body = ApprovedJson.Replace("\"rate\": 0.5", $"\"rate\": {rate}").Replace("\"amount\": 114000", $"\"amount\": {amount}");
+        var sut = CreateReplying(() => FakeHttpMessageHandler.Json(HttpStatusCode.OK, body, "application/json"));
+
+        var result = await Evaluate(sut);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(decimal.Parse(rate, System.Globalization.CultureInfo.InvariantCulture), result.Value.Deposit!.Rate);
     }
 
     [Fact]

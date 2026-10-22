@@ -38,14 +38,35 @@ namespace SmashCourt_BE.Services
         public async Task<DepositDecision> DecideAsync(Guid bookingId, decimal finalTotal, CancellationToken cancellationToken = default)
         {
             // Đọc cờ ở mỗi lần gọi để đổi cấu hình có hiệu lực ngay; tắt thì TADSS không nhận request nào
-            var tadssResult = _settings.CurrentValue.EnableTadssDecision
-                ? await EvaluateAsync(bookingId, cancellationToken)
-                : null;
+            TadssCallResult<TadssDecisionResultDto>? tadssResult = null;
+            Exception? evaluateError = null;
+            if (_settings.CurrentValue.EnableTadssDecision)
+            {
+                try
+                {
+                    tadssResult = await EvaluateAsync(bookingId, cancellationToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // F2: transaction 1 đã commit; lỗi khi dựng request (snapshot, DB, dữ liệu) là sự cố nên cọc 100 % như TADSS lỗi,
+                    // không ném để đơn khỏi kẹt PENDING không cọc. Hủy chủ động vẫn ném.
+                    evaluateError = ex;
+                }
+            }
 
             var decision = DepositDecisionResolver.Resolve(tadssResult, finalTotal, _paymentSettings.CurrentValue.MinOnlinePaymentAmount);
+            if (evaluateError != null)
+            {
+                decision = decision with
+                {
+                    LogLevel = LogLevel.Error,
+                    LogMessage = $"Không gọi được TADSS do lỗi khi dựng request ({evaluateError.GetType().Name}); dùng phương án dự phòng. " +
+                                 decision.LogMessage
+                };
+            }
 
             if (decision.LogLevel != LogLevel.None)
-                _logger.Log(decision.LogLevel, "Quyết định cọc {Branch} cho booking {BookingId}: {Message}",
+                _logger.Log(decision.LogLevel, evaluateError, "Quyết định cọc {Branch} cho booking {BookingId}: {Message}",
                     decision.Branch, bookingId, decision.LogMessage);
 
             return decision;

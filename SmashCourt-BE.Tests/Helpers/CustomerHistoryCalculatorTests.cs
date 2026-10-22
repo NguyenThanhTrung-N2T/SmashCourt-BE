@@ -29,6 +29,32 @@ public class CustomerHistoryCalculatorTests
     private static CustomerHistorySummary Calculate(params CustomerHistoryEntry[] entries) =>
         CustomerHistoryCalculator.Calculate(entries, RequestedAt);
 
+    [Theory]
+    [InlineData(-1, 1)]
+    [InlineData(0, 0)]
+    public void Calculate_WhenCancelledAtIsLocalTime_ComparesTheSameInstantAsUtc(int offsetSeconds, int expectedCount)
+    {
+        // Giá trị Kind = Local (không đến từ Npgsql nhưng có thể do code khác dựng) đổi về UTC theo đúng thời điểm, bất kể múi giờ máy
+        var cancelledAt = RequestedAt.ToLocalTime().AddSeconds(offsetSeconds);
+
+        var summary = Calculate(Cancelled(BookingCancelReason.CUSTOMER_CANCELLED, cancelledAt: cancelledAt));
+
+        Assert.Equal(DateTimeKind.Local, cancelledAt.Kind);
+        Assert.Equal(expectedCount, summary.CancelledCount);
+    }
+
+    [Theory]
+    [InlineData(-1, 1)]
+    [InlineData(0, 0)]
+    public void Calculate_WhenCancelledAtIsUnspecified_IsReadAsUtcNotMachineTime(int offsetSeconds, int expectedCount)
+    {
+        var cancelledAt = DateTime.SpecifyKind(RequestedAt, DateTimeKind.Unspecified).AddSeconds(offsetSeconds);
+
+        var summary = Calculate(Cancelled(BookingCancelReason.CUSTOMER_CANCELLED, cancelledAt: cancelledAt));
+
+        Assert.Equal(expectedCount, summary.CancelledCount);
+    }
+
     [Fact]
     public void Calculate_WhenNoEntries_ReturnsZerosAndNoLastCompleted()
     {

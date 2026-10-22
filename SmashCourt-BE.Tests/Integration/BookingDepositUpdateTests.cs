@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Transactions;
 using Microsoft.Extensions.DependencyInjection;
 using SmashCourt_BE.Data;
+using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Repositories;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
@@ -17,6 +18,8 @@ namespace SmashCourt_BE.Tests.Integration;
 public sealed class BookingDepositUpdateTests(PostgreSqlIntegrationFixture fixture) : BookingDepositTestBase(fixture)
 {
     private static readonly DateTime ApprovalExpiresAt = CreatedAt.AddMinutes(30);
+    private static readonly DateTime TokenExpiresAt = CreatedAt.AddHours(20);
+    private static readonly string TokenHash = CancelTokenHelper.Hash("raw-cancel-token");
 
     public static TheoryData<BookingStatus> NotPendingStatuses => new()
     {
@@ -31,7 +34,7 @@ public sealed class BookingDepositUpdateTests(PostgreSqlIntegrationFixture fixtu
         return JsonSerializer.Serialize(new
         {
             b.Status, b.TadssDecisionId, b.UpdatedAt, b.ApprovalExpiresAt, b.ApprovalReasonCode, b.ApprovalReasons,
-            b.CancelledAt, b.CancelSource, b.CancelReason, b.CancelledBy,
+            b.CancelledAt, b.CancelSource, b.CancelReason, b.CancelledBy, b.CancelTokenHash, b.CancelTokenExpiresAt,
             i.DepositRate, i.DepositAmount, i.DepositSource, i.ExpiresAt, i.HoldDeadline, i.PaymentTiming, i.PaymentStatus, InvoiceUpdated = i.UpdatedAt,
             Locks = (await ReloadLocksAsync(bookingId)).OrderBy(l => l.CourtId).Select(l => new { l.CourtId, l.ExpiresAt }),
             Courts = (await ReloadCourtsAsync(bookingId)).OrderBy(c => c.CourtId).Select(c => new { c.CourtId, c.IsActive })
@@ -45,7 +48,7 @@ public sealed class BookingDepositUpdateTests(PostgreSqlIntegrationFixture fixtu
     private static Task<bool> CallBranchAsync(string branch, BookingRepository repository, Guid bookingId) => branch switch
     {
         "a-d" => repository.ApplyPaymentRequiredAsync(bookingId, null, 1m, 1m, DepositSource.FULL_PAYMENT_FALLBACK, Now),
-        "a-prime" => repository.ConfirmWithoutOnlinePaymentAsync(bookingId, null, DepositSource.FULL_PAYMENT_FALLBACK, Now),
+        "a-prime" => repository.ConfirmWithoutOnlinePaymentAsync(bookingId, null, DepositSource.FULL_PAYMENT_FALLBACK, TokenHash, TokenExpiresAt, Now),
         "b" => repository.HoldForApprovalAsync(bookingId, Guid.NewGuid(), ApprovalExpiresAt, "X", ["y"], Now),
         "c" => repository.RejectByPolicyAsync(bookingId, Guid.NewGuid(), Now),
         _ => throw new ArgumentOutOfRangeException(nameof(branch))
@@ -183,13 +186,18 @@ public sealed class BookingDepositUpdateTests(PostgreSqlIntegrationFixture fixtu
         var order = await SeedOrderAsync(courtCount: 2);
         Guid? decisionId = hasDecision ? Guid.NewGuid() : null;
 
-        var won = await Repository.ConfirmWithoutOnlinePaymentAsync(order.Booking.Id, decisionId, source, Now);
+        var won = await Repository.ConfirmWithoutOnlinePaymentAsync(order.Booking.Id, decisionId, source, TokenHash, TokenExpiresAt, Now);
 
         Assert.True(won);
         var booking = await ReloadBookingAsync(order.Booking.Id);
         Assert.Equal(BookingStatus.CONFIRMED, booking.Status);
         Assert.Equal(decisionId, booking.TadssDecisionId);
         Assert.Equal(Now, booking.UpdatedAt);
+        // D8: token hủy ghi cùng câu cổng, như đơn qua IPN
+        Assert.Equal(TokenHash, booking.CancelTokenHash);
+        Assert.Equal(TokenExpiresAt, booking.CancelTokenExpiresAt);
+        Assert.Equal(DateTimeKind.Utc, booking.CancelTokenExpiresAt!.Value.Kind);
+        Assert.Null(booking.CancelTokenUsedAt);
         var invoice = await ReloadInvoiceAsync(order.Booking.Id);
         Assert.Equal(0m, invoice.DepositRate);
         Assert.Equal(0m, invoice.DepositAmount);
@@ -209,7 +217,7 @@ public sealed class BookingDepositUpdateTests(PostgreSqlIntegrationFixture fixtu
         var order = await SeedOrderAsync();
         var other = await SeedOrderAsync(seed: order.Seed, playDate: PlayDate.AddDays(1));
 
-        await Repository.ConfirmWithoutOnlinePaymentAsync(order.Booking.Id, null, DepositSource.FULL_PAYMENT_FALLBACK, Now);
+        await Repository.ConfirmWithoutOnlinePaymentAsync(order.Booking.Id, null, DepositSource.FULL_PAYMENT_FALLBACK, TokenHash, TokenExpiresAt, Now);
 
         Assert.Single(await ReloadLocksAsync(other.Booking.Id));
         Assert.Equal(BookingStatus.PENDING, (await ReloadBookingAsync(other.Booking.Id)).Status);
@@ -224,11 +232,88 @@ public sealed class BookingDepositUpdateTests(PostgreSqlIntegrationFixture fixtu
         var order = await SeedOrderAsync(current, courtCount: 2);
         var before = await CaptureAsync(order.Booking.Id);
 
-        var won = await Repository.ConfirmWithoutOnlinePaymentAsync(order.Booking.Id, Guid.NewGuid(), DepositSource.TADSS, Now);
+        var won = await Repository.ConfirmWithoutOnlinePaymentAsync(order.Booking.Id, Guid.NewGuid(), DepositSource.TADSS, TokenHash, TokenExpiresAt, Now);
 
         Assert.False(won);
         Assert.Equal(before, await CaptureAsync(order.Booking.Id));
         Assert.Equal(2, (await ReloadLocksAsync(order.Booking.Id)).Count);
+    }
+
+    [Theory]
+    [MemberData(nameof(NotPendingStatuses))]
+    [Trait("Catalog", "BE-IT-24")]
+    public async Task ConfirmWithoutOnlinePaymentAsync_WhenGateLost_DoesNotWriteCancelToken(BookingStatus current)
+    {
+        var order = await SeedOrderAsync(current);
+
+        await Repository.ConfirmWithoutOnlinePaymentAsync(order.Booking.Id, null, DepositSource.FULL_PAYMENT_FALLBACK, TokenHash, TokenExpiresAt, Now);
+
+        var booking = await ReloadBookingAsync(order.Booking.Id);
+        Assert.Null(booking.CancelTokenHash);
+        Assert.Null(booking.CancelTokenExpiresAt);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task ConfirmWithoutOnlinePaymentAsync_WhenTokenHashIsBlank_ThrowsAndChangesNothing(string? hash)
+    {
+        var order = await SeedOrderAsync();
+        var before = await CaptureAsync(order.Booking.Id);
+
+        await Assert.ThrowsAnyAsync<ArgumentException>(() => Repository.ConfirmWithoutOnlinePaymentAsync(
+            order.Booking.Id, null, DepositSource.FULL_PAYMENT_FALLBACK, hash!, TokenExpiresAt, Now));
+        Assert.Equal(before, await CaptureAsync(order.Booking.Id));
+    }
+
+    [Theory]
+    [InlineData(DateTimeKind.Local)]
+    [InlineData(DateTimeKind.Unspecified)]
+    public async Task ConfirmWithoutOnlinePaymentAsync_WhenTokenExpiryIsNotUtc_ThrowsAndChangesNothing(DateTimeKind kind)
+    {
+        // T-3 trên đường mới: hạn token phải là thời điểm UTC thật
+        var order = await SeedOrderAsync();
+        var before = await CaptureAsync(order.Booking.Id);
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => Repository.ConfirmWithoutOnlinePaymentAsync(
+            order.Booking.Id, null, DepositSource.FULL_PAYMENT_FALLBACK, TokenHash, DateTime.SpecifyKind(TokenExpiresAt, kind), Now));
+        Assert.Equal("cancelTokenExpiresAtUtc", ex.ParamName);
+        Assert.Equal(before, await CaptureAsync(order.Booking.Id));
+    }
+
+    [Fact]
+    [Trait("Catalog", "BE-IT-24")]
+    public async Task ConfirmWithoutOnlinePaymentAsync_TokenRoundTrip_LooksUpAndConsumesOnce()
+    {
+        // Khứ hồi trên schema thật: token sinh cho đơn a′ tra ra đúng đơn và chỉ tiêu được một lần
+        var order = await SeedOrderAsync();
+        var token = CancelTokenHelper.Generate(TokenExpiresAt, Now);
+        await Repository.ConfirmWithoutOnlinePaymentAsync(
+            order.Booking.Id, null, DepositSource.FULL_PAYMENT_FALLBACK, token.TokenHash, token.ExpiresAtUtc, Now);
+
+        var found = await Repository.GetByCancelTokenAsync(CancelTokenHelper.Hash(token.RawToken));
+
+        Assert.NotNull(found);
+        Assert.Equal(order.Booking.Id, found.Id);
+        Assert.True(await Repository.TryConsumeTokenAsync(order.Booking.Id, token.TokenHash, Now));
+        Assert.False(await Repository.TryConsumeTokenAsync(order.Booking.Id, token.TokenHash, Now));
+    }
+
+    [Theory]
+    [InlineData("a-d")]
+    [InlineData("b")]
+    [InlineData("c")]
+    public async Task OtherBranches_WhenGateWon_DoNotWriteCancelToken(string branch)
+    {
+        // Chỉ a′ thành CONFIRMED không qua VNPay nên chỉ a′ phát token (D8); a/d nhận token ở IPN, b ở lúc duyệt, c không có
+        var order = await SeedOrderAsync();
+
+        Assert.True(await CallBranchAsync(branch, Repository, order.Booking.Id));
+
+        var booking = await ReloadBookingAsync(order.Booking.Id);
+        Assert.Null(booking.CancelTokenHash);
+        Assert.Null(booking.CancelTokenExpiresAt);
     }
 
     // ───────────────────────── HoldForApprovalAsync (nhánh b) ─────────────────────────

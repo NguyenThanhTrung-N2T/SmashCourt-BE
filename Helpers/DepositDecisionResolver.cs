@@ -19,6 +19,9 @@ namespace SmashCourt_BE.Helpers
     /// </summary>
     public static class DepositDecisionResolver
     {
+        // Request luôn gửi VND (TadssDecisionRequestMapper); quyết định phải cùng đơn vị tiền
+        private const string RequestCurrency = "VND";
+
         /// <param name="tadssResult">Kết quả gọi TADSS; null khi không gọi (cờ <c>EnableTadssDecision</c> tắt).</param>
         /// <param name="finalTotal">Tổng tiền hóa đơn lúc đặt</param>
         /// <param name="minOnlinePaymentAmount">Số tiền thanh toán online tối thiểu (&gt; 0)</param>
@@ -53,15 +56,21 @@ namespace SmashCourt_BE.Helpers
                     if (decision.Deposit == null)
                         return Fallback(finalTotal, minOnlinePaymentAmount, LogLevel.Error,
                             $"TADSS trả APPROVED nhưng thiếu deposit (decisionId {decision.DecisionId}); dùng phương án dự phòng.");
-                    return Approved(decision, decision.Deposit, minOnlinePaymentAmount);
+                    return Approved(decision, decision.Deposit, finalTotal, minOnlinePaymentAmount);
 
                 default:
                     throw new ArgumentOutOfRangeException(nameof(tadssResult), decision.Status, "Trạng thái quyết định TADSS không hợp lệ.");
             }
         }
 
-        private static DepositDecision Approved(TadssDecisionResultDto decision, TadssDepositDto deposit, decimal min)
+        private static DepositDecision Approved(TadssDecisionResultDto decision, TadssDepositDto deposit, decimal finalTotal, decimal min)
         {
+            // F1: quyết định không khớp đơn (TADSS tính sai) thì không dùng: thu online quá tổng đơn hoặc sai đơn vị tiền là mất tiền thật
+            if (deposit.Currency != RequestCurrency || deposit.Amount > finalTotal)
+                return Fallback(finalTotal, min, LogLevel.Error,
+                    $"TADSS trả cọc {Format(deposit.Amount)} {deposit.Currency} không khớp đơn {Format(finalTotal)} {RequestCurrency} " +
+                    $"(decisionId {decision.DecisionId}); dùng phương án dự phòng.");
+
             if (deposit.Amount < min)
             {
                 return new DepositDecision(

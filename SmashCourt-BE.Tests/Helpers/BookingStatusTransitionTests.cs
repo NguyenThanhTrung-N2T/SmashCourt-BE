@@ -9,6 +9,55 @@ namespace SmashCourt_BE.Tests.Helpers;
 [Trait("Category", TestCategories.Helper)]
 public class BookingStatusTransitionTests
 {
+    // Bảng chuyển trạng thái đầy đủ (Đồ án 1 + Phase 6): mọi cặp ngoài danh sách này phải bị từ chối
+    private static readonly HashSet<(BookingStatus From, BookingStatus To)> AllowedTransitions =
+    [
+        (BookingStatus.PENDING, BookingStatus.PAID_ONLINE),
+        (BookingStatus.PENDING, BookingStatus.CANCELLED),
+        (BookingStatus.PENDING, BookingStatus.CONFIRMED),
+        (BookingStatus.PENDING_APPROVAL, BookingStatus.PENDING),
+        (BookingStatus.PENDING_APPROVAL, BookingStatus.CONFIRMED),
+        (BookingStatus.PENDING_APPROVAL, BookingStatus.CANCELLED),
+        (BookingStatus.CONFIRMED, BookingStatus.IN_PROGRESS),
+        (BookingStatus.CONFIRMED, BookingStatus.CANCELLED),
+        (BookingStatus.CONFIRMED, BookingStatus.NO_SHOW),
+        (BookingStatus.PAID_ONLINE, BookingStatus.IN_PROGRESS),
+        (BookingStatus.PAID_ONLINE, BookingStatus.CANCELLED_PENDING_REFUND),
+        (BookingStatus.PAID_ONLINE, BookingStatus.CANCELLED),
+        (BookingStatus.PAID_ONLINE, BookingStatus.NO_SHOW),
+        (BookingStatus.PAID_ONLINE, BookingStatus.COMPLETED),
+        (BookingStatus.IN_PROGRESS, BookingStatus.PENDING_PAYMENT),
+        (BookingStatus.IN_PROGRESS, BookingStatus.COMPLETED),
+        (BookingStatus.PENDING_PAYMENT, BookingStatus.COMPLETED),
+        (BookingStatus.CANCELLED_PENDING_REFUND, BookingStatus.CANCELLED_REFUNDED),
+        (BookingStatus.CANCELLED, BookingStatus.CANCELLED_PENDING_REFUND)
+    ];
+
+    public static TheoryData<BookingStatus, BookingStatus> AllPairs()
+    {
+        var data = new TheoryData<BookingStatus, BookingStatus>();
+        foreach (var from in Enum.GetValues<BookingStatus>())
+            foreach (var to in Enum.GetValues<BookingStatus>())
+                data.Add(from, to);
+        return data;
+    }
+
+    [Theory]
+    [MemberData(nameof(AllPairs))]
+    public void CanTransition_ForEveryPairOfStatuses_MatchesTheDocumentedTable(BookingStatus from, BookingStatus to)
+    {
+        // Thêm trạng thái hoặc cạnh mới mà không cập nhật bảng (và spec 4.x) sẽ làm test này đỏ
+        Assert.Equal(AllowedTransitions.Contains((from, to)), BookingStatusTransition.CanTransition(from, to));
+    }
+
+    [Fact]
+    public void CanTransition_FromTerminalStatuses_AllowsNothing()
+    {
+        foreach (var terminal in new[] { BookingStatus.COMPLETED, BookingStatus.NO_SHOW, BookingStatus.CANCELLED_REFUNDED })
+            foreach (var to in Enum.GetValues<BookingStatus>())
+                Assert.False(BookingStatusTransition.CanTransition(terminal, to), $"{terminal} -> {to}");
+    }
+
     [Theory]
     [InlineData(BookingStatus.PENDING, BookingStatus.PAID_ONLINE)]
     [InlineData(BookingStatus.PENDING, BookingStatus.CANCELLED)]

@@ -413,13 +413,95 @@ public class BookingDepositServiceTests
         Assert.Empty(_logger.Entries);
     }
 
+    // ── F2: lỗi khi dựng request (sau transaction 1) không được làm hỏng đơn: dự phòng 100 %, log Error kèm exception ──
+
     [Fact]
-    public async Task DecideAsync_WhenFlagIsOnButSnapshotIsMissing_ThrowsProgrammingError()
+    [Trait("Catalog", "BE-IT-04")]
+    public async Task DecideAsync_WhenFlagIsOnButSnapshotIsMissing_FallsBackToFullPaymentAndLogsErrorWithException()
     {
         _settings.EnableTadssDecision = true;
         var service = CreateService(snapshot: null);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => service.DecideAsync(BookingId, 228_000m));
+        var decision = await service.DecideAsync(BookingId, 228_000m);
+
+        Assert.Equal(DepositBranch.FullPaymentFallback, decision.Branch);
+        Assert.Equal(DepositSource.FULL_PAYMENT_FALLBACK, decision.DepositSource);
+        Assert.Equal(228_000m, decision.DepositAmount);
+        Assert.Null(decision.TadssDecisionId);
+        var entry = Assert.Single(_logger.Entries);
+        Assert.Equal(LogLevel.Error, entry.Level);
+        Assert.IsType<InvalidOperationException>(entry.Exception);
+        Assert.Contains(BookingId.ToString(), entry.Message);
+        _client.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    [Trait("Catalog", "BE-IT-04")]
+    public async Task DecideAsync_WhenReadingHistoryFails_FallsBackToFullPaymentWithoutCallingTadss()
+    {
+        _settings.EnableTadssDecision = true;
+        var service = CreateService(Snapshot());
+        var dbError = new TimeoutException("db timeout");
+        _history.Setup(x => x.GetEntriesAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>())).ThrowsAsync(dbError);
+
+        var decision = await service.DecideAsync(BookingId, 228_000m);
+
+        Assert.Equal(DepositBranch.FullPaymentFallback, decision.Branch);
+        Assert.Same(dbError, Assert.Single(_logger.Entries, e => e.Level == LogLevel.Error).Exception);
+        _client.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    [Trait("Catalog", "BE-IT-24")]
+    public async Task DecideAsync_WhenBuildFailsOnSmallOrder_ConfirmsWithoutOnlinePaymentAndKeepsErrorLevel()
+    {
+        // Dự phòng của đơn dưới mức tối thiểu là a′ (Warning) nhưng nguyên nhân là lỗi của BE nên giữ Error
+        _settings.EnableTadssDecision = true;
+        var service = CreateService(snapshot: null);
+
+        var decision = await service.DecideAsync(BookingId, 3_000m);
+
+        Assert.Equal(DepositBranch.ConfirmWithoutOnlinePayment, decision.Branch);
+        Assert.Equal(DepositSource.FULL_PAYMENT_FALLBACK, decision.DepositSource);
+        Assert.Equal(LogLevel.Error, Assert.Single(_logger.Entries).Level);
+    }
+
+    [Fact]
+    public async Task DecideAsync_WhenClientThrowsUnexpectedly_FallsBackInsteadOfThrowing()
+    {
+        // Client vốn không ném cho lỗi TADSS; nếu một lỗi lập trình lọt ra vẫn không được làm hỏng đơn đã commit
+        _settings.EnableTadssDecision = true;
+        var service = CreateService(Snapshot());
+        _client.Setup(x => x.EvaluateAsync(It.IsAny<TadssDecisionRequestDto>(), BookingId, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new NullReferenceException());
+
+        var decision = await service.DecideAsync(BookingId, 228_000m);
+
+        Assert.Equal(DepositBranch.FullPaymentFallback, decision.Branch);
+        Assert.IsType<NullReferenceException>(Assert.Single(_logger.Entries).Exception);
+    }
+
+    [Fact]
+    public async Task DecideAsync_WhenCancelledWhileReadingDatabase_StillPropagatesCancellation()
+    {
+        // Hủy chủ động không phải sự cố: không được nuốt thành dự phòng
+        _settings.EnableTadssDecision = true;
+        var service = CreateService(Snapshot());
+        _history.Setup(x => x.GetEntriesAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() => service.DecideAsync(BookingId, 228_000m));
+        Assert.Empty(_logger.Entries);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_WhenSnapshotIsMissing_StillThrowsForOtherCallers()
+    {
+        // Chỉ DecideAsync (luồng đặt sân) chuyển lỗi thành dự phòng; EvaluateAsync giữ hợp đồng ném lỗi lập trình
+        _settings.EnableTadssDecision = true;
+        var service = CreateService(snapshot: null);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.EvaluateAsync(BookingId));
     }
 
     [Fact]

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
@@ -25,14 +26,14 @@ public sealed class BookingDepositServiceIntegrationTests(PostgreSqlIntegrationF
     private TadssDecisionRequestDto? _sent;
     private Guid? _sentKey;
 
-    private BookingDepositService CreateService()
+    private BookingDepositService CreateService(bool enableTadss = false, TadssCallResult<TadssDecisionResultDto>? reply = null)
     {
         var client = new Mock<ITadssClient>();
         client.Setup(x => x.EvaluateAsync(It.IsAny<TadssDecisionRequestDto>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .Callback<TadssDecisionRequestDto, Guid, CancellationToken>((request, key, _) => (_sent, _sentKey) = (request, key))
-            .ReturnsAsync(TadssCallResult<TadssDecisionResultDto>.Failure(TadssFailureKind.Timeout, "corr"));
+            .ReturnsAsync(reply ?? TadssCallResult<TadssDecisionResultDto>.Failure(TadssFailureKind.Timeout, "corr"));
         var monitor = new Mock<IOptionsMonitor<TadssSettings>>();
-        monitor.Setup(x => x.CurrentValue).Returns(new TadssSettings { BranchTimeZone = "Asia/Ho_Chi_Minh" });
+        monitor.Setup(x => x.CurrentValue).Returns(new TadssSettings { BranchTimeZone = "Asia/Ho_Chi_Minh", EnableTadssDecision = enableTadss });
         var paymentMonitor = new Mock<IOptionsMonitor<BookingPaymentSettings>>();
         paymentMonitor.Setup(x => x.CurrentValue).Returns(new BookingPaymentSettings());
         return new BookingDepositService(
@@ -128,5 +129,70 @@ public sealed class BookingDepositServiceIntegrationTests(PostgreSqlIntegrationF
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.EvaluateAsync(Guid.NewGuid()));
 
         Assert.Null(_sent);
+    }
+
+    // ── DecideAsync trên DB thật (đóng ghi chú rà soát 22/10: trước đây chỉ có unit test) ──
+
+    private async Task<Booking> SeedSimpleBookingAsync(decimal finalTotal)
+    {
+        var seed = await Seeder.SeedBranchWithCourtAsync();
+        var customer = await Seeder.SeedCustomerAsync();
+        var booking = TestDataSeeder.NewBooking(seed.Branch.Id, customer.Id, BookingStatus.PENDING, CreatedAt);
+        DbContext.Bookings.Add(booking);
+        DbContext.Invoices.Add(TestDataSeeder.NewInvoice(booking, finalTotal));
+        DbContext.BookingCourts.Add(TestDataSeeder.NewBookingCourt(booking.Id, seed.Court.Id, PlayDate, new TimeOnly(18, 0), new TimeOnly(19, 0)));
+        await DbContext.SaveChangesAsync();
+        return booking;
+    }
+
+    private static TadssDecisionResultDto Approved(Guid bookingId, decimal amount, decimal rate) => new()
+    {
+        DecisionId = Guid.NewGuid(), ReservationId = bookingId, Status = TadssDecisionStatus.APPROVED,
+        Deposit = new TadssDepositDto { Rate = rate, Amount = amount, Currency = "VND" },
+        StrategyName = "DefaultDecisionStrategy", StrategyVersion = "2.1.0", ExecutionType = "AUTOMATED", FallbackUsed = false,
+        ReasonCode = "TIER_DEPOSIT", Reasons = [], Recommendations = [], EvaluatedAt = new DateTimeOffset(CreatedAt, TimeSpan.Zero)
+    };
+
+    [Fact]
+    [Trait("Catalog", "BE-IT-02")]
+    public async Task DecideAsync_WhenFlagOnAndTadssApproves_BuildsRequestFromDatabaseAndReturnsTadssDeposit()
+    {
+        var booking = await SeedSimpleBookingAsync(200_000m);
+        var approved = Approved(booking.Id, 60_000m, 0.3m);
+
+        var decision = await CreateService(true, TadssCallResult<TadssDecisionResultDto>.Success(approved, 200, "corr")).DecideAsync(booking.Id, 200_000m);
+
+        Assert.Equal(DepositBranch.TadssDeposit, decision.Branch);
+        Assert.Equal(approved.DecisionId, decision.TadssDecisionId);
+        Assert.Equal(60_000m, decision.DepositAmount);
+        Assert.Equal(booking.Id, _sentKey);
+        Assert.Equal(200_000m, _sent!.TotalPrice);
+    }
+
+    [Fact]
+    [Trait("Catalog", "BE-IT-04")]
+    public async Task DecideAsync_WhenFlagOnButBookingMissing_FallsBackWithoutCallingTadss()
+    {
+        // F2: lỗi dựng request không làm hỏng luồng đặt sân
+        var decision = await CreateService(true).DecideAsync(Guid.NewGuid(), 200_000m);
+
+        Assert.Equal(DepositBranch.FullPaymentFallback, decision.Branch);
+        Assert.Equal(LogLevel.Error, decision.LogLevel);
+        Assert.Null(_sent);
+    }
+
+    [Fact]
+    [Trait("Catalog", "BE-IT-04")]
+    public async Task DecideAsync_WhenTadssDepositExceedsOrderTotal_FallsBackToFullPayment()
+    {
+        // F1: TADSS trả cọc lớn hơn tổng đơn ⇒ không thu quá tổng tiền
+        var booking = await SeedSimpleBookingAsync(200_000m);
+
+        var decision = await CreateService(true, TadssCallResult<TadssDecisionResultDto>.Success(Approved(booking.Id, 250_000m, 1m), 200, "corr"))
+            .DecideAsync(booking.Id, 200_000m);
+
+        Assert.Equal(DepositBranch.FullPaymentFallback, decision.Branch);
+        Assert.Equal(200_000m, decision.DepositAmount);
+        Assert.Null(decision.TadssDecisionId);
     }
 }

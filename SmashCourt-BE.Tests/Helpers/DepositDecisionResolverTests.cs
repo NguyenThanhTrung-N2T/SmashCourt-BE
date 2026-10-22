@@ -48,6 +48,62 @@ public class DepositDecisionResolverTests
 
     public static TheoryData<decimal> TotalsAroundMinimum => new() { 0m, 4999m, 5000m, 5001m, 200_000m };
 
+    // ───────────────────────── F1: mức cọc TADSS không khớp đơn ─────────────────────────
+
+    [Theory]
+    [Trait("Catalog", "BE-IT-04")]
+    [InlineData(200_001)]
+    [InlineData(400_000)]
+    public void Resolve_WhenApprovedDepositExceedsOrderTotal_FallsBackToFullPaymentWithError(decimal depositAmount)
+    {
+        // TADSS lỗi tính tiền: không được thu online nhiều hơn tổng đơn
+        var decision = DepositDecisionResolver.Resolve(Approved(depositAmount, 1m), 200_000m, Min);
+
+        Assert.Equal(DepositBranch.FullPaymentFallback, decision.Branch);
+        Assert.Equal(DepositSource.FULL_PAYMENT_FALLBACK, decision.DepositSource);
+        Assert.Equal(200_000m, decision.DepositAmount);
+        Assert.Null(decision.TadssDecisionId);
+        Assert.Equal(LogLevel.Error, decision.LogLevel);
+        Assert.Contains(DecisionId.ToString(), decision.LogMessage);
+    }
+
+    [Fact]
+    public void Resolve_WhenApprovedDepositEqualsOrderTotal_KeepsTadssDeposit()
+    {
+        var decision = DepositDecisionResolver.Resolve(Approved(200_000m, 1m), 200_000m, Min);
+
+        Assert.Equal(DepositBranch.TadssDeposit, decision.Branch);
+        Assert.Equal(200_000m, decision.DepositAmount);
+        Assert.Equal(DecisionId, decision.TadssDecisionId);
+    }
+
+    [Theory]
+    [Trait("Catalog", "BE-IT-04")]
+    [InlineData("USD")]
+    [InlineData("vnd")]
+    public void Resolve_WhenApprovedDepositCurrencyIsNotVnd_FallsBackToFullPaymentWithError(string currency)
+    {
+        var result = Result(TadssDecisionStatus.APPROVED, 40_000m);
+        result.Deposit!.Currency = currency;
+
+        var decision = DepositDecisionResolver.Resolve(Ok(result), 200_000m, Min);
+
+        Assert.Equal(DepositBranch.FullPaymentFallback, decision.Branch);
+        Assert.Equal(LogLevel.Error, decision.LogLevel);
+        Assert.Contains(currency, decision.LogMessage);
+    }
+
+    [Fact]
+    [Trait("Catalog", "BE-IT-24")]
+    public void Resolve_WhenApprovedDepositExceedsSmallOrderTotal_ConfirmsWithoutOnlinePaymentAndKeepsError()
+    {
+        var decision = DepositDecisionResolver.Resolve(Approved(4_500m, 1m), 4_000m, Min);
+
+        Assert.Equal(DepositBranch.ConfirmWithoutOnlinePayment, decision.Branch);
+        Assert.Equal(DepositSource.FULL_PAYMENT_FALLBACK, decision.DepositSource);
+        Assert.Equal(LogLevel.Error, decision.LogLevel);
+    }
+
     // ───────────────────────── (4)–(5) APPROVED: tiền cọc so với mức tối thiểu ─────────────────────────
 
     [Fact]
