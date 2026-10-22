@@ -14,7 +14,8 @@ public class EmailService
     }
 
     // Hàm gửi email chung
-    private async Task SendAsync(string toEmail, string subject, string htmlBody)
+    // protected virtual: host test HTTP (6A-2a) ghi lại thư thay vì gửi qua SMTP thật (không có TLS giả), mọi loại email đều đi qua đây
+    protected virtual async Task SendAsync(string toEmail, string subject, string htmlBody)
     {
         var host = _config["Smtp:Host"] ?? throw new InvalidOperationException("Smtp:Host chưa cấu hình");
         var port = int.Parse(_config["Smtp:Port"] ?? "587");

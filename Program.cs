@@ -249,78 +249,8 @@ builder.Services.AddCors(options =>
     });
 });
 
-// Rate limiting - 100 requests/minute
-builder.Services.AddRateLimiter(options =>
-{
-    // Login - rất chặt
-    options.AddFixedWindowLimiter("login", opt =>
-    {
-        opt.PermitLimit = 5;
-        opt.Window = TimeSpan.FromMinutes(1);
-        opt.QueueLimit = 0;
-    });
-
-    // Booking / Payment
-    options.AddFixedWindowLimiter("booking", opt =>
-    {
-        opt.PermitLimit = 20;
-        opt.Window = TimeSpan.FromMinutes(1);
-        opt.QueueLimit = 0;
-    });
-
-    // Upload / Email
-    options.AddFixedWindowLimiter("sensitive", opt =>
-    {
-        opt.PermitLimit = 10;
-        opt.Window = TimeSpan.FromMinutes(1);
-        opt.QueueLimit = 0;
-    });
-
-    // AI Public endpoints (FAQ, public chat) - cho phép nhiều request vì là public
-    options.AddFixedWindowLimiter("ai-public", opt =>
-    {
-        opt.PermitLimit = 100;
-        opt.Window = TimeSpan.FromMinutes(1);
-        opt.QueueLimit = 0;
-    });
-
-    // AI User endpoints (customer personalized suggestions) - vừa phải
-    options.AddFixedWindowLimiter("ai-user", opt =>
-    {
-        opt.PermitLimit = 20;
-        opt.Window = TimeSpan.FromMinutes(1);
-        opt.QueueLimit = 0;
-    });
-
-    // AI Management endpoints (analytics, pricing, promotions) - chặt hơn vì tốn tài nguyên
-    options.AddFixedWindowLimiter("ai-management", opt =>
-    {
-        opt.PermitLimit = 10;
-        opt.Window = TimeSpan.FromMinutes(1);
-        opt.QueueLimit = 0;
-    });
-
-    options.RejectionStatusCode = 429;
-
-    options.OnRejected = async (context, token) =>
-    {
-        context.HttpContext.Response.ContentType = "application/json";
-
-        var response = System.Text.Json.JsonSerializer.Serialize(
-            ApiResponse.Fail(
-                "Bạn gửi quá nhiều request, vui lòng thử lại sau",
-                ErrorCodes.OtpLimitExceeded  // 429 — dùng code rate-limit, không phải BadRequest
-            ),
-            new System.Text.Json.JsonSerializerOptions
-            {
-                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-                PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
-            }
-        );
-
-        await context.HttpContext.Response.WriteAsync(response, token);
-    };
-});
+// Rate limiting đếm theo từng người (user hoặc IP), giới hạn cấu hình ở section RateLimiting (B1/D9)
+builder.Services.AddSmashCourtRateLimiting(builder.Configuration);
 
 // Swagger
 builder.Services.AddEndpointsApiExplorer();
@@ -482,14 +412,14 @@ app.UseCors("AllowFrontend");
 // IP Rate Limiting middleware for AI endpoints
 app.UseIpRateLimiting();
 
-// Thêm middleware rate limiting toàn cục — có thể override bằng attribute ở controller/action
-app.UseRateLimiter();
 // Middleware xử lý lỗi toàn cục — trả về JSON chuẩn
 app.UseMiddleware<ExceptionMiddleware>();
 // Clear default claim type mapping để giữ nguyên tên claim trong token
 JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
 // Xác thực và phân quyền
 app.UseAuthentication();
+// Rate limiting theo policy của controller/action; đặt SAU xác thực để đếm theo từng người đã đăng nhập (B1/D9)
+app.UseRateLimiter();
 // Middleware kiểm tra user status (LOCKED/INACTIVE) - chặn ngay lập tức
 app.UseMiddleware<UserStatusMiddleware>();
 app.UseAuthorization();
@@ -524,3 +454,6 @@ using (var scope = app.Services.CreateScope())
 Console.WriteLine("http://localhost:8080/hangfire - Dashboard Hangfire (admin only)");
 
 app.Run();
+
+// Cho project test tham chiếu được lớp Program (WebApplicationFactory<Program>)
+public partial class Program;

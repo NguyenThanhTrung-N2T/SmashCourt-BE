@@ -26,3 +26,7 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# Kết quả chạy test sinh ra (coverage, hang dump của --blame-hang...): không commit
+SmashCourt-BE.Tests/TestResults/
+*.dmp

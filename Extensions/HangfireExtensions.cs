@@ -7,10 +7,24 @@ namespace SmashCourt_BE.Extensions;
 
 public static class HangfireExtensions
 {
+    /// <summary>Khóa bật/tắt toàn bộ Hangfire (D4). Mặc định bật; host test HTTP đặt false để job thật không chạy trên DB test.</summary>
+    public const string EnabledKey = "Hangfire:Enabled";
+
+    // GetValue ném khi giá trị không phải bool: cấu hình sai thì lỗi ngay lúc khởi động thay vì lặng lẽ chạy job thật
+    public static bool IsEnabled(IConfiguration config) => config.GetValue(EnabledKey, true);
+
     public static IServiceCollection AddHangfireServices(
         this IServiceCollection services,
         IConfiguration config)
     {
+        // Lớp job luôn đăng ký để gọi trực tiếp được (test); chỉ hạ tầng Hangfire mới tắt được
+        services.AddScoped<IAuthCleanupJob, AuthCleanupJob>();
+        services.AddScoped<IPromotionJob, PromotionJob>();
+        services.AddScoped<IBookingJob, BookingJob>();
+
+        if (!IsEnabled(config))
+            return services;
+
         // Cấu hình Hangfire với PostgreSQL
         services.AddHangfire(hangfire => hangfire
             .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
@@ -28,9 +42,6 @@ public static class HangfireExtensions
                 }));
 
         services.AddHangfireServer();
-        services.AddScoped<IAuthCleanupJob, AuthCleanupJob>();
-        services.AddScoped<IPromotionJob, PromotionJob>();
-        services.AddScoped<IBookingJob, BookingJob>();
 
         return services;
     }
@@ -40,6 +51,10 @@ public static class HangfireExtensions
         this IApplicationBuilder app,
         IConfiguration config)
     {
+        // Tắt Hangfire thì không có dashboard (cần dịch vụ Hangfire) và không đăng ký job định kỳ (cần storage)
+        if (!IsEnabled(config))
+            return app;
+
         var isDashboardEnabled = config.GetValue<bool>("Hangfire:Dashboard");
 
         if (isDashboardEnabled)

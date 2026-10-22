@@ -66,3 +66,9 @@ internal static class TadssTestData
         OccurredAt = new DateTimeOffset(2026, 11, 20, 18, 30, 0, TimeSpan.FromHours(7))
     };
 }
+
+/// <summary>Lối vào công khai cho code test nằm ngoài assembly-internal helper (fixture HTTP dùng request mẫu để làm nóng client).</summary>
+public static class TadssTestDataAccessor
+{
+    public static SmashCourt_BE.Integrations.Tadss.DTOs.TadssDecisionRequestDto Request() => TadssTestData.DecisionRequest(full: true);
+}

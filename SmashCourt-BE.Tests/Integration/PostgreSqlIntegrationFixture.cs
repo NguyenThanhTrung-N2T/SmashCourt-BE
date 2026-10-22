@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using System.Text.RegularExpressions;
 using Npgsql;
 using SmashCourt_BE.Data;
 using SmashCourt_BE.Extensions;
@@ -81,9 +82,44 @@ public sealed class PostgreSqlIntegrationFixture : IAsyncLifetime
         await RunPsqlAsync("-f", SchemaFileInContainer);
     }
 
-    private async Task RunPsqlAsync(params string[] args)
+    /// <summary>
+    /// Tạo một database riêng trong cùng container, nạp lại đúng schema (B5): bộ test HTTP commit dữ liệu thật nên không được dùng chung
+    /// DB với các test rollback/quét toàn bảng. Trả chuỗi kết nối tới database mới.
+    /// </summary>
+    public async Task<string> CreateIsolatedDatabaseAsync(string databaseName)
     {
-        var command = new List<string> { "psql", "-U", "test", "-d", "smashcourt_test", "-v", "ON_ERROR_STOP=1", "-q" };
+        EnsureSafeDatabaseName(databaseName);
+        await RunPsqlInAsync("smashcourt_test", "-c", $"CREATE DATABASE {databaseName}");
+        await RunPsqlInAsync(databaseName, "-f", SchemaFileInContainer);
+        return new NpgsqlConnectionStringBuilder(_container.GetConnectionString()) { Database = databaseName }.ConnectionString;
+    }
+
+    public async Task DropIsolatedDatabaseAsync(string databaseName)
+    {
+        EnsureSafeDatabaseName(databaseName);
+        NpgsqlConnection.ClearAllPools(); // nhả kết nối đang giữ trong pool trước khi xóa
+        await RunPsqlInAsync("smashcourt_test", "-c", $"DROP DATABASE IF EXISTS {databaseName} WITH (FORCE)");
+    }
+
+    /// <summary>Chạy một câu SQL trong database riêng đã tạo bằng <see cref="CreateIsolatedDatabaseAsync"/> (VD dọn schema ngoại lai).</summary>
+    public Task ExecuteSqlInIsolatedDatabaseAsync(string databaseName, string sql)
+    {
+        EnsureSafeDatabaseName(databaseName);
+        return RunPsqlInAsync(databaseName, "-c", sql);
+    }
+
+    // Tên được ghép vào câu lệnh DDL nên chỉ nhận chữ thường, số, gạch dưới
+    private static void EnsureSafeDatabaseName(string databaseName)
+    {
+        if (!Regex.IsMatch(databaseName, "^[a-z][a-z0-9_]{0,62}$"))
+            throw new ArgumentException($"Tên database không hợp lệ: '{databaseName}'.", nameof(databaseName));
+    }
+
+    private Task RunPsqlAsync(params string[] args) => RunPsqlInAsync("smashcourt_test", args);
+
+    private async Task RunPsqlInAsync(string database, params string[] args)
+    {
+        var command = new List<string> { "psql", "-U", "test", "-d", database, "-v", "ON_ERROR_STOP=1", "-q" };
         command.AddRange(args);
 
         var result = await _container.ExecAsync(command);
