@@ -184,6 +184,195 @@ public sealed class CancellationFlowTests(PostgreSqlIntegrationFixture database,
         Assert.Equal(20_000m, cash.Amount);
     }
 
+    [Theory]
+    [Trait("Catalog", "BE-IT-10")]
+    [InlineData(30, 100)] // mốc 24 giờ
+    [InlineData(20, 50)]  // mốc 12 giờ; mã cũ lệch 7 giờ (giờ VN trừ giờ UTC) nên tính thành 27 giờ ⇒ 100 %
+    [InlineData(5, 20)]   // mốc 2 giờ
+    public async Task RefundPercent_FollowsTheHoursLeftInVietnamTime(int hoursAhead, int expectedPercent)
+    {
+        await EnsureCancelPoliciesAsync();
+        var order = await BookPaidAsync();
+        await MovePlayToHoursAheadAsync(order.BookingId, hoursAhead);
+
+        await AssertApiStatusAsync(HttpStatusCode.OK,
+            await StaffCancelAsync(await SeedStaffAsync(order.Court.BranchId), order.BookingId));
+
+        var refund = Assert.Single(await ReadRefundsAsync(order.BookingId));
+        Assert.Equal(expectedPercent, refund.RefundPercent);
+        Assert.Equal(200_000m * expectedPercent / 100, refund.Amount);
+    }
+
+    [Fact]
+    [Trait("Catalog", "BE-IT-10")]
+    public async Task DepositPaidTwice_ThenCancelled_RefundsEachPaymentAndConfirmsTheTotal()
+    {
+        // Một Refund cho mỗi Payment (C2): gộp 120.000 đ vào một Payment 60.000 đ sẽ vi phạm chk_payments_refunded_range
+        await EnsureCancelPoliciesAsync();
+        var pending = await ApproveDepositAsync();
+        await PayBothLinksAsync(pending.Customer, pending.BookingId);
+        var staff = await SeedStaffAsync(pending.Court.BranchId);
+
+        await AssertApiStatusAsync(HttpStatusCode.OK, await StaffCancelAsync(staff, pending.BookingId));
+
+        var refunds = await ReadRefundsAsync(pending.BookingId);
+        Assert.Equal(2, refunds.Count);
+        Assert.Equal(2, refunds.Select(r => r.PaymentId).Distinct().Count());
+        Assert.All(refunds, r => Assert.Equal(60_000m, r.Amount));
+        Assert.Equal(BookingStatus.CANCELLED_PENDING_REFUND, (await RequireBookingAsync(pending.BookingId)).Status);
+        var factory = await GetFactoryAsync();
+
+        await AssertApiStatusAsync(HttpStatusCode.OK, await ConfirmRefundAsync(staff, pending.BookingId));
+
+        var booking = await RequireBookingAsync(pending.BookingId);
+        Assert.Equal(BookingStatus.CANCELLED_REFUNDED, booking.Status);
+        Assert.All(booking.Invoice!.Payments.Where(p => p.Status == PaymentTxStatus.SUCCESS),
+            p => Assert.Equal(p.Amount, p.RefundedAmount));
+        Assert.All(await ReadRefundsAsync(pending.BookingId), r => Assert.Equal(RefundStatus.COMPLETED, r.Status));
+        var email = Assert.Single(factory.Emails.To(pending.Customer.Email), e => e.Subject.Contains("Xác nhận hoàn tiền"));
+        Assert.Contains(120_000m.ToString("N0") + " VNĐ", email.Body);
+    }
+
+    [Fact]
+    [Trait("Catalog", "BE-IT-22")]
+    public async Task MoneyArrivesAfterTheRefundWasConfirmed_AddsANewRefundWithoutTouchingTheOldOne()
+    {
+        await EnsureCancelPoliciesAsync();
+        var order = await BookPendingAsync();
+        var oldLink = order.TransactionRef;
+        var newLink = await StartPaymentAsync(order.Customer, order.BookingId);
+        Assert.Equal(HttpStatusCode.OK, await IpnAsync(newLink.TransactionRef!, newLink.Amount));
+        var staff = await SeedStaffAsync(order.Court.BranchId);
+        await AssertApiStatusAsync(HttpStatusCode.OK, await StaffCancelAsync(staff, order.BookingId));
+        await AssertApiStatusAsync(HttpStatusCode.OK, await ConfirmRefundAsync(staff, order.BookingId));
+        var firstRefund = Assert.Single(await ReadRefundsAsync(order.BookingId));
+
+        // Link cũ (đã FAILED khi bấm thanh toán lại) vẫn trả được: tiền về sau khi đơn đã hoàn xong
+        Assert.Equal(HttpStatusCode.OK, await IpnAsync(oldLink, order.Amount));
+
+        Assert.Equal(BookingStatus.CANCELLED_PENDING_REFUND, (await RequireBookingAsync(order.BookingId)).Status);
+        var refunds = await ReadRefundsAsync(order.BookingId);
+        Assert.Equal(2, refunds.Count);
+        var kept = Assert.Single(refunds, r => r.Id == firstRefund.Id);
+        Assert.Equal(RefundStatus.COMPLETED, kept.Status);
+        Assert.Equal(firstRefund.ProcessedAt, kept.ProcessedAt);
+        var late = Assert.Single(refunds, r => r.Id != firstRefund.Id);
+        Assert.Equal((RefundStatus.PENDING, 200_000m, 100m), (late.Status, late.Amount, late.RefundPercent));
+
+        await AssertApiStatusAsync(HttpStatusCode.OK, await ConfirmRefundAsync(staff, order.BookingId));
+
+        var booking = await RequireBookingAsync(order.BookingId);
+        Assert.Equal(BookingStatus.CANCELLED_REFUNDED, booking.Status);
+        Assert.Equal(400_000m, booking.Invoice!.Payments.Sum(p => p.RefundedAmount));
+        Assert.All(booking.Invoice.Payments, p => Assert.Equal(p.Amount, p.RefundedAmount));
+    }
+
+    [Fact]
+    [Trait("Catalog", "BE-IT-10")]
+    public async Task ConfirmRefundTwice_SecondIsRejectedAndRefundsNothingMore()
+    {
+        await EnsureCancelPoliciesAsync();
+        var order = await BookPaidAsync();
+        var staff = await SeedStaffAsync(order.Court.BranchId);
+        await AssertApiStatusAsync(HttpStatusCode.OK, await StaffCancelAsync(staff, order.BookingId));
+        await AssertApiStatusAsync(HttpStatusCode.OK, await ConfirmRefundAsync(staff, order.BookingId));
+
+        var again = await ConfirmRefundAsync(staff, order.BookingId);
+
+        Assert.Equal(HttpStatusCode.BadRequest, again.Status);
+        var booking = await RequireBookingAsync(order.BookingId);
+        Assert.Equal(BookingStatus.CANCELLED_REFUNDED, booking.Status);
+        Assert.Equal(200_000m, Assert.Single(booking.Invoice!.Payments).RefundedAmount);
+        Assert.Single(await ReadRefundsAsync(order.BookingId));
+    }
+
+    [Fact]
+    [Trait("Catalog", "BE-IT-23")]
+    public async Task RetryPaymentAfterTheCustomerCancelled_IsRejectedWithoutANewLink()
+    {
+        var order = await BookPendingAsync();
+        await AssertApiStatusAsync(HttpStatusCode.OK, await CustomerCancelAsync(order.Customer, order.BookingId));
+
+        var retry = await RetryAsync(order.Customer, order.BookingId);
+
+        Assert.Equal(HttpStatusCode.BadRequest, retry.Status);
+        var booking = await RequireBookingAsync(order.BookingId);
+        Assert.Equal(BookingStatus.CANCELLED, booking.Status);
+        Assert.Equal(PaymentTxStatus.FAILED, Assert.Single(booking.Invoice!.Payments).Status);
+    }
+
+    [Fact]
+    [Trait("Catalog", "BE-IT-23")]
+    public async Task PaidOrderWithAOncePerCustomerPromotion_AfterCancelTheCustomerCanUseItAgain()
+    {
+        // P6-18 với đơn đã trả: trạng thái sau hủy là CANCELLED_PENDING_REFUND (ca chưa trả ở trên chỉ phủ CANCELLED)
+        await EnsureCancelPoliciesAsync();
+        var promotion = await SeedPromotionAsync(DiscountTypeEnum.FIXED, 10_000m, usagePerUserLimit: 1);
+        var order = await BookPaidAsync(promotionId: promotion.Id);
+        var client = await CustomerClientAsync(order.Customer);
+
+        var whilePaid = await PostOnlineAsync(client, OnlineRequest([order.Court.CourtId], FutureDate(), hour: 14, promotionId: promotion.Id));
+        await AssertStatusAsync(HttpStatusCode.BadRequest, whilePaid);
+
+        await AssertApiStatusAsync(HttpStatusCode.OK,
+            await StaffCancelAsync(await SeedStaffAsync(order.Court.BranchId), order.BookingId));
+        Assert.Equal(BookingStatus.CANCELLED_PENDING_REFUND, (await RequireBookingAsync(order.BookingId)).Status);
+
+        var afterCancel = await PostOnlineAsync(client, OnlineRequest([order.Court.CourtId], FutureDate(), hour: 14, promotionId: promotion.Id));
+        await AssertStatusAsync(HttpStatusCode.Created, afterCancel);
+    }
+
+    [Fact]
+    [Trait("Catalog", "BE-UT-12")]
+    public async Task LinkAfterTheStartTime_BookingAlreadyStarted_AndTheLinkIsNotUsedUp()
+    {
+        var order = await BookPaidAsync();
+        await MovePlayToJustStartedAsync(order.BookingId);
+        var raw = await GiveCancelLinkAsync(order.BookingId); // hạn link 1 giờ nữa: chỉ còn chốt "đã tới giờ bắt đầu"
+
+        var call = await LinkCancelAsync(raw);
+
+        Assert.Equal(HttpStatusCode.BadRequest, call.Status);
+        Assert.Equal(ErrorCodes.BookingAlreadyStarted, call.Code);
+        var booking = await RequireBookingAsync(order.BookingId);
+        Assert.Equal(BookingStatus.PAID_ONLINE, booking.Status);
+        Assert.Null(booking.CancelTokenUsedAt);
+        Assert.Empty(await ReadRefundsAsync(order.BookingId));
+    }
+
+    [Fact]
+    [Trait("Catalog", "BE-IT-25")]
+    public async Task PaymentCancelAndRefundTimes_AreUtcInstantsTakenDuringTheRequest()
+    {
+        await EnsureCancelPoliciesAsync();
+        var order = await BookPendingAsync();
+        var staff = await SeedStaffAsync(order.Court.BranchId);
+
+        var beforeIpn = DateTime.UtcNow;
+        Assert.Equal(HttpStatusCode.OK, await IpnAsync(order.TransactionRef, order.Amount));
+        var afterIpn = DateTime.UtcNow;
+        var beforeCancel = DateTime.UtcNow;
+        await AssertApiStatusAsync(HttpStatusCode.OK, await StaffCancelAsync(staff, order.BookingId));
+        var afterCancel = DateTime.UtcNow;
+        var beforeConfirm = DateTime.UtcNow;
+        await AssertApiStatusAsync(HttpStatusCode.OK, await ConfirmRefundAsync(staff, order.BookingId));
+        var afterConfirm = DateTime.UtcNow;
+
+        var booking = await RequireBookingAsync(order.BookingId);
+        AssertUtcWithin(Assert.Single(booking.Invoice!.Payments).PaidAt, beforeIpn, afterIpn);
+        AssertUtcWithin(booking.CancelledAt, beforeCancel, afterCancel);
+        var refund = Assert.Single(await ReadRefundsAsync(order.BookingId));
+        AssertUtcWithin(refund.CreatedAt, beforeCancel, afterCancel);
+        AssertUtcWithin(refund.ProcessedAt, beforeConfirm, afterConfirm);
+    }
+
+    private static void AssertUtcWithin(DateTime? value, DateTime before, DateTime after)
+    {
+        Assert.NotNull(value);
+        Assert.Equal(DateTimeKind.Utc, value.Value.Kind);
+        Assert.InRange(value.Value, before, after);
+    }
+
     // ───────────────────────── Trả lượt khuyến mãi khi hủy (7.9 bước 5) ─────────────────────────
 
     public enum CancelPath { Link, Customer, Staff }

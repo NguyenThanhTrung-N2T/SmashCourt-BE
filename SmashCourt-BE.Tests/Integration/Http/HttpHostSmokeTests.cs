@@ -25,6 +25,18 @@ public sealed class HttpHostSmokeTests(PostgreSqlIntegrationFixture database, Ht
     }
 
     [Fact]
+    public async Task Host_WiresVnPayAsTheOnlyPaymentGateway()
+    {
+        // Program.cs: mỗi cổng một IPaymentGateway; thiếu hoặc trùng đăng ký chỉ lộ ra ở request thanh toán đầu tiên
+        var factory = await GetFactoryAsync();
+        using var scope = factory.Services.CreateScope();
+        var resolver = scope.ServiceProvider.GetRequiredService<SmashCourt_BE.Services.IService.IPaymentGatewayResolver>();
+
+        Assert.IsType<SmashCourt_BE.Services.VnPayService>(resolver.Get(SmashCourt_BE.Models.Enums.PaymentTxMethod.VNPAY));
+        Assert.Throws<InvalidOperationException>(() => resolver.Get(SmashCourt_BE.Models.Enums.PaymentTxMethod.MOMO));
+    }
+
+    [Fact]
     public async Task Host_UsesTheDedicatedDatabaseNotTheSharedOne()
     {
         // B2: Program.cs đọc chuỗi kết nối rất sớm; phải chứng minh host nối đúng database riêng của bộ HTTP

@@ -61,26 +61,100 @@ public abstract class PaymentCancellationTestBase(PostgreSqlIntegrationFixture d
         return order;
     }
 
-    /// <summary>Đơn đã cọc 30 % (60.000 / 200.000 đ): chờ duyệt ⇒ Quản lý duyệt 30 % ⇒ "Thanh toán cọc" ⇒ IPN.</summary>
-    protected async Task<Order> BookDepositPaidAsync()
+    /// <summary>Đơn chờ duyệt được Quản lý duyệt cọc 30 % (60.000 / 200.000 đ); khách chưa bấm "Thanh toán cọc".</summary>
+    protected async Task<PendingApproval> ApproveDepositAsync()
     {
         var tadss = await GetTadssAsync();
-        PendingApproval pending;
         using (await UseTadssAsync())
         {
-            pending = await CreatePendingApprovalAsync(tadss);
+            var pending = await CreatePendingApprovalAsync(tadss);
             var manager = await SeedManagerAsync(pending.Court.BranchId);
             tadss.ReplyOverride(pending.DecisionId, "APPROVE", manager.Id.ToString(), Reason, 0.3m, 60_000m);
             await AssertApiStatusAsync(HttpStatusCode.OK,
                 await ApproveAsync(await CreateClientForAsync(manager), pending.BookingId, 0.3m));
+            return pending;
         }
-        var retry = await RetryAsync(pending.Customer, pending.BookingId);
-        await AssertApiStatusAsync(HttpStatusCode.OK, retry);
-        var payment = (await RequireBookingAsync(pending.BookingId)).Invoice!.Payments.Single(p => p.Status == PaymentTxStatus.PENDING);
+    }
+
+    /// <summary>Đơn đã cọc 30 % (60.000 / 200.000 đ): chờ duyệt ⇒ Quản lý duyệt 30 % ⇒ "Thanh toán cọc" ⇒ IPN.</summary>
+    protected async Task<Order> BookDepositPaidAsync()
+    {
+        var pending = await ApproveDepositAsync();
+        var payment = await StartPaymentAsync(pending.Customer, pending.BookingId);
         Assert.Equal(HttpStatusCode.OK, await IpnAsync(payment.TransactionRef!, 60_000m));
         Assert.Equal(BookingStatus.PAID_ONLINE, (await RequireBookingAsync(pending.BookingId)).Status);
         return new Order(pending.BookingId, pending.Customer, pending.Court, payment.TransactionRef!, 60_000m);
     }
+
+    /// <summary>Bấm "Thanh toán lại / Thanh toán cọc", trả về Payment chờ vừa tạo (link cũ, nếu có, thành FAILED).</summary>
+    protected async Task<Payment> StartPaymentAsync(User customer, Guid bookingId)
+    {
+        await AssertApiStatusAsync(HttpStatusCode.OK, await RetryAsync(customer, bookingId));
+        return (await RequireBookingAsync(bookingId)).Invoice!.Payments.Single(p => p.Status == PaymentTxStatus.PENDING);
+    }
+
+    /// <summary>
+    /// Khách trả cả hai link (VNPAY.NET không gửi hạn phiên nên link cũ vẫn trả được sau "Thanh toán lại"): link mới về trước và xác
+    /// nhận đơn, link cũ về sau thành khoản trả thêm. Trả về số tiền mỗi lần.
+    /// </summary>
+    protected async Task<decimal> PayBothLinksAsync(User customer, Guid bookingId)
+    {
+        var first = await StartPaymentAsync(customer, bookingId);
+        var second = await StartPaymentAsync(customer, bookingId);
+        Assert.Equal(first.Amount, second.Amount);
+        Assert.Equal(HttpStatusCode.OK, await IpnAsync(second.TransactionRef!, second.Amount));
+        Assert.Equal(HttpStatusCode.OK, await IpnAsync(first.TransactionRef!, first.Amount));
+        var booking = await RequireBookingAsync(bookingId);
+        Assert.Equal(BookingStatus.PAID_ONLINE, booking.Status);
+        Assert.Equal(2, booking.Invoice!.Payments.Count(p => p.Status == PaymentTxStatus.SUCCESS));
+        return first.Amount;
+    }
+
+    /// <summary>Đơn tại quầy 10:00–11:00 ba ngày sau do nhân viên tạo; trả về id đơn.</summary>
+    protected async Task<Guid> CreateWalkInAsync(User staff, BookableCourt court, bool payNow, Guid? customerId = null)
+    {
+        using var response = await (await CreateClientForAsync(staff)).PostAsJsonAsync("/api/bookings/walk-in", new
+        {
+            bookingDate = FutureDate().ToDateTime(TimeOnly.MinValue).ToString("yyyy-MM-ddTHH:mm:ss"),
+            courts = new[] { new { courtId = court.CourtId, startTime = "10:00:00", endTime = "11:00:00" } },
+            customerId,
+            guestName = customerId == null ? "Khách tại quầy" : null,
+            guestPhone = customerId == null ? "0900000000" : null,
+            payNow
+        });
+        Assert.True(response.StatusCode == HttpStatusCode.Created, await response.Content.ReadAsStringAsync());
+        var booking = await FindBookingOnCourtAsync(court.CourtId) ?? throw new InvalidOperationException("Không thấy đơn tại quầy");
+        return booking.Id;
+    }
+
+    // ───────────────────────── Điểm thành viên ─────────────────────────
+
+    /// <summary>Thẻ thành viên 0 điểm ở hạng thấp nhất (hạng 0 điểm được tạo nếu chưa có) để check-out tích điểm.</summary>
+    protected Task GiveLoyaltyAsync(Guid userId) =>
+        WithDbAsync(async db =>
+        {
+            var now = DateTime.UtcNow;
+            var tier = await db.LoyaltyTiers.FirstOrDefaultAsync(t => t.MinPoints == 0);
+            if (tier == null)
+            {
+                tier = new LoyaltyTier
+                {
+                    Id = Guid.NewGuid(), Name = $"Hạng test {Guid.NewGuid():N}"[..20], MinPoints = 0, DiscountRate = 0, CreatedAt = now, UpdatedAt = now
+                };
+                db.LoyaltyTiers.Add(tier);
+            }
+            db.CustomerLoyalties.Add(new CustomerLoyalty
+            {
+                Id = Guid.NewGuid(), UserId = userId, TierId = tier.Id, TotalPoints = 0, CreatedAt = now, UpdatedAt = now
+            });
+            return await db.SaveChangesAsync();
+        });
+
+    protected Task<int> ReadPointsAsync(Guid userId) =>
+        WithDbAsync(db => db.CustomerLoyalties.AsNoTracking().Where(l => l.UserId == userId).Select(l => l.TotalPoints).SingleAsync());
+
+    protected Task<List<LoyaltyTransaction>> ReadLoyaltyTransactionsAsync(Guid bookingId) =>
+        WithDbAsync(db => db.LoyaltyTransactions.AsNoTracking().Where(t => t.BookingId == bookingId).ToListAsync());
 
     // ───────────────────────── Gọi API ─────────────────────────
 
@@ -145,6 +219,28 @@ public abstract class PaymentCancellationTestBase(PostgreSqlIntegrationFixture d
             await db.Bookings.Where(b => b.Id == bookingId).ExecuteUpdateAsync(s => s.SetProperty(b => b.BookingDate, today));
             return await db.BookingCourts.Where(bc => bc.BookingId == bookingId).ExecuteUpdateAsync(s => s
                 .SetProperty(bc => bc.Date, today)
+                .SetProperty(bc => bc.StartTime, start)
+                .SetProperty(bc => bc.EndTime, end));
+        });
+    }
+
+    /// <summary>
+    /// Dời giờ chơi tới khoảng <paramref name="hoursAhead"/> giờ nữa theo giờ VN (giữ trong một ngày: giờ bắt đầu muộn hơn 23:00 thì
+    /// lùi về 23:00, lệch tối đa 1 giờ, đủ để vẫn nằm trong cùng mốc của chính sách hủy mẫu).
+    /// </summary>
+    protected async Task MovePlayToHoursAheadAsync(Guid bookingId, int hoursAhead)
+    {
+        var startVn = DateTimeHelper.GetVietnamNow().AddHours(hoursAhead);
+        var date = DateOnly.FromDateTime(startVn);
+        var start = new TimeOnly(startVn.Hour, startVn.Minute);
+        if (start > new TimeOnly(23, 0))
+            start = new TimeOnly(23, 0);
+        var end = start.Hour < 23 ? start.AddHours(1) : new TimeOnly(23, 59);
+        await WithDbAsync(async db =>
+        {
+            await db.Bookings.Where(b => b.Id == bookingId).ExecuteUpdateAsync(s => s.SetProperty(b => b.BookingDate, date));
+            return await db.BookingCourts.Where(bc => bc.BookingId == bookingId).ExecuteUpdateAsync(s => s
+                .SetProperty(bc => bc.Date, date)
                 .SetProperty(bc => bc.StartTime, start)
                 .SetProperty(bc => bc.EndTime, end));
         });

@@ -47,6 +47,16 @@ public class OnlinePaymentStarterTests
     }
 
     [Fact]
+    public void Resolver_TwoGatewaysForOneMethod_FailsWhenBuiltInsteadOfPickingOne()
+    {
+        // Resolver là Scoped: lỗi đăng ký trùng lộ ra ở request đầu tiên cần thanh toán, không âm thầm chọn một cổng
+        var first = Gateway(PaymentTxMethod.VNPAY, "https://vnpay-1").Object;
+        var second = Gateway(PaymentTxMethod.VNPAY, "https://vnpay-2").Object;
+
+        Assert.Throws<ArgumentException>(() => new PaymentGatewayResolver([first, second]));
+    }
+
+    [Fact]
     public async Task Start_CreatesTheLinkAndAPendingPaymentForThatGateway()
     {
         var momo = Gateway(PaymentTxMethod.MOMO, "https://momo/pay");

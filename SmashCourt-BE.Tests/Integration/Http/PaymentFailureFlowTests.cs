@@ -56,6 +56,40 @@ public sealed class PaymentFailureFlowTests(PostgreSqlIntegrationFixture databas
 
     [Fact]
     [Trait("Catalog", "BE-IT-21")]
+    public async Task ApprovedDepositDeclined_HoldShrinksToGrace_ThenPaysTheApprovedDepositNotTheTotal()
+    {
+        // Đơn vừa được duyệt không mất vì một lần thẻ lỗi; lần trả lại vẫn là tiền cọc đã duyệt (60.000 đ), không phải 200.000 đ
+        var pending = await ApproveDepositAsync();
+        var first = await StartPaymentAsync(pending.Customer, pending.BookingId);
+        Assert.Equal(60_000m, first.Amount);
+        var approvedDeadline = (await RequireBookingAsync(pending.BookingId)).Invoice!.ExpiresAt!.Value;
+        var before = DateTime.UtcNow;
+
+        Assert.Equal(HttpStatusCode.OK, await IpnAsync(first.TransactionRef!, first.Amount, success: false));
+
+        var after = DateTime.UtcNow;
+        var declined = await ReadApprovalBookingAsync(pending.BookingId);
+        Assert.Equal(BookingStatus.PENDING, declined.Status);
+        var shrunk = declined.Invoice!.ExpiresAt!.Value;
+        Assert.InRange(shrunk, before.AddMinutes(5).AddSeconds(-1), after.AddMinutes(5).AddSeconds(1));
+        Assert.True(shrunk < approvedDeadline, $"Hạn sau thẻ lỗi {shrunk:O} phải ngắn hơn hạn trả cọc {approvedDeadline:O}");
+        Assert.All(declined.SlotLocks, l => Assert.Equal(shrunk, l.ExpiresAt));
+
+        var retry = await RetryAsync(pending.Customer, pending.BookingId);
+        await AssertApiStatusAsync(HttpStatusCode.OK, retry);
+        Assert.Equal(60_000m, VnPayAmount(retry.DataString("paymentUrl")!));
+        var second = (await RequireBookingAsync(pending.BookingId)).Invoice!.Payments.Single(p => p.Status == PaymentTxStatus.PENDING);
+        Assert.Equal(60_000m, second.Amount);
+        Assert.Equal(HttpStatusCode.OK, await IpnAsync(second.TransactionRef!, second.Amount));
+
+        var paid = await RequireBookingAsync(pending.BookingId);
+        Assert.Equal(BookingStatus.PAID_ONLINE, paid.Status);
+        Assert.Equal(60_000m, paid.Invoice!.Payments.Where(p => p.Status == PaymentTxStatus.SUCCESS).Sum(p => p.Amount));
+        Assert.Equal(60_000m, paid.Invoice.DepositAmount);
+    }
+
+    [Fact]
+    [Trait("Catalog", "BE-IT-21")]
     public async Task DeclineOfAnOldLink_DoesNotTouchTheOrderPayingWithTheNewLink()
     {
         var order = await BookPendingAsync();
@@ -163,7 +197,7 @@ public sealed class PaymentFailureFlowTests(PostgreSqlIntegrationFixture databas
     }
 
     [Fact]
-    public async Task SecondLinkPaidAfterTheFirst_IsRecordedAndCountedAtCheckout()
+    public async Task SecondLinkPaidAfterTheFirst_IsRecordedWithoutChangingTheBooking()
     {
         // VNPAY.NET không gửi hạn phiên: link cũ vẫn trả được sau "Thanh toán lại"
         var order = await BookPendingAsync();
