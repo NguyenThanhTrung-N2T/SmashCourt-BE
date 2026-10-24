@@ -21,7 +21,7 @@ namespace SmashCourt_BE.Services.IService
         // Lấy thông tin booking theo id, có phân quyền
         Task<BookingDto> GetDetailsByIdAsync(Guid id, Guid currentUserId, string currentUserRole);
 
-        // Tạo booking online cho khách đã đăng nhập (P6-01): transaction 1 giữ chỗ, hỏi quyết định cọc, transaction 2 áp nhánh a/a′/b/c/d (spec 7.6)
+        // Tạo booking online cho khách đã đăng nhập: giữ chỗ, hỏi quyết định cọc, rồi áp nhánh xử lý
         Task<OnlineBookingResponse> CreateOnlineAsync(CreateOnlineBookingDto dto, Guid customerId);
 
         // Đặt lịch trực tiếp tại quầy (walk-in booking) bởi nhân viên, có thể có hoặc không có customerId, nếu không có thì sẽ tạo booking với thông tin khách vãng lai

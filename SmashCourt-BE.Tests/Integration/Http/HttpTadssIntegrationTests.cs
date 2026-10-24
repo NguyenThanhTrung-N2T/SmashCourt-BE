@@ -1,3 +1,4 @@
+using SmashCourt_BE.Models.Deposit;
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -245,7 +246,7 @@ public sealed class HttpTadssIntegrationTests(PostgreSqlIntegrationFixture datab
 
     // ───────────────────────── Đường ống quyết định cọc trên DB thật ─────────────────────────
 
-    private Task<SmashCourt_BE.Models.ViewModels.DepositDecision> DecideAsync(Guid bookingId, decimal finalTotal) =>
+    private Task<SmashCourt_BE.Models.Deposit.DepositDecision> DecideAsync(Guid bookingId, decimal finalTotal) =>
         InScopeAsync(sp => sp.GetRequiredService<IBookingDepositService>().DecideAsync(bookingId, finalTotal));
 
     /// <summary>Đơn PENDING như transaction 1 để lại (khách, sân, hóa đơn, một dòng sân), commit thật trong DB của bộ HTTP.</summary>

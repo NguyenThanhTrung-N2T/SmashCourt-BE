@@ -1,3 +1,4 @@
+using SmashCourt_BE.Services.Deposit;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -45,6 +46,7 @@ internal sealed class BookingServiceTestBuilder
     public FakeTimeProvider Time { get; } = new(DefaultNow);
     public IConfiguration Configuration { get; set; } = TestConfigurationFactory.Create();
     public ILogger<BookingService> Logger { get; set; } = Mock.Of<ILogger<BookingService>>();
+    public ILogger<BookingNotificationService> NotificationLogger { get; set; } = Mock.Of<ILogger<BookingNotificationService>>();
 
     /// <summary>Ghi lại thư thay vì gửi SMTP (không có SMTP trong unit test).</summary>
     public RecordingEmailService Email { get; }
@@ -65,6 +67,10 @@ internal sealed class BookingServiceTestBuilder
     {
         var paymentSettings = new Mock<IOptionsMonitor<BookingPaymentSettings>>();
         paymentSettings.Setup(x => x.CurrentValue).Returns(PaymentSettings);
+        var slotInterestNotifier = new SlotInterestNotificationService(
+            SlotInterestRepository.Object, Email, Configuration, Mock.Of<ILogger<SlotInterestNotificationService>>());
+        var notifications = new BookingNotificationService(
+            Broadcast.Object, Email, slotInterestNotifier, Configuration, Time, NotificationLogger);
 
         return new BookingService(
             BookingRepository.Object,
@@ -88,6 +94,8 @@ internal sealed class BookingServiceTestBuilder
             Email,
             CodeGeneratorService.Object,
             SlotInterestRepository.Object,
+            slotInterestNotifier,
+            notifications,
             UnitOfWork.Object,
             Logger,
             Configuration,

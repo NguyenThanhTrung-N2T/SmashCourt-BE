@@ -160,7 +160,7 @@ namespace SmashCourt_BE.Repositories
         /// </summary>
         public async Task<int> GetUserUsageCountAsync(Guid promotionId, Guid userId)
         {
-            // P6-18 (N-22): đơn đã hủy (hết hạn, bị từ chối, khách/nhân viên hủy) trả lượt cho khách; đơn còn giữ hoặc đã dùng vẫn tính
+            // Đơn đã hủy (hết hạn, bị từ chối, khách/nhân viên hủy) trả lượt cho khách; đơn còn giữ hoặc đã dùng vẫn tính
             var cancelled = BookingStatusTransition.GetCancelledStatuses();
             return await _context.BookingPromotions
                 .Where(bp => bp.PromotionId == promotionId)

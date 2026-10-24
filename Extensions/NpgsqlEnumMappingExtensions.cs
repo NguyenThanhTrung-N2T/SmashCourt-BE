@@ -36,7 +36,7 @@ public static class NpgsqlEnumMappingExtensions
         builder.MapEnum<RefundStatus>("refund_status", translator);
         builder.MapEnum<IpnProvider>("ipn_provider", translator);
 
-        // Phase 6 — cọc TADSS
+        // Cọc TADSS
         builder.MapEnum<DepositSource>("deposit_source", translator);
         builder.MapEnum<ApprovalResult>("approval_result", translator);
         builder.MapEnum<BookingCancelReason>("booking_cancel_reason", translator);

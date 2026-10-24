@@ -47,5 +47,11 @@ namespace SmashCourt_BE.Helpers
             return sb.ToString()
                      .Normalize(System.Text.NormalizationForm.FormC);
         }
+
+        /// <summary>
+        /// Đếm số Unicode code point (ký tự ngoài BMP như emoji tính một), khớp cách TADSS và <c>char_length</c> của PostgreSQL đếm;
+        /// <c>string.Length</c> đếm đơn vị UTF-16 nên emoji tính hai.
+        /// </summary>
+        public static int CountCodePoints(string text) => text.EnumerateRunes().Count();
     }
 }

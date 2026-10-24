@@ -1,3 +1,5 @@
+using SmashCourt_BE.Models.Deposit;
+using SmashCourt_BE.Services.Deposit;
 using SmashCourt_BE.Common;
 using SmashCourt_BE.Common.Constants;
 using SmashCourt_BE.Configurations;
@@ -42,13 +44,15 @@ namespace SmashCourt_BE.Services
         private readonly EmailService _emailService;
         private readonly ICodeGeneratorService _codeGeneratorService;
         private readonly ISlotInterestRepository _slotInterestRepo;
+        private readonly ISlotInterestNotificationService _slotInterestNotifier;
+        private readonly IBookingNotificationService _notifications;
         private readonly IUnitOfWork _unitOfWork;
         private readonly ILogger<BookingService> _logger;
         private readonly IConfiguration _configuration;
         private readonly IBroadcastService _broadcast;
         private readonly IBookingDepositService _depositService;
         private readonly IOptionsMonitor<BookingPaymentSettings> _paymentSettings;
-        // "Bây giờ" của luồng đặt online (Phase 6); các phần cũ vẫn dùng DateTime.UtcNow
+        // "Bây giờ" của luồng đặt online; các phần cũ vẫn dùng DateTime.UtcNow
         private readonly TimeProvider _timeProvider;
 
         public BookingService(
@@ -73,6 +77,8 @@ namespace SmashCourt_BE.Services
             EmailService emailService,
             ICodeGeneratorService codeGeneratorService,
             ISlotInterestRepository slotInterestRepo,
+            ISlotInterestNotificationService slotInterestNotifier,
+            IBookingNotificationService notifications,
             IUnitOfWork unitOfWork,
             ILogger<BookingService> logger,
             IConfiguration configuration,
@@ -102,6 +108,8 @@ namespace SmashCourt_BE.Services
             _emailService = emailService;
             _codeGeneratorService = codeGeneratorService;
             _slotInterestRepo = slotInterestRepo;
+            _slotInterestNotifier = slotInterestNotifier;
+            _notifications = notifications;
             _unitOfWork = unitOfWork;
             _logger = logger;
             _configuration = configuration;
@@ -268,8 +276,8 @@ namespace SmashCourt_BE.Services
         // ────────────────────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// Đặt sân online (spec Phase 6, 7.6). Transaction 1 giữ chỗ (booking PENDING, hóa đơn, slot lock, chưa có Payment);
-        /// hỏi quyết định cọc ngoài transaction; transaction 2 áp nhánh a/a′/b/c/d bằng câu cổng có điều kiện status = PENDING.
+        /// Đặt sân online. Transaction 1 giữ chỗ (booking PENDING, hóa đơn, slot lock, chưa có Payment); hỏi quyết định cọc ngoài
+        /// transaction; transaction 2 áp nhánh xử lý bằng câu cập nhật có điều kiện status = PENDING.
         /// </summary>
         public async Task<OnlineBookingResponse> CreateOnlineAsync(
             CreateOnlineBookingDto dto, Guid customerId)
@@ -278,8 +286,8 @@ namespace SmashCourt_BE.Services
                 throw new AppException(400,
                     "Vui lòng chọn ít nhất 1 sân", ErrorCodes.BadRequest);
 
-            // 1. A9: khung giờ đã bắt đầu thì chặn trước mọi truy vấn (Validate của DTO chỉ so ngày).
-            //    Cùng một "bây giờ" cho created_at, hạn giữ chỗ và token hủy của nhánh a′.
+            // 1. Khung giờ đã bắt đầu thì chặn trước mọi truy vấn (Validate của DTO chỉ so ngày).
+            //    Cùng một "bây giờ" cho created_at, hạn giữ chỗ và token hủy.
             var now = _timeProvider.GetUtcNow().UtcDateTime;
             var bookingDate = DateOnly.FromDateTime(dto.BookingDate);
             var playStartUtc = DateTimeHelper.ToUtcFromVietnam(
@@ -343,7 +351,7 @@ namespace SmashCourt_BE.Services
             }
 
             // Hạn thanh toán và hạn giữ chỗ tuyệt đối của đơn mới (7.5); slot lock hết hạn cùng hóa đơn
-            var hold = PaymentHoldHelper.ForNewBooking(now, _paymentSettings.CurrentValue);
+            var hold = PaymentHoldPolicy.ForNewBooking(now, _paymentSettings.CurrentValue);
 
             // Khai báo ngoài transaction scope để dùng được sau khi scope đóng
             Guid bookingId = Guid.Empty;
@@ -358,7 +366,7 @@ namespace SmashCourt_BE.Services
             bool isRaceCondition = false;
 
             // Transaction 1 bắt đầu SAU pre-check để không bao giờ ghi slot_interest
-            // bên trong một transaction đang thất bại. Read Committed (N-29): Serializable mặc định làm hai đơn đồng thời lỗi 40001.
+            // bên trong một transaction đang thất bại. Read Committed: Serializable mặc định làm hai đơn đồng thời lỗi 40001.
             using (var transaction = TransactionScopeHelper.ReadCommitted())
             {
                 // 4. Tính giá — group các sân cùng khung giờ để tối ưu số lần gọi
@@ -405,7 +413,7 @@ namespace SmashCourt_BE.Services
 
                 finalTotal = Math.Max(0, totalAfterLoyalty - promotionDiscountAmount);
 
-                // 7. Tạo booking PENDING (P6-01: luôn có khách, các trường guest* của DTO bị bỏ qua)
+                // 7. Tạo booking PENDING; đặt online luôn có khách đăng nhập nên các trường guest* của DTO bị bỏ qua
                 //    Dùng UTC để Npgsql lưu timestamptz đúng. Frontend tự convert sang VN time.
                 bookingCode = await _codeGeneratorService.GenerateBookingCodeAsync();
                 var booking = await _bookingRepo.CreateAsync(new Booking
@@ -490,13 +498,12 @@ namespace SmashCourt_BE.Services
             _unitOfWork.ClearChangeTracker();
 
             // 13. Quyết định cọc NGOÀI transaction (không giữ kết nối DB trong lúc chờ TADSS).
-            //     D6: transaction 1 đã commit nên bước này và transaction 2 luôn chạy tới cùng, KHÔNG dừng theo RequestAborted khi khách
-            //     ngắt kết nối: dừng giữa chừng để lại booking PENDING không Payment/cọc, giữ sân vô ích và cho khách lách
-            //     REJECTED/NEED_APPROVAL bằng retry-payment. Thời gian chờ do TimeoutMs của TadssClient giới hạn.
-            //     DecideAsync không ném vì TADSS lỗi hay lỗi dựng request (F2) nên không cần try/catch ở đây.
+            //     Transaction 1 đã commit nên bước này và transaction 2 luôn chạy tới cùng, không dừng khi khách ngắt kết nối:
+            //     dừng giữa chừng để lại đơn PENDING không cọc, giữ sân vô ích. Thời gian chờ do TimeoutMs của TadssClient giới hạn.
+            //     DecideAsync không ném khi TADSS lỗi (trả phương án dự phòng) nên không cần try/catch.
             var decision = await _depositService.DecideAsync(bookingId, finalTotal, CancellationToken.None);
 
-            // 14. Transaction 2 theo nhánh; thua câu cổng ⇒ 409
+            // 14. Transaction 2 theo nhánh; đơn đã đổi trạng thái ⇒ 409
             var applied = await ApplyDepositDecisionAsync(
                 bookingId, invoiceId, decision, courtEntities, playStartUtc, now, promotionId);
 
@@ -511,21 +518,17 @@ namespace SmashCourt_BE.Services
                 _logger.LogError(ex, "Failed to load online booking {BookingId} for notifications", bookingId);
             }
 
-            // 16. Nhánh a′: email xác nhận kèm link hủy (D8)
-            if (applied.RawCancelToken != null)
-                await SendOnlineConfirmationEmailAsync(fullBooking, bookingId, applied.RawCancelToken);
-
-            // 17. Sự kiện SignalR sau transaction 2, mang trạng thái cuối (R-7)
+            // 16. Email và sự kiện theo trạng thái cuối
             if (fullBooking != null)
-                await PublishOnlineBookingEventsAsync(fullBooking, decision.Branch);
+                await _notifications.NotifyOnlineBookingAsync(fullBooking, decision.Branch, applied.RawCancelToken);
 
-            // 18. Nhánh c: đơn đã hủy và nhả sân trong transaction 2; không ghi slot_interest vì slot vẫn trống (R-8)
+            // 17. TADSS từ chối: đơn đã hủy và nhả sân trong transaction 2; không ghi slot_interest vì slot vẫn trống
             if (decision.Branch == DepositBranch.Rejected)
                 throw new AppException(400,
                     "Rất tiếc, đơn đặt sân này không được chấp nhận. Vui lòng chọn khung giờ khác hoặc liên hệ chi nhánh.",
                     ErrorCodes.BookingRejected);
 
-            // 19. Response theo trạng thái cuối (DEPOSIT_APPROVAL_API 3.1); số cọc lấy nguyên từ quyết định, BE không tự quy đổi
+            // 18. Response theo trạng thái cuối; số cọc lấy nguyên từ quyết định, BE không tự quy đổi
             var status = decision.Branch switch
             {
                 DepositBranch.NeedApproval => BookingStatus.PENDING_APPROVAL,
@@ -537,7 +540,7 @@ namespace SmashCourt_BE.Services
                 : new DepositFields(
                     decision.DepositRate,
                     decision.DepositAmount,
-                    DepositFieldsHelper.RemainingAmount(finalTotal, decision.DepositAmount),
+                    DepositFieldsMapper.RemainingAmount(finalTotal, decision.DepositAmount),
                     RequireDepositSource(decision));
 
             return new OnlineBookingResponse
@@ -557,94 +560,12 @@ namespace SmashCourt_BE.Services
             };
         }
 
-        /// <summary>
-        /// Sự kiện của đơn online sau transaction 2 (spec 7.6, DEPOSIT_APPROVAL_API 6), payload không có số tiền, lý do duyệt hay trường TADSS:
-        /// <list type="bullet">
-        /// <item>a, a′, d: <c>BookingCreated</c> kèm lưới giờ, câu theo trạng thái cuối.</item>
-        /// <item>b: <c>BookingCreated</c>, rồi <c>BookingPendingApproval</c> và <c>PendingApprovalQueueChanged</c> (ADDED/NEW) cho nhân viên.</item>
-        /// <item>c: chỉ <c>BookingCancelled</c> kèm lưới giờ cho nhân viên (C2: không vào nhóm của khách, khách đã nhận 400).</item>
-        /// </list>
-        /// Lỗi chỉ log (best-effort như các sự kiện khác).
-        /// </summary>
-        private async Task PublishOnlineBookingEventsAsync(Booking booking, DepositBranch branch)
-        {
-            try
-            {
-                var customerName = booking.Customer?.FullName ?? booking.GuestName ?? "Khách";
-                var timestamp = _timeProvider.GetUtcNow().UtcDateTime;
-                var courtIds = booking.BookingCourts.Select(bc => bc.CourtId.ToString()).ToList();
-                var notification = new BookingNotificationDto
-                {
-                    BookingId = booking.Id,
-                    CustomerId = booking.CustomerId ?? Guid.Empty,
-                    CustomerName = customerName,
-                    BranchId = booking.BranchId,
-                    BranchName = booking.Branch?.Name ?? "",
-                    CourtIds = courtIds,
-                    Status = booking.Status.ToString(),
-                    Message = OnlineBookingEventMessage(booking.BookingCode, customerName, booking.Status),
-                    Timestamp = timestamp
-                };
-
-                if (branch == DepositBranch.Rejected)
-                {
-                    // Slot trống lại nên lưới giờ cần biết
-                    await _broadcast.BroadcastBookingEventToStaffAsync(
-                        SignalREvents.BookingCancelled, notification, booking, includeTimeGrid: true);
-                    return;
-                }
-
-                // includeTimeGrid=true: new booking holds a slot → others need to see it taken
-                await _broadcast.BroadcastBookingEventAsync(
-                    SignalREvents.BookingCreated, notification, booking, includeTimeGrid: true);
-
-                if (branch != DepositBranch.NeedApproval)
-                    return;
-
-                await _broadcast.BroadcastBookingPendingApprovalAsync(new BookingPendingApprovalNotificationDto
-                {
-                    BookingId = booking.Id,
-                    BookingCode = booking.BookingCode,
-                    BranchId = booking.BranchId,
-                    BranchName = booking.Branch?.Name ?? "",
-                    CustomerName = customerName,
-                    CourtIds = courtIds,
-                    Status = booking.Status.ToString(),
-                    ApprovalExpiresAt = booking.ApprovalExpiresAt,
-                    Message = $"Booking #{booking.BookingCode} của {customerName} đang chờ duyệt cọc.",
-                    Timestamp = timestamp
-                });
-                await _broadcast.BroadcastPendingApprovalQueueChangedAsync(new PendingApprovalQueueChangedNotificationDto
-                {
-                    BranchId = booking.BranchId,
-                    BookingId = booking.Id,
-                    Change = SignalREvents.QueueChangeAdded,
-                    Reason = SignalREvents.QueueReasonNew,
-                    Timestamp = timestamp
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex,
-                    "Failed to send SignalR notification for online booking {BookingId}", booking.Id);
-            }
-        }
-
-        // Câu của sự kiện theo trạng thái cuối (R-7), cùng nhãn với FE (DEPOSIT_APPROVAL_API 2.1)
-        private static string OnlineBookingEventMessage(string bookingCode, string customerName, BookingStatus status) => status switch
-        {
-            BookingStatus.PENDING_APPROVAL => $"Booking #{bookingCode} của {customerName} đã được tạo (Chờ duyệt cọc).",
-            BookingStatus.CONFIRMED => $"Booking #{bookingCode} của {customerName} đã được tạo (Đã xác nhận, thanh toán tại quầy).",
-            BookingStatus.CANCELLED => $"Booking #{bookingCode} của {customerName} không được nhận theo chính sách, slot đã được giải phóng.",
-            _ => $"Booking #{bookingCode} của {customerName} đã được tạo (Chờ thanh toán)."
-        };
-
-        // Kết quả transaction 2 cần cho phần sau commit: link VNPay (a, d) hoặc token hủy dạng thô để gửi email (a′)
+        // Kết quả transaction 2 cần cho phần sau commit: link VNPay, hoặc token hủy dạng thô để gửi email xác nhận
         private sealed record OnlineDecisionApplied(string? PaymentUrl, string? RawCancelToken);
 
         /// <summary>
-        /// Transaction 2 của đặt sân online (spec 7.6, plan 6A-2 D7): câu cổng có điều kiện status = PENDING trước, lệnh phụ sau, cùng
-        /// transaction. Thua cổng (nhân viên đã hủy đơn trong lúc chờ quyết định) ⇒ không Payment, không tăng lượt khuyến mãi, log Error, 409.
+        /// Transaction 2 của đặt sân online: câu cập nhật có điều kiện status = PENDING trước, lệnh phụ sau, cùng transaction.
+        /// Thua (nhân viên đã hủy đơn trong lúc chờ quyết định) ⇒ không Payment, không tăng lượt khuyến mãi, 409.
         /// </summary>
         private async Task<OnlineDecisionApplied> ApplyDepositDecisionAsync(
             Guid bookingId,
@@ -660,12 +581,12 @@ namespace SmashCourt_BE.Services
             string? rawCancelToken = null;
             bool won;
 
-            // Read Committed (N-29): mọi thay đổi trạng thái ở đây đi qua câu cổng có điều kiện
+            // Read Committed an toàn vì mọi thay đổi trạng thái ở đây đi qua câu cập nhật có điều kiện
             using (var transaction = TransactionScopeHelper.ReadCommitted())
             {
                 switch (decision.Branch)
                 {
-                    // (a) TADSS và (d) dự phòng 100 %: ghi mức cọc, tạo Payment PENDING = số cọc kèm link VNPay
+                    // Cọc của TADSS hoặc dự phòng 100 %: ghi mức cọc, tạo Payment PENDING = số cọc kèm link VNPay
                     case DepositBranch.TadssDeposit:
                     case DepositBranch.FullPaymentFallback:
                         won = await _bookingRepo.ApplyPaymentRequiredAsync(
@@ -676,7 +597,7 @@ namespace SmashCourt_BE.Services
                                 bookingId, invoiceId, decision.DepositAmount, courtEntities, decidedAt);
                         break;
 
-                    // (a′) xác nhận ngay, thu tại quầy: token hủy ghi cùng câu cổng (D8), khuyến mãi tính lượt ngay vì không có IPN (D3)
+                    // Xác nhận ngay, thu tại quầy: token hủy ghi cùng câu cập nhật, khuyến mãi tính lượt ngay vì không có IPN
                     case DepositBranch.ConfirmWithoutOnlinePayment:
                         var cancelToken = CancelTokenHelper.Generate(playStartUtc, now);
                         won = await _bookingRepo.ConfirmWithoutOnlinePaymentAsync(
@@ -690,7 +611,7 @@ namespace SmashCourt_BE.Services
                         }
                         break;
 
-                    // (b) chờ Manager duyệt: slot lock gia hạn tới hạn duyệt, chưa có mức cọc
+                    // Chờ Quản lý duyệt: slot lock gia hạn tới hạn duyệt, chưa có mức cọc
                     case DepositBranch.NeedApproval:
                         if (decision is not
                             {
@@ -705,7 +626,7 @@ namespace SmashCourt_BE.Services
                             decision.ApprovalReasons, decidedAt);
                         break;
 
-                    // (c) TADSS từ chối: hủy POLICY_REJECTED, nhả sân; caller trả 400 BOOKING_REJECTED
+                    // TADSS từ chối: hủy POLICY_REJECTED, nhả sân; caller trả 400 BOOKING_REJECTED
                     case DepositBranch.Rejected:
                         if (decision.TadssDecisionId is not { } rejectDecisionId)
                             throw new InvalidOperationException(
@@ -727,7 +648,7 @@ namespace SmashCourt_BE.Services
                 // Giữa hai transaction chỉ nhân viên hủy chạm được đơn PENDING chưa có Payment; đơn lúc này đã bị hủy nên không trả 201
                 var currentStatus = await _bookingRepo.GetBookingStatusAsync(bookingId);
                 _logger.LogError(
-                    "Transaction 2 thua câu cổng: booking {BookingId} không còn PENDING khi áp nhánh {Branch} (trạng thái hiện tại {Status}); " +
+                    "Transaction 2 thua câu cập nhật có điều kiện: booking {BookingId} không còn PENDING khi áp nhánh {Branch} (trạng thái hiện tại {Status}); " +
                     "không tạo Payment, không tăng lượt khuyến mãi, không phát sự kiện",
                     bookingId, decision.Branch, currentStatus);
                 throw new AppException(409,
@@ -771,40 +692,6 @@ namespace SmashCourt_BE.Services
 
             return paymentInfo.Url;
         }
-
-        /// <summary>
-        /// Nhánh a′ (D8, E2): đơn CONFIRMED không qua IPN nên gửi email xác nhận kèm link hủy ngay sau transaction 2, cùng mẫu với đơn tại
-        /// quầy. Lỗi gửi hoặc thiếu địa chỉ email chỉ log: đơn đã ghi, response vẫn 201.
-        /// </summary>
-        private async Task SendOnlineConfirmationEmailAsync(Booking? booking, Guid bookingId, string rawCancelToken)
-        {
-            try
-            {
-                if (booking == null)
-                {
-                    _logger.LogError("Không gửi được email xác nhận: không đọc được booking online {BookingId}", bookingId);
-                    return;
-                }
-
-                if (string.IsNullOrWhiteSpace(booking.Customer?.Email))
-                {
-                    _logger.LogWarning("Không gửi email xác nhận cho booking online {BookingId}: khách không có email", bookingId);
-                    return;
-                }
-
-                var frontendBaseUrl = _configuration["FrontendBaseUrl"] ?? "http://localhost:3000";
-                var emailModel = BookingEmailFactory.Build(booking, rawCancelToken, frontendBaseUrl);
-                await _emailService.SendBookingConfirmationAsync(emailModel);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to send confirmation email for online booking {BookingId}", bookingId);
-            }
-        }
-
-        // ────────────────────────────────────────────────────────────────────────────
-        // 2. CreateWalkInAsync
-        // ────────────────────────────────────────────────────────────────────────────
 
         /// <summary>
         /// Đặt sân trực tiếp tại quầy. Luôn tạo booking ở trạng thái CONFIRMED.
@@ -1208,7 +1095,7 @@ namespace SmashCourt_BE.Services
             }
 
             // Notify users interested in the freed slots (after commit, outside transaction)
-            await NotifySlotInterestedUsersAsync(booking);
+            await _slotInterestNotifier.NotifyReleasedSlotsAsync(booking);
 
             // Broadcast SignalR notification
             var customerName = booking.Customer?.FullName ?? booking.GuestName ?? "Khách";
@@ -1435,7 +1322,7 @@ namespace SmashCourt_BE.Services
             }
 
             // Notify users interested in the freed slots (sau commit, ngoài transaction)
-            await NotifySlotInterestedUsersAsync(booking);
+            await _slotInterestNotifier.NotifyReleasedSlotsAsync(booking);
 
             // Broadcast SignalR notification
             var customerName = booking.Customer?.FullName ?? booking.GuestName ?? "Khách";
@@ -1716,7 +1603,7 @@ namespace SmashCourt_BE.Services
             }
 
             // Notify users interested in the freed slots (sau commit, ngoài transaction)
-            await NotifySlotInterestedUsersAsync(booking);
+            await _slotInterestNotifier.NotifyReleasedSlotsAsync(booking);
 
             // Broadcast SignalR notification
             var customerName = booking.Customer?.FullName ?? booking.GuestName ?? "Khách";
@@ -2360,7 +2247,7 @@ namespace SmashCourt_BE.Services
         /// các bước ghi xuống DB, thay vì chỉ quanh lệnh Complete().
         /// </summary>
         // Hai đơn giữ cùng sân cùng giờ: 23P01 của exclusion constraint, hoặc 40P01 khi hai giao dịch chèn đồng thời và chờ chéo nhau ở
-        // bước kiểm exclusion (PostgreSQL hủy một bên; N-29). Lỗi tạm thời có thể bị execution strategy của Npgsql bọc ⇒ duyệt cả chuỗi.
+        // bước kiểm exclusion (PostgreSQL hủy một bên). Lỗi tạm thời có thể bị execution strategy của Npgsql bọc nên duyệt cả chuỗi.
         private static bool IsOverlapConstraintViolation(Exception ex)
         {
             for (var current = ex; current != null; current = current.InnerException)
@@ -2738,7 +2625,7 @@ namespace SmashCourt_BE.Services
                 // DTO đã validate các sân đều có chung thời gian (StartTime, EndTime)
                 var startTime = TimeOnly.FromTimeSpan(courts.First().Slot.StartTime);
 
-                // Giờ chơi là giờ tường VN: đổi sang UTC thật trước khi so với now (T-3: trộn Kind Unspecified làm Npgsql từ chối ghi)
+                // Giờ chơi là giờ tường VN: đổi sang UTC trước khi so với now (Kind Unspecified làm Npgsql từ chối ghi)
                 var token = CancelTokenHelper.Generate(
                     DateTimeHelper.ToUtcFromVietnam(booking.BookingDate, startTime),
                     DateTimeHelper.GetUtcNow());
@@ -2764,13 +2651,13 @@ namespace SmashCourt_BE.Services
             }
         }
 
-        // Lý do cần duyệt của TADSS chỉ hiện cho nhân viên (Q6); khách luôn nhận null
+        // Lý do cần duyệt chỉ hiện cho nhân viên; khách luôn nhận null
         private static bool IsStaffView(string userRole) => userRole != UserRole.CUSTOMER.ToString();
 
-        // Trường cọc, hạn duyệt, lý do duyệt, lý do hủy (DEPOSIT_APPROVAL_API 2.2) dùng chung cho hai hàm map
+        // Trường cọc, hạn duyệt, lý do cần duyệt, lý do hủy dùng chung cho hai hàm map
         private static BookingDto WithDepositFields(BookingDto dto, Booking b, bool includeApprovalReasons)
         {
-            var deposit = DepositFieldsHelper.FromInvoice(b.Status, b.Invoice);
+            var deposit = DepositFieldsMapper.FromInvoice(b.Status, b.Invoice);
             dto.DepositRate = deposit?.Rate;
             dto.DepositAmount = deposit?.Amount;
             dto.RemainingAmount = deposit?.RemainingAmount;
@@ -2979,7 +2866,7 @@ namespace SmashCourt_BE.Services
             }
 
             var invoiceCode = await _codeGeneratorService.GenerateInvoiceCodeAsync();
-            // Đơn online truyền hạn theo PaymentHoldHelper (7.5); đơn tại quầy giữ hằng 10 phút như trước
+            // Đơn online truyền hạn theo PaymentHoldPolicy (7.5); đơn tại quầy giữ hằng 10 phút như trước
             var expiresAt = holdWindow?.ExpiresAt ?? DateTime.UtcNow.AddMinutes(10);
 
             var invoice = await _invoiceRepo.CreateAsync(new Invoice
@@ -3051,8 +2938,7 @@ namespace SmashCourt_BE.Services
                 throw new AppException(400,
                     "Khuyến mãi không áp dụng cho ngày đặt sân này", ErrorCodes.BadRequest);
 
-            // Mọi khuyến mãi (kể cả không có điều kiện) đều qua PromotionEngineService để kiểm UsageLimit/UsagePerUserLimit.
-            // Trước đây khuyến mãi không điều kiện trả sớm ở đây nên bỏ qua giới hạn lượt (phát hiện ở 6A-2c Task 4, P-17…P-19).
+            // Mọi khuyến mãi (kể cả không có điều kiện) đều qua PromotionEngineService để kiểm UsageLimit/UsagePerUserLimit
 
             // Build promotion context cho condition validation
             // Use the first court for context (tất cả courts cùng branch do đã validate)
@@ -3181,7 +3067,7 @@ namespace SmashCourt_BE.Services
             return registeredAny;
         }
 
-        // P6-01: đơn online luôn có khách đăng nhập nên dùng email tài khoản; guestEmail trong DTO bị bỏ qua
+        // Đơn online luôn có khách đăng nhập nên dùng email tài khoản; guestEmail trong DTO bị bỏ qua
         private async Task<string?> ResolveSlotInterestEmailAsync(Guid customerId)
         {
             var user = await _userRepo.GetUserByIdAsync(customerId);
@@ -3204,63 +3090,6 @@ namespace SmashCourt_BE.Services
                 endTime);
 
             return existingLock != null;
-        }
-
-
-        /// <summary>
-        /// Gửi thông báo email cho tất cả người đã đăng ký interest cho các slot vừa được giải phóng.
-        /// Gọi SAU KHI commit transaction cancel — đảm bảo không gửi email khi DB chưa thực sự lưu.
-        /// Dùng pattern chung cho mọi nguồn hủy: Staff, Customer, Token.
-        /// </summary>
-        private async Task NotifySlotInterestedUsersAsync(Booking booking)
-        {
-            var frontendUrl = _configuration["FrontendBaseUrl"] ?? "https://smashcourt.vn";
-            var branchName = booking.Branch?.Name ?? string.Empty;
-
-            foreach (var bc in booking.BookingCourts)
-            {
-                var interested = await _slotInterestRepo.GetOverlappingSlotInterestsAsync(
-                    bc.CourtId, bc.Date, bc.StartTime, bc.EndTime);
-
-                if (!interested.Any()) continue;
-
-                _logger.LogInformation(
-                    "[SLOT_INTEREST] Notifying {Count} users for released slot | Court={CourtId} | Date={Date} | Slot={Start}-{End}",
-                    interested.Count, bc.CourtId, bc.Date, bc.StartTime, bc.EndTime);
-
-                var courtName = bc.Court?.Name ?? "Sân";
-                var bookingUrl = frontendUrl;
-
-                foreach (var interest in interested)
-                {
-                    try
-                    {
-                        await _emailService.SendSlotAvailableNotificationAsync(
-                            interest.Email,
-                            courtName,
-                            branchName,
-                            bc.Date,
-                            bc.StartTime,
-                            bc.EndTime,
-                            bookingUrl);
-                    }
-                    catch (Exception ex)
-                    {
-                        // Lỗi gửi email không block việc notify người khác
-                        _logger.LogError(ex,
-                            "[SLOT_INTEREST] Failed to send notification to {Email} for slot Court={CourtId}",
-                            interest.Email, bc.CourtId);
-                    }
-                }
-
-                // Xóa tất cả interests của slot này sau khi đã notify (one-shot)
-                var deletedCount = await _slotInterestRepo.DeleteOverlappingSlotInterestsAsync(
-                    bc.CourtId, bc.Date, bc.StartTime, bc.EndTime);
-
-                _logger.LogInformation(
-                    "[SLOT_INTEREST] Deleted {DeletedCount} slot interests after notification | Court={CourtId} | Date={Date} | Slot={Start}-{End}",
-                    deletedCount, bc.CourtId, bc.Date, bc.StartTime, bc.EndTime);
-            }
         }
     }
 }

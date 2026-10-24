@@ -1,7 +1,7 @@
 namespace SmashCourt_BE.Models.Enums
 {
     /// <summary>
-    /// Lý do hủy booking ("vì sao hủy"); CancelSourceEnum giữ nghĩa "ai hủy" (Phase 6, P6-04)
+    /// Lý do hủy booking ("vì sao hủy"); CancelSourceEnum giữ nghĩa "ai hủy"
     /// </summary>
     public enum BookingCancelReason
     {

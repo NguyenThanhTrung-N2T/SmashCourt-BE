@@ -182,7 +182,7 @@ public sealed class OnlineBookingConcurrencyTests(PostgreSqlIntegrationFixture d
         Assert.Empty(booking.Invoice?.Payments ?? []);
         var factory = await GetFactoryAsync();
         Assert.Contains(factory.Logs.Entries, e =>
-            e.Level == LogLevel.Error && e.Message.Contains("thua câu cổng") && e.Message.Contains(booking.Id.ToString()));
+            e.Level == LogLevel.Error && e.Message.Contains("thua câu cập nhật có điều kiện") && e.Message.Contains(booking.Id.ToString()));
     }
 
     [Theory]

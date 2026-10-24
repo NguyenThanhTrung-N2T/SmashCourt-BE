@@ -14,7 +14,7 @@ public class EmailService
     }
 
     // Hàm gửi email chung
-    // protected virtual: host test HTTP (6A-2a) ghi lại thư thay vì gửi qua SMTP thật (không có TLS giả), mọi loại email đều đi qua đây
+    // protected virtual: host test HTTP ghi lại thư thay vì gửi qua SMTP thật; mọi loại email đều đi qua đây
     protected virtual async Task SendAsync(string toEmail, string subject, string htmlBody)
     {
         var host = _config["Smtp:Host"] ?? throw new InvalidOperationException("Smtp:Host chưa cấu hình");
@@ -138,6 +138,44 @@ public class EmailService
         // Xử lý conditional rendering cho discounts
         body = ProcessConditionalSection(body, "LoyaltyDiscount", model.LoyaltyDiscount);
         body = ProcessConditionalSection(body, "PromotionDiscount", model.PromotionDiscount);
+
+        await SendAsync(model.Email, subject, body);
+    }
+
+    // Báo khách đơn online đang chờ Quản lý duyệt mức cọc
+    public Task SendBookingPendingApprovalAsync(DepositApprovalEmailModel model) =>
+        SendApprovalEmailAsync("BookingPendingApproval.html", $"⏳ Đơn {model.BookingCode} đang chờ duyệt - SmashCourt", model);
+
+    // Báo khách đơn đã được duyệt: số cọc, phần còn lại, hạn trả cọc; dẫn tới lịch sử đặt sân, không có link VNPay
+    public Task SendDepositApprovedAsync(DepositApprovalEmailModel model) =>
+        SendApprovalEmailAsync("DepositApproved.html", $"✅ Đơn {model.BookingCode} đã được duyệt, vui lòng thanh toán cọc - SmashCourt", model);
+
+    // Báo khách đơn không được nhận; không ghi lý do của Quản lý (ghi chú nội bộ)
+    public Task SendApprovalRejectedAsync(DepositApprovalEmailModel model) =>
+        SendApprovalEmailAsync("ApprovalRejected.html", $"Đơn {model.BookingCode} không được nhận - SmashCourt", model);
+
+    private async Task SendApprovalEmailAsync(string templateFile, string subject, DepositApprovalEmailModel model)
+    {
+        var templatePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Templates", templateFile);
+        if (!File.Exists(templatePath))
+            throw new FileNotFoundException($"Email template not found: {templatePath}");
+
+        var body = (await File.ReadAllTextAsync(templatePath))
+            .Replace("{{Name}}", WebUtility.HtmlEncode(model.Name))
+            .Replace("{{BookingCode}}", model.BookingCode)
+            .Replace("{{BranchName}}", WebUtility.HtmlEncode(model.BranchName))
+            .Replace("{{BranchAddress}}", WebUtility.HtmlEncode(model.BranchAddress))
+            .Replace("{{BranchPhone}}", WebUtility.HtmlEncode(model.BranchPhone))
+            .Replace("{{Courts}}", WebUtility.HtmlEncode(string.Join(", ", model.CourtNames)))
+            .Replace("{{Date}}", model.BookingDate)
+            .Replace("{{Time}}", $"{model.StartTime} – {model.EndTime}")
+            .Replace("{{TotalAmount}}", model.TotalAmount)
+            .Replace("{{DepositAmount}}", model.DepositAmount ?? "")
+            .Replace("{{RemainingAmount}}", model.RemainingAmount ?? "")
+            .Replace("{{PayBefore}}", model.PayBefore ?? "")
+            .Replace("{{ApprovalExpiresAt}}", model.ApprovalExpiresAt ?? "")
+            .Replace("{{BookingsUrl}}", model.BookingsUrl)
+            .Replace("{{Year}}", DateTime.UtcNow.Year.ToString());
 
         await SendAsync(model.Email, subject, body);
     }

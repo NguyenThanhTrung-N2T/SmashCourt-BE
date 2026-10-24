@@ -19,6 +19,9 @@ public sealed class RecordingEmailService(IConfiguration configuration) : EmailS
     /// <summary>Đặt true để mô phỏng SMTP hỏng: BE phải bắt lỗi và không làm hỏng đơn.</summary>
     public bool FailOnSend { get; set; }
 
+    /// <summary>Chỉ hỏng khi gửi tới các địa chỉ này (kiểm lỗi một người nhận không chặn người khác).</summary>
+    public HashSet<string> FailFor { get; } = new(StringComparer.OrdinalIgnoreCase);
+
     public IReadOnlyList<SentEmail> To(string address) =>
         _sent.Where(e => string.Equals(e.To, address, StringComparison.OrdinalIgnoreCase)).ToList();
 
@@ -26,7 +29,7 @@ public sealed class RecordingEmailService(IConfiguration configuration) : EmailS
 
     protected override Task SendAsync(string toEmail, string subject, string htmlBody)
     {
-        if (FailOnSend)
+        if (FailOnSend || FailFor.Contains(toEmail))
             return Task.FromException(new InvalidOperationException("Mô phỏng SMTP hỏng"));
 
         _sent.Enqueue(new SentEmail(toEmail, subject, htmlBody));

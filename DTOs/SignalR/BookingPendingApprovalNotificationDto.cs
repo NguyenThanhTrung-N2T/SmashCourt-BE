@@ -1,7 +1,7 @@
 namespace SmashCourt_BE.DTOs.SignalR;
 
 /// <summary>
-/// Payload của sự kiện <c>BookingPendingApproval</c> (DEPOSIT_APPROVAL_API 6): đơn online mới cần Manager duyệt mức cọc.
+/// Payload của sự kiện <c>BookingPendingApproval</c>: đơn online mới cần Quản lý duyệt mức cọc.
 /// Gửi cho nhân viên chi nhánh và OWNER; không có số tiền, lý do cần duyệt hay trường nội bộ của TADSS.
 /// </summary>
 public class BookingPendingApprovalNotificationDto

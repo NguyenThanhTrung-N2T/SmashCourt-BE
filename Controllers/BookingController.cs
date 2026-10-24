@@ -16,10 +16,12 @@ namespace SmashCourt_BE.Controllers
     public class BookingController : ControllerBase
     {
         private readonly IBookingService _service;
+        private readonly IBookingApprovalService _approvalService;
 
-        public BookingController(IBookingService service)
+        public BookingController(IBookingService service, IBookingApprovalService approvalService)
         {
             _service = service;
+            _approvalService = approvalService;
         }
         [HttpGet("{bookingId:guid}")]
         [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
@@ -196,7 +198,7 @@ namespace SmashCourt_BE.Controllers
 
 
         /// <summary>
-        /// Đặt sân online - chỉ khách hàng đã đăng nhập (P6-01); các trường guest* trong body được nhận nhưng bỏ qua
+        /// Đặt sân online - chỉ khách hàng đã đăng nhập; các trường guest* trong body được nhận nhưng bỏ qua
         /// </summary>
         [HttpPost("online")]
         [Authorize(Policy = AuthorizationPolicies.CustomerOnly)]
@@ -206,7 +208,7 @@ namespace SmashCourt_BE.Controllers
             var customerId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
 
             var result = await _service.CreateOnlineAsync(dto, customerId);
-            // Câu thông báo theo trạng thái cuối (DEPOSIT_APPROVAL_API 3.1); nhánh bị từ chối đã ném 400 BOOKING_REJECTED ở service
+            // Câu thông báo theo trạng thái cuối; đơn bị từ chối đã ném 400 BOOKING_REJECTED ở service
             var message = result.Status switch
             {
                 nameof(BookingStatus.PENDING_APPROVAL) => "Đơn đặt sân đang chờ quản lý chi nhánh duyệt mức cọc",
@@ -214,6 +216,51 @@ namespace SmashCourt_BE.Controllers
                 _ => "Đặt sân online thành công"
             };
             return StatusCode(201, ApiResponse<OnlineBookingResponse>.Ok(result, message));
+        }
+
+
+        /// <summary>
+        /// Hàng chờ duyệt cọc: Manager thấy chi nhánh được gán, OWNER thấy mọi chi nhánh hoặc lọc một
+        /// </summary>
+        [HttpGet("pending-approval")]
+        [Authorize(Policy = AuthorizationPolicies.OwnerOrManager)]
+        public async Task<IActionResult> GetPendingApprovals([FromQuery] PendingApprovalListQuery query)
+        {
+            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var role = User.FindFirstValue(ClaimTypes.Role)!;
+            var result = await _approvalService.GetPendingApprovalsAsync(query, userId, role);
+            return Ok(ApiResponse<PagedResult<PendingApprovalBookingDto>>.Ok(result, "Lấy danh sách đơn chờ duyệt thành công"));
+        }
+
+
+        /// <summary>
+        /// Duyệt đơn chờ duyệt kèm tỷ lệ cọc; người duyệt lấy từ JWT, không lấy từ body
+        /// </summary>
+        [HttpPost("{bookingId:guid}/approve")]
+        [Authorize(Policy = AuthorizationPolicies.OwnerOrManager)]
+        public async Task<IActionResult> Approve(Guid bookingId, [FromBody] ApproveBookingDto dto)
+        {
+            var actorId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var role = User.FindFirstValue(ClaimTypes.Role)!;
+            var result = await _approvalService.ApproveAsync(bookingId, dto, actorId, role);
+            var message = result.Status == nameof(BookingStatus.CONFIRMED)
+                ? "Duyệt đơn thành công, đơn đã xác nhận, thu tiền tại quầy"
+                : "Duyệt đơn thành công, đã thông báo khách thanh toán cọc";
+            return Ok(ApiResponse<BookingApprovalResultDto>.Ok(result, message));
+        }
+
+
+        /// <summary>
+        /// Từ chối đơn chờ duyệt: hủy đơn, nhả sân, không hoàn tiền
+        /// </summary>
+        [HttpPost("{bookingId:guid}/reject")]
+        [Authorize(Policy = AuthorizationPolicies.OwnerOrManager)]
+        public async Task<IActionResult> Reject(Guid bookingId, [FromBody] RejectBookingDto dto)
+        {
+            var actorId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var role = User.FindFirstValue(ClaimTypes.Role)!;
+            var result = await _approvalService.RejectAsync(bookingId, dto, actorId, role);
+            return Ok(ApiResponse<BookingApprovalResultDto>.Ok(result, "Đã từ chối đơn và giải phóng sân"));
         }
 
 

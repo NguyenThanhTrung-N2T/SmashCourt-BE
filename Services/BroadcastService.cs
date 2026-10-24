@@ -144,6 +144,26 @@ public class BroadcastService : IBroadcastService
     public Task BroadcastPendingApprovalQueueChangedAsync(PendingApprovalQueueChangedNotificationDto notification) =>
         SendToStaffAsync(SignalREvents.PendingApprovalQueueChanged, notification, notification.BranchId, notification.BookingId);
 
+    /// <inheritdoc/>
+    public async Task BroadcastBookingApprovalResolvedAsync(BookingApprovalResolvedNotificationDto notification, Guid? customerId)
+    {
+        try
+        {
+            var tasks = StaffGroupTasks(SignalREvents.BookingApprovalResolved, notification, notification.BranchId).ToList();
+            if (customerId.HasValue)
+                tasks.Add(_hubContext.Clients.Group($"user_{customerId.Value}").SendAsync(SignalREvents.BookingApprovalResolved, notification));
+
+            await Task.WhenAll(tasks);
+
+            _logger.LogDebug("SignalR broadcast: Event={Event}, BookingId={BookingId}", SignalREvents.BookingApprovalResolved, notification.BookingId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "SignalR broadcast failed: Event={Event}, BookingId={BookingId}",
+                SignalREvents.BookingApprovalResolved, notification.BookingId);
+        }
+    }
+
     // ── Private Helpers ──────────────────────────────────────────────────────
 
     // Nhóm vận hành: nhân viên + Manager của chi nhánh (branch_{id}) và OWNER (role_OWNER)

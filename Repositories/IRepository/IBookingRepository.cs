@@ -1,3 +1,4 @@
+using SmashCourt_BE.Models.Deposit;
 using SmashCourt_BE.Common;
 using SmashCourt_BE.DTOs.Booking;
 using SmashCourt_BE.Models.Entities;
@@ -106,21 +107,11 @@ namespace SmashCourt_BE.Repositories.IRepository
         Task<int> GetCompletedBookingCountAsync(Guid customerId);
         Task SetActualEndPlayTimeAsync(Guid bookingId, TimeOnly actualEnd);
 
-        /// <summary>
-        /// Đọc một lần mọi dữ liệu của booking để dựng request quyết định cọc TADSS (chỉ đọc).
-        /// Trả null khi booking không tồn tại, không có khách hoặc chưa có hóa đơn (không đủ dữ liệu dựng request).
-        /// </summary>
+        // Đọc một lần dữ liệu booking để dựng request quyết định cọc; null khi thiếu khách hoặc hóa đơn
         Task<BookingDecisionSnapshot?> GetDecisionSnapshotAsync(Guid bookingId, CancellationToken cancellationToken = default);
 
-        /// <summary>
-        /// Lõi hủy dùng chung (P6-14): một lệnh UPDATE có điều kiện trạng thái, ghi đủ status, cancelled_at,
-        /// cancel_source, cancel_reason, cancelled_by, updated_at. Không đụng hóa đơn, Payment, khuyến mãi, sân.
-        /// Bỏ qua change tracker: entity đang được track phải đọc lại sau khi gọi.
-        /// </summary>
-        /// <param name="expectedStatuses">Trạng thái nguồn được phép (không rỗng)</param>
-        /// <param name="newStatus">Một trong các trạng thái hủy</param>
-        /// <param name="cancelledAtUtc">Mốc hủy, bắt buộc Kind = Utc</param>
-        /// <returns>1 = đã hủy, 0 = booking không tồn tại hoặc không còn ở trạng thái nguồn</returns>
+        // Lõi hủy dùng chung: một lệnh UPDATE có điều kiện trạng thái ghi đủ các cột hủy; không đụng hóa đơn, Payment, khuyến mãi, sân.
+        // Trả 1 = đã hủy, 0 = không còn ở trạng thái nguồn
         Task<int> CancelWithStatusCheckAsync(
             Guid bookingId,
             IReadOnlyCollection<BookingStatus> expectedStatuses,
@@ -130,33 +121,42 @@ namespace SmashCourt_BE.Repositories.IRepository
             Guid? cancelledBy,
             DateTime cancelledAtUtc);
 
-        // ── Transaction 2 của đặt sân online (P6-11, P6-14, spec 7.6) ──────────────────────────────────
-        // Mỗi hàm mở đầu bằng câu cổng có điều kiện status = PENDING trên booking; thua cổng ⇒ trả false và
-        // không ghi gì thêm. Thắng ⇒ ghi tiếp hóa đơn, slot lock, sân của chính đơn đó. Phải gọi trong
-        // transaction của caller (TransactionScope) để lỗi giữa chừng rollback toàn bộ; không có transaction thì ném InvalidOperationException
-        // trước khi ghi. Không đụng hold_deadline.
-        // Lưu ý nhánh a/d: câu cổng không đổi trạng thái (PENDING vẫn PENDING) nên gọi lần hai vẫn "thắng" và ghi đè mức cọc. Chấp nhận được vì
-        // transaction 2 chỉ chạy một lần mỗi request; caller không được gọi lại hàm này để "thử lại" cho cùng một đơn.
-        // Khuyến mãi, Payment, VNPay do service xử lý sau khi hàm trả true.
+        // ── Ghi kết quả quyết định cọc ─────────────────────────────────────────────────────────────────
+        // Mỗi hàm mở đầu bằng một câu cập nhật có điều kiện trạng thái (thua ⇒ trả false, không ghi gì thêm), rồi mới ghi hóa đơn,
+        // slot lock, sân của đơn. Bắt buộc chạy trong transaction của caller; mọi mốc giờ là UTC.
 
-        /// <summary>Nhánh a (TADSS) và d (dự phòng 100 %): ghi mức cọc vào hóa đơn; đơn giữ PENDING và giữ slot lock.</summary>
+        // Đặt online, cọc thu qua VNPay: ghi mức cọc vào hóa đơn, đơn giữ PENDING. Trạng thái không đổi nên caller không được gọi lại
         Task<bool> ApplyPaymentRequiredAsync(
             Guid bookingId, Guid? tadssDecisionId, decimal depositRate, decimal depositAmount, DepositSource depositSource, DateTime nowUtc);
 
-        /// <summary>
-        /// Nhánh a′: PENDING → CONFIRMED kèm token hủy (D8, cùng câu cổng), cọc áp dụng 0, hóa đơn POSTPAID không hạn, xóa slot lock.
-        /// Token sinh bằng <c>CancelTokenHelper.Generate</c>; hash rỗng hoặc hạn khác Utc ⇒ ném trước khi ghi.
-        /// </summary>
+        // Đặt online, thu tại quầy: PENDING → CONFIRMED kèm token hủy, cọc 0, hóa đơn POSTPAID không hạn, xóa slot lock
         Task<bool> ConfirmWithoutOnlinePaymentAsync(
             Guid bookingId, Guid? tadssDecisionId, DepositSource depositSource, string cancelTokenHash, DateTime cancelTokenExpiresAtUtc,
             DateTime nowUtc);
 
-        /// <summary>Nhánh b: PENDING → PENDING_APPROVAL, hóa đơn bỏ hạn và cọc, slot lock gia hạn tới hạn duyệt.</summary>
+        // Đặt online cần duyệt: PENDING → PENDING_APPROVAL, hóa đơn bỏ hạn và cọc, slot lock giữ tới hạn duyệt
         Task<bool> HoldForApprovalAsync(
             Guid bookingId, Guid tadssDecisionId, DateTime approvalExpiresAtUtc, string approvalReasonCode,
             IReadOnlyCollection<string> approvalReasons, DateTime nowUtc);
 
-        /// <summary>Nhánh c: hủy POLICY_REJECTED bằng lõi hủy, ghi decision id, nhả sân, hóa đơn EXPIRED, xóa slot lock.</summary>
+        // TADSS từ chối: hủy POLICY_REJECTED, nhả sân, hóa đơn EXPIRED
         Task<bool> RejectByPolicyAsync(Guid bookingId, Guid tadssDecisionId, DateTime nowUtc);
+
+        // Hàng chờ duyệt: PENDING_APPROVAL còn hạn (branchId null = mọi chi nhánh), đơn sắp hết hạn lên đầu
+        Task<PagedResult<Booking>> GetPendingApprovalsAsync(Guid? branchId, DateTime nowUtc, int page, int pageSize);
+
+        // Ba hàm dưới chỉ thắng khi đơn còn PENDING_APPROVAL và còn hạn duyệt, kể cả khi job hết hạn duyệt chưa chạy.
+        // resolvedBy null khi người duyệt không phải user của BE
+
+        // Duyệt cọc > 0: → PENDING, cọc nguồn MANAGER, hạn thanh toán và hạn giữ chỗ mới theo window, không tạo Payment
+        Task<bool> ApproveWithDepositAsync(
+            Guid bookingId, Guid? resolvedBy, string note, decimal depositRate, decimal depositAmount, PaymentHoldWindow window, DateTime nowUtc);
+
+        // Duyệt 0 %: → CONFIRMED kèm token hủy, cọc 0 nguồn MANAGER, POSTPAID, xóa slot lock
+        Task<bool> ApproveWithoutDepositAsync(
+            Guid bookingId, Guid? resolvedBy, string note, string cancelTokenHash, DateTime cancelTokenExpiresAtUtc, DateTime nowUtc);
+
+        // Từ chối: hủy STAFF / APPROVAL_REJECTED, nhả sân, hóa đơn EXPIRED; đơn chờ duyệt chưa có tiền nên không hoàn tiền
+        Task<bool> RejectByManagerAsync(Guid bookingId, Guid? resolvedBy, string note, DateTime nowUtc);
     }
 }

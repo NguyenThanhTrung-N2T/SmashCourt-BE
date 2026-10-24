@@ -30,6 +30,12 @@ public sealed class TadssCallResult<T>
     /// <summary>Thời gian nên chờ theo <c>Retry-After</c> (429, 503).</summary>
     public TimeSpan? RetryAfter { get; private init; }
 
+    /// <summary>
+    /// Tên các trường bị lỗi trong <c>errors</c> của RFC 7807 (đường dẫn JSON như <c>deposit.rate</c>, <c>reason</c>); rỗng nếu không có.
+    /// Duyệt cọc dùng để tách lỗi tỷ lệ do Quản lý nhập (400) với lỗi do BE gửi sai (500).
+    /// </summary>
+    public IReadOnlyList<string> ErrorFields { get; private init; } = [];
+
     public static TadssCallResult<T> Success(T value, int httpStatus, string correlationId) => new()
     {
         CorrelationId = correlationId,
@@ -43,13 +49,15 @@ public sealed class TadssCallResult<T>
         string correlationId,
         int? httpStatus = null,
         string? errorCode = null,
-        TimeSpan? retryAfter = null) => new()
+        TimeSpan? retryAfter = null,
+        IReadOnlyList<string>? errorFields = null) => new()
     {
         CorrelationId = correlationId,
         IsSuccess = false,
         FailureKind = kind,
         HttpStatus = httpStatus,
         ErrorCode = errorCode,
-        RetryAfter = retryAfter
+        RetryAfter = retryAfter,
+        ErrorFields = errorFields ?? []
     };
 }

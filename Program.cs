@@ -174,15 +174,18 @@ builder.Services.AddHttpClient<IFastApiClient, FastApiClient>((serviceProvider, 
     client.Timeout = Timeout.InfiniteTimeSpan;
 });
 
-// Đăng ký TADSS và cấu hình giữ chỗ (Phase 6): kiểm khi khởi động, đọc qua IOptionsMonitor
+// Đăng ký TADSS và cấu hình giữ chỗ: kiểm khi khởi động, đọc qua IOptionsMonitor
 builder.Services.AddOptions<BookingPaymentSettings>()
     .Bind(builder.Configuration.GetSection(BookingPaymentSettings.SectionName))
     .ValidateOnStart();
 builder.Services.AddSingleton<IValidateOptions<BookingPaymentSettings>, BookingPaymentSettingsValidator>();
-// Mã mới của Phase 6 lấy "bây giờ" qua TimeProvider để test được bằng FakeTimeProvider
+// Mã mới lấy "bây giờ" qua TimeProvider để test được bằng FakeTimeProvider
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddTadssIntegration(builder.Configuration);
 builder.Services.AddScoped<IBookingDepositService, BookingDepositService>();
+builder.Services.AddScoped<ISlotInterestNotificationService, SlotInterestNotificationService>();
+builder.Services.AddScoped<IBookingApprovalService, BookingApprovalService>();
+builder.Services.AddScoped<IBookingNotificationService, BookingNotificationService>();
 
 builder.Services.AddScoped<EmailService>();
 builder.Services.AddScoped<OtpService>();
@@ -249,7 +252,7 @@ builder.Services.AddCors(options =>
     });
 });
 
-// Rate limiting đếm theo từng người (user hoặc IP), giới hạn cấu hình ở section RateLimiting (B1/D9)
+// Rate limiting đếm theo từng người (user hoặc IP), giới hạn cấu hình ở section RateLimiting
 builder.Services.AddSmashCourtRateLimiting(builder.Configuration);
 
 // Swagger
@@ -418,7 +421,7 @@ app.UseMiddleware<ExceptionMiddleware>();
 JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
 // Xác thực và phân quyền
 app.UseAuthentication();
-// Rate limiting theo policy của controller/action; đặt SAU xác thực để đếm theo từng người đã đăng nhập (B1/D9)
+// Rate limiting theo policy của controller/action; đặt SAU xác thực để đếm theo từng người đã đăng nhập
 app.UseRateLimiter();
 // Middleware kiểm tra user status (LOCKED/INACTIVE) - chặn ngay lập tức
 app.UseMiddleware<UserStatusMiddleware>();

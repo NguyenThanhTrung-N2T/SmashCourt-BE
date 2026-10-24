@@ -1,3 +1,5 @@
+using SmashCourt_BE.Models.Deposit;
+using SmashCourt_BE.Services.Deposit;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using SmashCourt_BE.Configurations;
@@ -48,8 +50,8 @@ namespace SmashCourt_BE.Services
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    // F2: transaction 1 đã commit; lỗi khi dựng request (snapshot, DB, dữ liệu) là sự cố nên cọc 100 % như TADSS lỗi,
-                    // không ném để đơn khỏi kẹt PENDING không cọc. Hủy chủ động vẫn ném.
+                    // Đơn đã ghi: lỗi khi dựng request là sự cố nên cọc 100 % như TADSS lỗi, không ném để đơn khỏi kẹt PENDING không cọc.
+                    // Hủy chủ động vẫn ném.
                     evaluateError = ex;
                 }
             }

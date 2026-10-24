@@ -1,3 +1,4 @@
+using SmashCourt_BE.Models.Deposit;
 using SmashCourt_BE.Common;
 using SmashCourt_BE.Data;
 using SmashCourt_BE.DTOs.Booking;
@@ -938,7 +939,7 @@ namespace SmashCourt_BE.Repositories
             EnsureUtc(cancelTokenExpiresAtUtc, nameof(cancelTokenExpiresAtUtc));
             EnsureUtc(nowUtc, nameof(nowUtc));
 
-            // Đơn CONFIRMED không qua IPN nên token hủy (D8) ghi ngay trong câu cổng: thua cổng thì không có token
+            // Đơn CONFIRMED không qua IPN nên token hủy ghi ngay trong câu cập nhật: thua thì không có token
             var won = await _context.Bookings
                 .Where(b => b.Id == bookingId && b.Status == BookingStatus.PENDING)
                 .ExecuteUpdateAsync(s => s
@@ -950,7 +951,7 @@ namespace SmashCourt_BE.Repositories
             if (!won)
                 return false;
 
-            // Cọc áp dụng 0, thu tại quầy (D3): POSTPAID, không còn hạn thanh toán online
+            // Cọc 0, thu tại quầy: POSTPAID, không còn hạn thanh toán online
             EnsureInvoiceUpdated(bookingId, await _context.Invoices
                 .Where(i => i.BookingId == bookingId)
                 .ExecuteUpdateAsync(s => s
@@ -987,7 +988,7 @@ namespace SmashCourt_BE.Repositories
             if (!won)
                 return false;
 
-            // Chưa có mức cọc và chưa có hạn thanh toán: Manager duyệt xong mới đặt (6A-3)
+            // Chưa có mức cọc và hạn thanh toán: Quản lý duyệt xong mới đặt
             EnsureInvoiceUpdated(bookingId, await _context.Invoices
                 .Where(i => i.BookingId == bookingId)
                 .ExecuteUpdateAsync(s => s
@@ -1012,7 +1013,7 @@ namespace SmashCourt_BE.Repositories
             if (!won)
                 return false;
 
-            // Lõi hủy không biết TADSS nên decision id ghi bằng lệnh riêng; dòng đã bị khóa bởi câu cổng
+            // Lõi hủy không biết TADSS nên decision id ghi bằng lệnh riêng; dòng đã bị khóa bởi lệnh hủy
             await _context.Bookings
                 .Where(b => b.Id == bookingId)
                 .ExecuteUpdateAsync(s => s.SetProperty(b => b.TadssDecisionId, (Guid?)tadssDecisionId));
@@ -1028,12 +1029,152 @@ namespace SmashCourt_BE.Repositories
             return true;
         }
 
-        // Các hàm theo nhánh ghi nhiều bảng sau câu cổng; không có transaction thì lỗi giữa chừng để lại đơn nửa vời. Chặn từ đầu, trước khi ghi gì.
-        // EF BeginTransaction (CurrentTransaction) hoặc TransactionScope của service (Transaction.Current) đều được chấp nhận.
+        public async Task<PagedResult<Booking>> GetPendingApprovalsAsync(Guid? branchId, DateTime nowUtc, int page, int pageSize)
+        {
+            EnsureUtc(nowUtc, nameof(nowUtc));
+
+            var q = _context.Bookings
+                .AsNoTracking()
+                .Where(b => b.Status == BookingStatus.PENDING_APPROVAL && b.ApprovalExpiresAt > nowUtc);
+            if (branchId.HasValue)
+                q = q.Where(b => b.BranchId == branchId.Value);
+
+            var totalItems = await q.CountAsync();
+            // Đơn sắp hết hạn lên đầu; hòa thì theo giờ tạo rồi id để phân trang ổn định
+            var items = await q
+                .OrderBy(b => b.ApprovalExpiresAt)
+                .ThenBy(b => b.CreatedAt)
+                .ThenBy(b => b.Id)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Include(b => b.Branch)
+                .Include(b => b.Customer)
+                    .ThenInclude(c => c!.CustomerLoyalty)
+                        .ThenInclude(l => l!.Tier)
+                .Include(b => b.BookingCourts)
+                    .ThenInclude(bc => bc.Court)
+                .Include(b => b.Invoice)
+                .AsSplitQuery()
+                .ToListAsync();
+
+            return new PagedResult<Booking> { Items = items, TotalItems = totalItems, Page = page, PageSize = pageSize };
+        }
+
+        public async Task<bool> ApproveWithDepositAsync(
+            Guid bookingId, Guid? resolvedBy, string note, decimal depositRate, decimal depositAmount, PaymentHoldWindow window, DateTime nowUtc)
+        {
+            EnsureInTransaction();
+            EnsureUtc(nowUtc, nameof(nowUtc));
+            EnsureUtc(window.ExpiresAt, nameof(window));
+            EnsureUtc(window.HoldDeadline, nameof(window));
+
+            var won = await AwaitingApproval(bookingId, nowUtc)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(b => b.Status, BookingStatus.PENDING)
+                    .SetProperty(b => b.ApprovalResult, (ApprovalResult?)ApprovalResult.APPROVED)
+                    .SetProperty(b => b.ApprovalResolvedBy, resolvedBy)
+                    .SetProperty(b => b.ApprovalResolvedAt, (DateTime?)nowUtc)
+                    .SetProperty(b => b.ApprovalResolutionNote, note)
+                    .SetProperty(b => b.UpdatedAt, nowUtc)) == 1;
+            if (!won)
+                return false;
+
+            // Hạn giữ chỗ tính lại từ lúc duyệt: lúc đặt giữ hold_deadline cũ nên ở đây phải ghi đè
+            EnsureInvoiceUpdated(bookingId, await _context.Invoices
+                .Where(i => i.BookingId == bookingId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(i => i.DepositRate, (decimal?)depositRate)
+                    .SetProperty(i => i.DepositAmount, (decimal?)depositAmount)
+                    .SetProperty(i => i.DepositSource, (DepositSource?)DepositSource.MANAGER)
+                    .SetProperty(i => i.ExpiresAt, (DateTime?)window.ExpiresAt)
+                    .SetProperty(i => i.HoldDeadline, (DateTime?)window.HoldDeadline)
+                    .SetProperty(i => i.UpdatedAt, nowUtc)));
+
+            await _context.SlotLocks
+                .Where(sl => sl.BookingId == bookingId)
+                .ExecuteUpdateAsync(s => s.SetProperty(sl => sl.ExpiresAt, window.ExpiresAt));
+            return true;
+        }
+
+        public async Task<bool> ApproveWithoutDepositAsync(
+            Guid bookingId, Guid? resolvedBy, string note, string cancelTokenHash, DateTime cancelTokenExpiresAtUtc, DateTime nowUtc)
+        {
+            EnsureInTransaction();
+            ArgumentException.ThrowIfNullOrWhiteSpace(cancelTokenHash);
+            EnsureUtc(cancelTokenExpiresAtUtc, nameof(cancelTokenExpiresAtUtc));
+            EnsureUtc(nowUtc, nameof(nowUtc));
+
+            // Đơn CONFIRMED không qua IPN nên token hủy ghi trong chính câu cập nhật
+            var won = await AwaitingApproval(bookingId, nowUtc)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(b => b.Status, BookingStatus.CONFIRMED)
+                    .SetProperty(b => b.ApprovalResult, (ApprovalResult?)ApprovalResult.APPROVED)
+                    .SetProperty(b => b.ApprovalResolvedBy, resolvedBy)
+                    .SetProperty(b => b.ApprovalResolvedAt, (DateTime?)nowUtc)
+                    .SetProperty(b => b.ApprovalResolutionNote, note)
+                    .SetProperty(b => b.CancelTokenHash, cancelTokenHash)
+                    .SetProperty(b => b.CancelTokenExpiresAt, (DateTime?)cancelTokenExpiresAtUtc)
+                    .SetProperty(b => b.UpdatedAt, nowUtc)) == 1;
+            if (!won)
+                return false;
+
+            // Miễn cọc, thu toàn bộ tại quầy: POSTPAID, không còn hạn thanh toán online
+            EnsureInvoiceUpdated(bookingId, await _context.Invoices
+                .Where(i => i.BookingId == bookingId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(i => i.DepositRate, (decimal?)0m)
+                    .SetProperty(i => i.DepositAmount, (decimal?)0m)
+                    .SetProperty(i => i.DepositSource, (DepositSource?)DepositSource.MANAGER)
+                    .SetProperty(i => i.PaymentTiming, PaymentTiming.POSTPAID)
+                    .SetProperty(i => i.ExpiresAt, (DateTime?)null)
+                    .SetProperty(i => i.UpdatedAt, nowUtc)));
+
+            await _context.SlotLocks.Where(sl => sl.BookingId == bookingId).ExecuteDeleteAsync();
+            return true;
+        }
+
+        public async Task<bool> RejectByManagerAsync(Guid bookingId, Guid? resolvedBy, string note, DateTime nowUtc)
+        {
+            EnsureInTransaction();
+            EnsureUtc(nowUtc, nameof(nowUtc));
+
+            // Điều kiện "còn hạn duyệt" nằm ở câu này vì lõi hủy chỉ xét trạng thái; thắng thì dòng đã bị khóa cho lệnh hủy
+            var won = await AwaitingApproval(bookingId, nowUtc)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(b => b.ApprovalResult, (ApprovalResult?)ApprovalResult.REJECTED)
+                    .SetProperty(b => b.ApprovalResolvedBy, resolvedBy)
+                    .SetProperty(b => b.ApprovalResolvedAt, (DateTime?)nowUtc)
+                    .SetProperty(b => b.ApprovalResolutionNote, note)) == 1;
+            if (!won)
+                return false;
+
+            var cancelled = await CancelWithStatusCheckAsync(
+                bookingId, [BookingStatus.PENDING_APPROVAL], BookingStatus.CANCELLED,
+                CancelSourceEnum.STAFF, BookingCancelReason.APPROVAL_REJECTED, resolvedBy, nowUtc);
+            if (cancelled != 1)
+                throw new InvalidOperationException($"Booking {bookingId} thắng câu cập nhật từ chối nhưng lõi hủy cập nhật {cancelled} dòng.");
+
+            // Đơn chờ duyệt chưa có Payment, chưa tăng lượt khuyến mãi, chưa đổi trạng thái sân: chỉ cần nhả sân và hóa đơn EXPIRED
+            await UpdateCourtActiveStatusAsync(bookingId, false);
+            await _context.SlotLocks.Where(sl => sl.BookingId == bookingId).ExecuteDeleteAsync();
+            EnsureInvoiceUpdated(bookingId, await _context.Invoices
+                .Where(i => i.BookingId == bookingId && i.PaymentStatus == InvoicePaymentStatus.UNPAID)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(i => i.PaymentStatus, InvoicePaymentStatus.EXPIRED)
+                    .SetProperty(i => i.UpdatedAt, nowUtc)));
+            return true;
+        }
+
+        private IQueryable<Booking> AwaitingApproval(Guid bookingId, DateTime nowUtc) =>
+            _context.Bookings.Where(b =>
+                b.Id == bookingId && b.Status == BookingStatus.PENDING_APPROVAL && b.ApprovalExpiresAt > nowUtc);
+
+        // Các hàm ghi nhiều bảng sau câu cập nhật có điều kiện: không có transaction thì lỗi giữa chừng để lại đơn nửa vời.
+        // Chấp nhận cả BeginTransaction của EF lẫn TransactionScope của service.
         private void EnsureInTransaction()
         {
             if (_context.Database.CurrentTransaction == null && Transaction.Current == null)
-                throw new InvalidOperationException("Hàm này ghi nhiều bảng sau câu cổng nên phải chạy trong transaction của caller (TransactionScope).");
+                throw new InvalidOperationException("Hàm này ghi nhiều bảng nên phải chạy trong transaction của caller (TransactionScope).");
         }
 
         private static void EnsureUtc(DateTime value, string paramName)
@@ -1042,7 +1183,7 @@ namespace SmashCourt_BE.Repositories
                 throw new ArgumentException("Mốc thời gian phải có Kind = Utc (spec 7.14).", paramName);
         }
 
-        // Thắng câu cổng mà hóa đơn không cập nhật được là dữ liệu hỏng (transaction 1 luôn tạo hóa đơn): ném để rollback
+        // Thắng câu cập nhật mà hóa đơn không cập nhật được là dữ liệu hỏng (đơn luôn có hóa đơn): ném để rollback
         private static void EnsureInvoiceUpdated(Guid bookingId, int rows)
         {
             if (rows != 1)

@@ -163,4 +163,123 @@ public sealed class TadssStub(WireMockServer server)
 
     /// <summary>TADSS chậm hơn nhiều so với <c>TimeoutMs</c> của host test (<see cref="SmashCourtWebApplicationFactory.TadssTimeoutMs"/>).</summary>
     public void ReplyTooSlowly() => Reply(200, "{}", "application/json", delay: TimeSpan.FromSeconds(5));
+
+    // ───────── Ghi đè (duyệt / từ chối, 6A-3) và chi tiết quyết định (đồng bộ Q9) ─────────
+    // Mã quyết định đã biết sau khi tạo đơn chờ duyệt, nên mỗi kịch bản khớp đúng đường dẫn của quyết định đó; body viết thẳng.
+
+    public static string OverridePath(Guid decisionId) => $"{DecisionsPath}/{decisionId}/override";
+
+    public static string DetailPath(Guid decisionId) => $"{DecisionsPath}/{decisionId}";
+
+    /// <summary>Request ghi đè đã nhận cho một quyết định.</summary>
+    public IReadOnlyList<WireMock.Logging.ILogEntry> OverridesFor(Guid decisionId) =>
+        server.LogEntries.Where(e => e.RequestMessage?.Path == OverridePath(decisionId) && e.RequestMessage.Method == "POST").ToList();
+
+    /// <summary>Mọi request ghi đè đã nhận (bất kể quyết định).</summary>
+    public IReadOnlyList<WireMock.Logging.ILogEntry> AllOverrides =>
+        server.LogEntries.Where(e => e.RequestMessage?.Path?.EndsWith("/override") == true && e.RequestMessage.Method == "POST").ToList();
+
+    /// <summary>Request đọc chi tiết đã nhận cho một quyết định.</summary>
+    public IReadOnlyList<WireMock.Logging.ILogEntry> DetailsFor(Guid decisionId) =>
+        server.LogEntries.Where(e => e.RequestMessage?.Path == DetailPath(decisionId) && e.RequestMessage.Method == "GET").ToList();
+
+    /// <summary>Như <see cref="WaitForEvaluationsAsync"/> cho ghi đè: WireMock ghi log sau khi trả lời.</summary>
+    public async Task<IReadOnlyList<WireMock.Logging.ILogEntry>> WaitForOverridesAsync(Guid decisionId, int expected)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(3);
+        while (OverridesFor(decisionId).Count < expected && DateTime.UtcNow < deadline)
+            await Task.Delay(20);
+        if (expected == 0)
+            await Task.Delay(300);
+        return OverridesFor(decisionId);
+    }
+
+    /// <summary>Body ghi đè thành công dựng từ mẫu (đã kiểm theo override-response.schema.json).</summary>
+    public static JsonObject OverrideBody(Guid decisionId, string action, string actorId, string reason, decimal? rate = null, decimal? amount = null)
+    {
+        var json = JsonNode.Parse(TadssContractFiles.Sample(
+            action == "APPROVE" ? "override-response.approve.json" : "override-response.reject.json"))!.AsObject();
+        json["decisionId"] = decisionId.ToString();
+        json["actorId"] = actorId;
+        json["reason"] = reason;
+        json["deposit"] = action == "APPROVE"
+            ? new JsonObject { ["rate"] = rate ?? 0m, ["amount"] = amount ?? 0m, ["currency"] = "VND" }
+            : null;
+        return json;
+    }
+
+    /// <summary>TADSS ghi đè thành công (mọi lần gọi tới quyết định này nhận cùng bản, như bản đã lưu).</summary>
+    public void ReplyOverride(
+        Guid decisionId, string action, string actorId, string reason, decimal? rate = null, decimal? amount = null, TimeSpan? delay = null) =>
+        server.Given(Request.Create().WithPath(OverridePath(decisionId)).UsingPost())
+            .RespondWith(BuildResponse(200, OverrideBody(decisionId, action, actorId, reason, rate, amount).ToJsonString(),
+                "application/json", null, delay, template: false));
+
+    /// <summary>TADSS trả lỗi cho ghi đè; <paramref name="errors"/> là đối tượng <c>errors</c> của RFC 7807 (khóa là đường dẫn JSON).</summary>
+    public void ReplyOverrideProblem(Guid decisionId, int status, string? code, JsonObject? errors = null, TimeSpan? delay = null)
+    {
+        var body = new JsonObject { ["title"] = "lỗi", ["status"] = status, ["traceId"] = "t-1" };
+        if (code != null)
+            body["code"] = code;
+        if (errors != null)
+            body["errors"] = errors;
+        server.Given(Request.Create().WithPath(OverridePath(decisionId)).UsingPost())
+            .RespondWith(BuildResponse(status, body.ToJsonString(), "application/problem+json", status is 429 or 503 ? "1" : null, delay, template: false));
+    }
+
+    /// <summary>Response tùy ý cho ghi đè (trang HTML của proxy, body hỏng…).</summary>
+    public void ReplyOverrideRaw(Guid decisionId, int status, string body, string contentType) =>
+        server.Given(Request.Create().WithPath(OverridePath(decisionId)).UsingPost())
+            .RespondWith(BuildResponse(status, body, contentType, null, null, template: false));
+
+    /// <summary>
+    /// Lần gọi đầu chậm hơn <paramref name="firstDelay"/> (BE báo 503) nhưng TADSS thực ra đã ghi; các lần sau trả ngay
+    /// <paramref name="later"/> (bản đã lưu, hoặc lỗi khi nội dung khác). Kịch bản trạng thái của WireMock.
+    /// </summary>
+    public void ReplyOverrideSlowlyOnceThen(Guid decisionId, JsonObject stored, TimeSpan firstDelay, (int Status, string Body)? later = null)
+    {
+        var scenario = $"override-{decisionId}";
+        server.Given(Request.Create().WithPath(OverridePath(decisionId)).UsingPost())
+            .InScenario(scenario)
+            .WillSetStateTo("stored")
+            .RespondWith(BuildResponse(200, stored.ToJsonString(), "application/json", null, firstDelay, template: false));
+        var (status, body) = later ?? (200, stored.ToJsonString());
+        server.Given(Request.Create().WithPath(OverridePath(decisionId)).UsingPost())
+            .InScenario(scenario)
+            .WhenStateIs("stored")
+            .RespondWith(BuildResponse(status, body, status == 200 ? "application/json" : "application/problem+json", null, null, template: false));
+    }
+
+    /// <summary>Lần gọi đầu nhận <paramref name="first"/>, mọi lần sau nhận <paramref name="then"/> (VD người thắng 200, người thua 409).</summary>
+    public void ReplyOverrideFirstThen(Guid decisionId, (int Status, string Body) first, (int Status, string Body) then, TimeSpan? firstDelay = null)
+    {
+        var scenario = $"override-first-{decisionId}";
+        server.Given(Request.Create().WithPath(OverridePath(decisionId)).UsingPost())
+            .InScenario(scenario)
+            .WillSetStateTo("answered")
+            .RespondWith(BuildResponse(first.Status, first.Body, first.Status == 200 ? "application/json" : "application/problem+json",
+                null, firstDelay, template: false));
+        server.Given(Request.Create().WithPath(OverridePath(decisionId)).UsingPost())
+            .InScenario(scenario)
+            .WhenStateIs("answered")
+            .RespondWith(BuildResponse(then.Status, then.Body, then.Status == 200 ? "application/json" : "application/problem+json",
+                null, null, template: false));
+    }
+
+    /// <summary>Body lỗi RFC 7807 tối thiểu.</summary>
+    public static string ProblemBody(int status, string code) =>
+        new JsonObject { ["title"] = "lỗi", ["status"] = status, ["code"] = code, ["traceId"] = "t-1" }.ToJsonString();
+
+    /// <summary>Chi tiết quyết định (decision-detail.json) kèm ghi đè đã lưu (null = chưa có).</summary>
+    public void ReplyDecisionDetail(Guid decisionId, Guid reservationId, JsonObject? storedOverride, TimeSpan? delay = null)
+    {
+        var json = JsonNode.Parse(TadssContractFiles.Sample("decision-detail.json"))!.AsObject();
+        json["decisionId"] = decisionId.ToString();
+        json["reservationId"] = reservationId.ToString();
+        json["request"]!["reservationId"] = reservationId.ToString();
+        json["override"] = storedOverride?.DeepClone();
+        json["outcome"] = null;
+        server.Given(Request.Create().WithPath(DetailPath(decisionId)).UsingGet())
+            .RespondWith(BuildResponse(200, json.ToJsonString(), "application/json", null, delay, template: false));
+    }
 }

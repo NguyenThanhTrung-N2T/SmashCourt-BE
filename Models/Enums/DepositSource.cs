@@ -1,7 +1,7 @@
 namespace SmashCourt_BE.Models.Enums
 {
     /// <summary>
-    /// Nguồn của mức cọc trên hóa đơn (Phase 6)
+    /// Nguồn của mức cọc trên hóa đơn
     /// </summary>
     public enum DepositSource
     {

@@ -5,9 +5,8 @@ using SmashCourt_BE.Models.ViewModels;
 namespace SmashCourt_BE.Helpers
 {
     /// <summary>
-    /// Token hủy bằng link (spec Phase 6, 7.9, D8): nơi duy nhất sinh token, băm token và tính hạn link hủy, dùng chung cho
-    /// đơn online thanh toán qua VNPay (IPN), đơn tại quầy và đơn online xác nhận không qua VNPay (a′, duyệt 0 %).
-    /// Phía tra cứu (<c>GetCancelInfoAsync</c>, <c>CancelByTokenAsync</c>) cũng băm bằng <see cref="Hash"/> để hai phía không lệch.
+    /// Nơi duy nhất sinh, băm token hủy bằng link và tính hạn link, dùng cho mọi đường phát token (IPN, tại quầy, xác nhận không qua VNPay).
+    /// Phía tra cứu cũng băm bằng <see cref="Hash"/> để hai phía không lệch.
     /// </summary>
     public static class CancelTokenHelper
     {
@@ -16,9 +15,7 @@ namespace SmashCourt_BE.Helpers
 
         private const int TokenBytes = 32;
 
-        /// <summary>Sinh token mới kèm mã băm và hạn link hủy.</summary>
-        /// <param name="playStartUtc">Giờ bắt đầu chơi sớm nhất của đơn (đổi từ giờ VN bằng <c>DateTimeHelper.ToUtcFromVietnam</c>), Kind = Utc</param>
-        /// <param name="nowUtc">Thời điểm phát token, Kind = Utc</param>
+        // Sinh token mới kèm mã băm và hạn link hủy; playStartUtc là giờ bắt đầu chơi sớm nhất đã đổi sang UTC
         public static CancelTokenData Generate(DateTime playStartUtc, DateTime nowUtc)
         {
             var expiresAtUtc = ComputeExpiry(playStartUtc, nowUtc);
@@ -28,10 +25,7 @@ namespace SmashCourt_BE.Helpers
             return new CancelTokenData(rawToken, Hash(rawToken), expiresAtUtc);
         }
 
-        /// <summary>
-        /// Hạn link hủy = <c>min(giờ bắt đầu chơi, now + 24h)</c> (spec 7.9; sửa T-2 lệch 7 giờ và T-3 trộn Kind).
-        /// Đơn đã tới giờ chơi thì hạn bằng giờ chơi, tức link đã hết hạn ngay khi phát.
-        /// </summary>
+        // Hạn link hủy = min(giờ bắt đầu chơi, now + 24h); đơn đã tới giờ chơi thì link hết hạn ngay khi phát
         public static DateTime ComputeExpiry(DateTime playStartUtc, DateTime nowUtc)
         {
             EnsureUtc(playStartUtc, nameof(playStartUtc));

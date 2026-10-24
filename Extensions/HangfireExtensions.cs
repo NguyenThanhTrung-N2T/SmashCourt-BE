@@ -7,7 +7,7 @@ namespace SmashCourt_BE.Extensions;
 
 public static class HangfireExtensions
 {
-    /// <summary>Khóa bật/tắt toàn bộ Hangfire (D4). Mặc định bật; host test HTTP đặt false để job thật không chạy trên DB test.</summary>
+    /// <summary>Khóa bật/tắt toàn bộ Hangfire. Mặc định bật; host test HTTP đặt false để job thật không chạy trên DB test.</summary>
     public const string EnabledKey = "Hangfire:Enabled";
 
     // GetValue ném khi giá trị không phải bool: cấu hình sai thì lỗi ngay lúc khởi động thay vì lặng lẽ chạy job thật

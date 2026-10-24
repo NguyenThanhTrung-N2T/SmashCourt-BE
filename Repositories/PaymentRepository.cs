@@ -28,7 +28,7 @@ namespace SmashCourt_BE.Repositories
                 .Include(p => p.Invoice)
                     .ThenInclude(i => i.Booking)
                         .ThenInclude(b => b.Branch)
-                // IPN tăng lượt khuyến mãi theo BookingPromotion; thiếu Include thì đơn online không bao giờ được tính lượt (phát hiện 6A-2c, P-14)
+                // IPN tăng lượt khuyến mãi theo BookingPromotion; thiếu Include thì đơn online không bao giờ được tính lượt
                 .Include(p => p.Invoice)
                     .ThenInclude(i => i.Booking)
                         .ThenInclude(b => b.BookingPromotion)

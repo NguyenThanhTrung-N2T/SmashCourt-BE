@@ -26,7 +26,7 @@ namespace SmashCourt_BE.Repositories.IRepository
         // lấy khuyến mãi theo code (không bị xóa, kèm conditions) — dùng trong PromotionEngineService
         Task<Promotion?> GetByCodeNotDeletedAsync(string code);
 
-        // đếm số lần user đã dùng promotion — dùng kiểm tra UsagePerUserLimit; không tính booking ở trạng thái hủy (P6-18)
+        // đếm số lần user đã dùng promotion — dùng kiểm tra UsagePerUserLimit; không tính booking ở trạng thái hủy
         Task<int> GetUserUsageCountAsync(Guid promotionId, Guid userId);
 
         // tăng UsedCount (atomic UPDATE, tránh race condition)

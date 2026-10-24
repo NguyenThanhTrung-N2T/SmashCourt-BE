@@ -1,4 +1,4 @@
-﻿namespace SmashCourt_BE.Models.Enums
+namespace SmashCourt_BE.Models.Enums
 {
     public enum BookingStatus
     {
@@ -12,6 +12,6 @@
         CANCELLED_PENDING_REFUND = 7,
         CANCELLED_REFUNDED = 8,
         NO_SHOW = 9,  // Khách không đến sau khi đặt
-        PENDING_APPROVAL = 10  // Chờ Manager duyệt mức cọc (Phase 6); giá trị cuối vì FE dùng số
+        PENDING_APPROVAL = 10  // Chờ Quản lý duyệt mức cọc; giá trị cuối vì FE dùng số
     }
 }

@@ -21,7 +21,7 @@ public static class SignalREvents
     public const string PaymentSuccess = "PaymentSuccess";
     public const string PaymentFailed = "PaymentFailed";
 
-    // Deposit approval Events (Phase 6, DEPOSIT_APPROVAL_API 6) — FE: smashcourt-fe/src/lib/signalr-events.ts
+    // Deposit approval Events — FE: smashcourt-fe/src/lib/signalr-events.ts
     public const string BookingPendingApproval = "BookingPendingApproval";
     public const string BookingApprovalResolved = "BookingApprovalResolved";
     public const string PendingApprovalQueueChanged = "PendingApprovalQueueChanged";
@@ -30,4 +30,6 @@ public static class SignalREvents
     public const string QueueChangeAdded = "ADDED";
     public const string QueueChangeRemoved = "REMOVED";
     public const string QueueReasonNew = "NEW";
+    public const string QueueReasonApproved = "APPROVED";
+    public const string QueueReasonRejected = "REJECTED";
 }

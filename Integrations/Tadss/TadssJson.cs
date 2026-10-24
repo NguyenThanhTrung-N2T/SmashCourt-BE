@@ -5,7 +5,7 @@ namespace SmashCourt_BE.Integrations.Tadss;
 
 /// <summary>
 /// Tùy chọn JSON riêng cho contract TADSS v2: camelCase, enum dạng chuỗi (không nhận số), bỏ trường null khi ghi.
-/// Cố ý không dùng <c>VietnamDateTimeConverter</c> của MVC: mọi thời gian của DTO là <see cref="DateTimeOffset"/> kèm offset (P6-22).
+/// Cố ý không dùng <c>VietnamDateTimeConverter</c> của MVC: mọi thời gian của DTO là <see cref="DateTimeOffset"/> kèm offset.
 /// </summary>
 public static class TadssJson
 {

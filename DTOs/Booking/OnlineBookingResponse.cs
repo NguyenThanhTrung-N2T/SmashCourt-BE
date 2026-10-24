@@ -1,6 +1,6 @@
-﻿namespace SmashCourt_BE.DTOs.Booking
+namespace SmashCourt_BE.DTOs.Booking
 {
-    // Response của POST /api/bookings/online và POST /api/me/bookings/{id}/retry-payment (DEPOSIT_APPROVAL_API 3.1).
+    // Response của POST /api/bookings/online và POST /api/me/bookings/{id}/retry-payment.
     // Khóa có giá trị null vẫn được serialize; không bao giờ chứa trường nội bộ của TADSS (decisionId, strategyName...).
     public class OnlineBookingResponse
     {

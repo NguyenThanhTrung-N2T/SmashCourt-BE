@@ -83,7 +83,7 @@ namespace SmashCourt_BE.Data
             modelBuilder.HasPostgresEnum<RefundStatus>("refund_status");
             modelBuilder.HasPostgresEnum<IpnProvider>("ipn_provider");
 
-            // Phase 6 — cọc TADSS
+            // Cọc TADSS
             modelBuilder.HasPostgresEnum<DepositSource>("deposit_source");
             modelBuilder.HasPostgresEnum<ApprovalResult>("approval_result");
             modelBuilder.HasPostgresEnum<BookingCancelReason>("booking_cancel_reason");
@@ -466,7 +466,7 @@ namespace SmashCourt_BE.Data
                 e.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()");
                 e.Property(x => x.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("now()");
 
-                // Phase 6 — cọc TADSS
+                // Cọc TADSS
                 e.Property(x => x.TadssDecisionId).HasColumnName("tadss_decision_id");
                 e.Property(x => x.ApprovalExpiresAt).HasColumnName("approval_expires_at");
                 e.Property(x => x.ApprovalReasonCode).HasColumnName("approval_reason_code").HasMaxLength(64);

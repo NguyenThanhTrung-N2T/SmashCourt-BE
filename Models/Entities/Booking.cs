@@ -26,7 +26,7 @@ namespace SmashCourt_BE.Models.Entities
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
 
-        // Phase 6 — cọc TADSS (đơn tạo trước Phase 6 hoặc không qua TADSS: tất cả NULL)
+        // Quyết định cọc TADSS (đơn không qua TADSS: tất cả NULL)
         public Guid? TadssDecisionId { get; set; }
         public DateTime? ApprovalExpiresAt { get; set; }            // Hạn Manager duyệt; giữ lại sau khi duyệt/hủy để tra cứu
         public string? ApprovalReasonCode { get; set; }
@@ -46,7 +46,7 @@ namespace SmashCourt_BE.Models.Entities
         public ICollection<BookingCourt> BookingCourts { get; set; } = [];
         public ICollection<BookingService> BookingServices { get; set; } = [];
         public BookingPromotion? BookingPromotion { get; set; }
-        public ICollection<SlotLock> SlotLocks { get; set; } = [];  // Một lock cho mỗi sân của đơn (P6-13)
+        public ICollection<SlotLock> SlotLocks { get; set; } = [];  // Một lock cho mỗi sân của đơn
         public Invoice? Invoice { get; set; }
         public ICollection<LoyaltyTransaction> LoyaltyTransactions { get; set; } = [];
     }

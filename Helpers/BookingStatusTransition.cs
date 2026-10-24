@@ -18,9 +18,9 @@ namespace SmashCourt_BE.Helpers
                 // Online booking flow
                 (BookingStatus.PENDING, BookingStatus.PAID_ONLINE) => true,
                 (BookingStatus.PENDING, BookingStatus.CANCELLED) => true,
-                (BookingStatus.PENDING, BookingStatus.CONFIRMED) => true,  // Cọc áp dụng bằng 0 hoặc dưới mức tối thiểu (Phase 6)
+                (BookingStatus.PENDING, BookingStatus.CONFIRMED) => true,  // Cọc áp dụng bằng 0 hoặc dưới mức tối thiểu: xác nhận ngay
 
-                // Chờ Manager duyệt mức cọc (Phase 6): duyệt cọc > 0 → PENDING, duyệt 0% → CONFIRMED, từ chối/hết hạn/hủy → CANCELLED
+                // Chờ Quản lý duyệt mức cọc: duyệt cọc > 0 → PENDING, duyệt 0% → CONFIRMED, từ chối/hết hạn/hủy → CANCELLED
                 (BookingStatus.PENDING_APPROVAL, BookingStatus.PENDING) => true,
                 (BookingStatus.PENDING_APPROVAL, BookingStatus.CONFIRMED) => true,
                 (BookingStatus.PENDING_APPROVAL, BookingStatus.CANCELLED) => true,
@@ -46,7 +46,7 @@ namespace SmashCourt_BE.Helpers
                 
                 // Cancellation flow
                 (BookingStatus.CANCELLED_PENDING_REFUND, BookingStatus.CANCELLED_REFUNDED) => true,
-                (BookingStatus.CANCELLED, BookingStatus.CANCELLED_PENDING_REFUND) => true,  // Tiền về sau khi đơn đã hủy (Phase 6, P6-07)
+                (BookingStatus.CANCELLED, BookingStatus.CANCELLED_PENDING_REFUND) => true,  // Tiền về sau khi đơn đã hủy
                 
                 // Default: không cho phép
                 _ => false
@@ -96,7 +96,7 @@ namespace SmashCourt_BE.Helpers
 
         /// <summary>
         /// Các status CỐ Ý không giữ sân (đã kết thúc hoặc đã hủy).
-        /// Mọi giá trị BookingStatus phải thuộc GetActiveStatuses hoặc tập này (test BE-UT-11).
+        /// Mọi giá trị BookingStatus phải thuộc GetActiveStatuses hoặc tập này (có test chặn khi thêm trạng thái mới).
         /// </summary>
         public static BookingStatus[] GetNonHoldingStatuses()
         {

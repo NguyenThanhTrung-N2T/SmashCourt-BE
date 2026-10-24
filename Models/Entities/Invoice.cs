@@ -16,7 +16,7 @@ namespace SmashCourt_BE.Models.Entities
         public PaymentTiming PaymentTiming { get; set; } = PaymentTiming.POSTPAID;  // Default: trả sau
         public DateTime? ExpiresAt { get; set; }
 
-        // Phase 6 — cọc TADSS (NULL = đơn không áp dụng cọc, hiểu là thu theo luồng cũ)
+        // Cọc (NULL = đơn không áp dụng cọc)
         public decimal? DepositRate { get; set; }
         public decimal? DepositAmount { get; set; }
         public DepositSource? DepositSource { get; set; }

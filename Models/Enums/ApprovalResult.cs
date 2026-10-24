@@ -1,7 +1,7 @@
 namespace SmashCourt_BE.Models.Enums
 {
     /// <summary>
-    /// Kết quả Manager xử lý đơn chờ duyệt cọc (Phase 6)
+    /// Kết quả Quản lý xử lý đơn chờ duyệt cọc
     /// </summary>
     public enum ApprovalResult
     {

@@ -1,7 +1,7 @@
 namespace SmashCourt_BE.Configurations;
 
 /// <summary>
-/// Giới hạn tốc độ của BE — ánh xạ từ appsettings.json section "RateLimiting" (B1/D9, Phase 6). Mỗi policy là một cặp
+/// Giới hạn tốc độ của BE — ánh xạ từ appsettings.json section "RateLimiting". Mỗi policy là một cặp
 /// (số lượt, độ dài cửa sổ) <b>cho từng người</b> (xem <c>RateLimitPartitionKey</c>). Mặc định đúng bằng giá trị trước đây cố định
 /// trong Program.cs. Tên khóa cấu hình là tên thuộc tính (VD <c>RateLimiting:AiPublic:PermitLimit</c> cho policy <c>ai-public</c>).
 /// </summary>

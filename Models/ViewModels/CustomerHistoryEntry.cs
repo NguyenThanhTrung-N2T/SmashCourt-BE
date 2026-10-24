@@ -1,3 +1,4 @@
+using SmashCourt_BE.Services.Deposit;
 using SmashCourt_BE.Models.Enums;
 
 namespace SmashCourt_BE.Models.ViewModels

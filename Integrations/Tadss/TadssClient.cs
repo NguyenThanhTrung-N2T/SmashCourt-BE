@@ -51,14 +51,16 @@ public class TadssClient : ITadssClient
     {
         var call = new TadssCall("Override", HttpMethod.Post, $"{DecisionsPath}/{decisionId}/override", request,
             $"{decisionId}:{request.Action}", actorId);
-        return SendAsync<TadssOverrideResponseDto>(call, allowRetry: false, null, cancellationToken);
+        return SendAsync<TadssOverrideResponseDto>(
+            call, allowRetry: false, result => CheckOverrideResult(result, decisionId, request.Action), cancellationToken);
     }
 
     public Task<TadssCallResult<TadssDecisionDetailDto>> GetDecisionAsync(
         Guid decisionId, CancellationToken cancellationToken = default)
     {
         var call = new TadssCall("GetDecision", HttpMethod.Get, $"{DecisionsPath}/{decisionId}", null, null, null);
-        return SendAsync<TadssDecisionDetailDto>(call, allowRetry: false, null, cancellationToken);
+        return SendAsync<TadssDecisionDetailDto>(
+            call, allowRetry: false, detail => CheckDecisionDetail(detail, decisionId), cancellationToken);
     }
 
     public Task<TadssCallResult<TadssOutcomeResponseDto>> ReportOutcomeAsync(
@@ -69,10 +71,8 @@ public class TadssClient : ITadssClient
         return SendAsync<TadssOutcomeResponseDto>(call, allowRetry: false, null, cancellationToken);
     }
 
-    // INV-7 của contract: APPROVED ⇔ deposit, NEED_APPROVAL ⇔ approvalExpiresAt; cùng phạm vi deposit của decision-result.schema.json
-    // (rate ∈ [0, 1], amount ≥ 0). Lệch thì không dùng được kết quả: ghi vào hóa đơn sẽ bị CHECK của DB chặn ở transaction 2 (F1)
-    // Quyết định phải là của chính booking đã gửi: TADSS trả nhầm bản đã lưu của đơn khác (lỗi idempotency) thì không áp, đi dự phòng
-    // như mọi sự cố TADSS (chốt 24/10). So theo GUID nên khác hoa thường vẫn là cùng booking.
+    // Kết quả phải là của chính booking đã gửi và đúng contract: APPROVED có deposit, NEED_APPROVAL có hạn duyệt, deposit trong phạm vi
+    // của schema. Lệch thì không dùng được: đơn đi phương án dự phòng như mọi sự cố TADSS.
     private static string? CheckDecisionResult(TadssDecisionResultDto result, Guid expectedReservationId) => result.Status switch
     {
         _ when result.ReservationId != expectedReservationId =>
@@ -83,6 +83,23 @@ public class TadssClient : ITadssClient
         _ when result.Deposit is { Amount: < 0m } => "deposit.amount âm",
         _ => null
     };
+
+    // Ghi đè phải là của đúng quyết định và đúng hành động đã gửi; APPROVE có deposit trong phạm vi của schema, REJECT không có.
+    // Lệch thì không áp vào đơn để không ghi nhầm mức cọc.
+    private static string? CheckOverrideResult(TadssOverrideResponseDto result, Guid decisionId, TadssOverrideAction action) => result switch
+    {
+        _ when result.DecisionId != decisionId => $"decisionId {result.DecisionId} khác quyết định đã gửi {decisionId}",
+        _ when result.Action != action => $"action {result.Action} khác action đã gửi {action}",
+        { Action: TadssOverrideAction.APPROVE, Deposit: null } => "APPROVE nhưng thiếu deposit",
+        { Action: TadssOverrideAction.REJECT, Deposit: not null } => "REJECT nhưng có deposit",
+        { Deposit.Rate: < 0m or > 1m } => "deposit.rate ngoài [0, 1]",
+        { Deposit.Amount: < 0m } => "deposit.amount âm",
+        _ => null
+    };
+
+    // Chi tiết quyết định dùng để đồng bộ ghi đè đã lưu: phải là đúng quyết định đã hỏi
+    private static string? CheckDecisionDetail(TadssDecisionDetailDto detail, Guid decisionId) =>
+        detail.DecisionId != decisionId ? $"decisionId {detail.DecisionId} khác quyết định đã hỏi {decisionId}" : null;
 
     private async Task<TadssCallResult<T>> SendAsync<T>(
         TadssCall call, bool allowRetry, Func<T, string?>? check, CancellationToken cancellationToken)
@@ -184,7 +201,8 @@ public class TadssClient : ITadssClient
         _logger.LogWarning(
             "TADSS {Operation} trả HTTP {Status} code={Code} sau {ElapsedMs} ms. CorrelationId={CorrelationId}",
             call.Operation, status, problem?.Code, elapsedMs, correlationId);
-        return TadssCallResult<T>.Failure(TadssFailureKind.Http, correlationId, status, problem?.Code, retryAfter);
+        return TadssCallResult<T>.Failure(
+            TadssFailureKind.Http, correlationId, status, problem?.Code, retryAfter, problem?.Errors?.Keys.ToList());
     }
 
     private void LogInvalidResponse(TadssCall call, HttpResponseMessage response, string body, string? problem, string correlationId)
@@ -220,7 +238,7 @@ public class TadssClient : ITadssClient
         return request;
     }
 
-    // Retry theo INTEGRATION_SPEC 4.3: timeout, lỗi mạng, 5xx. Không retry 4xx (kể cả 413, 429) và InvalidResponse
+    // Chỉ thử lại lỗi tạm thời: timeout, lỗi mạng, 5xx. Không thử lại 4xx (kể cả 413, 429) và response hỏng
     private static bool IsRetryable<T>(TadssCallResult<T> result) => result.FailureKind switch
     {
         TadssFailureKind.Timeout or TadssFailureKind.Network => true,

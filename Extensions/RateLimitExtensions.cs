@@ -9,7 +9,7 @@ using SmashCourt_BE.Configurations;
 namespace SmashCourt_BE.Extensions;
 
 /// <summary>
-/// Khóa phân vùng của rate limit (B1/D9): mỗi người một bộ đếm riêng cho từng policy, thay vì một bộ đếm chung cho cả hệ thống.
+/// Khóa phân vùng của rate limit: mỗi người một bộ đếm riêng cho từng policy, thay vì một bộ đếm chung cho cả hệ thống.
 /// Đã đăng nhập ⇒ <c>user:{id}</c>; chưa đăng nhập ⇒ <c>ip:{địa chỉ}</c>; không xác định được nguồn ⇒ <c>unknown</c> (một khóa chung,
 /// cố ý chặt thay vì bỏ qua giới hạn).
 /// </summary>

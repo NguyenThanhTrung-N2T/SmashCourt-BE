@@ -1,3 +1,4 @@
+using SmashCourt_BE.Services.Deposit;
 using SmashCourt_BE.Common;
 using SmashCourt_BE.Common.Constants;
 using SmashCourt_BE.Helpers;
@@ -10,6 +11,8 @@ using SmashCourt_BE.DTOs.Payment;
 using SmashCourt_BE.DTOs.SignalR;
 using SmashCourt_BE.Factories;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
+using SmashCourt_BE.Configurations;
 
 namespace SmashCourt_BE.Services
 {
@@ -26,6 +29,9 @@ namespace SmashCourt_BE.Services
         private readonly ILogger<PaymentService> _logger;
         private readonly IConfiguration _config;
         private readonly IBroadcastService _broadcast;
+        private readonly IOptionsMonitor<BookingPaymentSettings> _paymentSettings;
+        // "Bây giờ" của phần thanh toán lại theo hạn giữ chỗ; các phần cũ vẫn dùng DateTime.UtcNow
+        private readonly TimeProvider _timeProvider;
 
         public PaymentService(
             IPaymentRepository paymentRepo,
@@ -38,7 +44,9 @@ namespace SmashCourt_BE.Services
             PromotionEngineService promotionEngine,
             ILogger<PaymentService> logger,
             IConfiguration config,
-            IBroadcastService broadcast)
+            IBroadcastService broadcast,
+            IOptionsMonitor<BookingPaymentSettings> paymentSettings,
+            TimeProvider timeProvider)
         {
             _paymentRepo = paymentRepo;
             _bookingRepo = bookingRepo;
@@ -51,6 +59,8 @@ namespace SmashCourt_BE.Services
             _logger = logger;
             _config = config;
             _broadcast = broadcast;
+            _paymentSettings = paymentSettings;
+            _timeProvider = timeProvider;
         }
 
         /// <summary>
@@ -76,14 +86,28 @@ namespace SmashCourt_BE.Services
             // 5. Lấy invoice (đã được tạo lúc đặt sân lần đầu)
             var invoice = booking.Invoice
                 ?? throw new AppException(500, "Không tìm thấy hóa đơn", ErrorCodes.InternalError);
-            // 4. Validate expiry — booking chưa hết hạn
-            if (!invoice.ExpiresAt.HasValue || invoice.ExpiresAt.Value <= DateTime.UtcNow)
+
+            // 4. Hạn giữ chỗ tuyệt đối: kiểm trước hạn thanh toán vì hạn thanh toán không bao giờ vượt hạn giữ chỗ.
+            //    Đơn cũ không có hold_deadline ⇒ coi là giờ tạo + PaymentHoldMaxMinutes
+            var settings = _paymentSettings.CurrentValue;
+            var now = _timeProvider.GetUtcNow().UtcDateTime;
+            var holdDeadline = invoice.HoldDeadline ?? booking.CreatedAt.AddMinutes(settings.PaymentHoldMaxMinutes);
+            if (now >= holdDeadline)
+                throw new AppException(400, "Đã hết thời gian giữ chỗ, vui lòng đặt lại", ErrorCodes.PaymentHoldExpired);
+
+            // 4b. Còn trong hạn giữ chỗ nhưng quá hạn thanh toán: job hủy đơn quá hạn sẽ dọn
+            if (!invoice.ExpiresAt.HasValue || invoice.ExpiresAt.Value <= now)
                 throw new AppException(400,
                     "Đơn đặt sân đã hết hạn thanh toán, vui lòng đặt lại",
                     ErrorCodes.BadRequest);
 
-            var now = DateTime.UtcNow;
-            var newExpiresAt = now.AddMinutes(10);
+            // Hạn mới không rút ngắn hạn hiện tại và không vượt hạn giữ chỗ
+            if (!PaymentHoldPolicy.TryForRetry(now, invoice.ExpiresAt.Value, holdDeadline, settings.RetryExtendMinutes, out var window))
+                throw new AppException(400, "Đã hết thời gian giữ chỗ, vui lòng đặt lại", ErrorCodes.PaymentHoldExpired);
+            var newExpiresAt = window.ExpiresAt;
+
+            // Thu online đúng tiền cọc đã chốt; đơn cũ chưa có cọc thì thu toàn bộ
+            var amount = invoice.DepositAmount ?? invoice.FinalTotal;
 
             // 6. Tạo VNPay URL mới TRƯỚC transaction (không cần DB)
             var courtNames = string.Join(", ",
@@ -93,7 +117,7 @@ namespace SmashCourt_BE.Services
             var courtNamesAscii = StringHelper.RemoveDiacritics(courtNames);
             var paymentInfo = _vnPayService.CreatePaymentUrl(
                 booking.Id.ToString(),
-                invoice.FinalTotal,
+                amount,
                 $"Thanh toan lai {courtNamesAscii}");
 
             // 7. Ghi DB trong TransactionScope
@@ -117,7 +141,7 @@ namespace SmashCourt_BE.Services
             {
                 InvoiceId = invoice.Id,
                 Method = PaymentTxMethod.VNPAY,
-                Amount = invoice.FinalTotal,
+                Amount = amount,
                 Status = PaymentTxStatus.PENDING,
                 TransactionRef = paymentInfo.TransactionRef,
                 CreatedAt = now,
@@ -141,8 +165,8 @@ namespace SmashCourt_BE.Services
                 "NewTransactionRef={TransactionRef} | NewExpiresAt={ExpiresAt}",
                 bookingId, customerId, paymentInfo.TransactionRef, newExpiresAt);
 
-            // Cùng DTO với đặt sân online (luôn PENDING); trường cọc đọc từ hóa đơn (đơn cũ: null). Số tiền VNPay đổi theo cọc ở 6A-4.
-            var deposit = DepositFieldsHelper.FromInvoice(booking.Status, invoice);
+            // Cùng DTO với đặt sân online (luôn PENDING); trường cọc đọc từ hóa đơn, đơn cũ là null
+            var deposit = DepositFieldsMapper.FromInvoice(booking.Status, invoice);
             return new OnlineBookingResponse
             {
                 BookingId = booking.Id,
@@ -517,7 +541,7 @@ namespace SmashCourt_BE.Services
                 throw new InvalidOperationException("Booking must have at least one court");
             }
 
-            // Giờ chơi là giờ tường VN: đổi sang UTC thật (T-2: SpecifyKind(Utc) cũ làm link sống thêm 7 giờ sau giờ chơi)
+            // Giờ chơi là giờ tường VN: đổi sang UTC trước khi tính hạn link hủy (đánh dấu Utc trực tiếp làm hạn lệch 7 giờ)
             var token = CancelTokenHelper.Generate(
                 DateTimeHelper.ToUtcFromVietnam(firstCourtSlot.Date, firstCourtSlot.StartTime),
                 DateTimeHelper.GetUtcNow());

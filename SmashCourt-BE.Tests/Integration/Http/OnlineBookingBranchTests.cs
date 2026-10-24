@@ -496,7 +496,13 @@ public sealed partial class OnlineBookingBranchTests(PostgreSqlIntegrationFixtur
         var (call, customer) = await BookAsync(court);
 
         await AssertStatusAsync(branch == "c" ? HttpStatusCode.BadRequest : HttpStatusCode.Created, call);
-        Assert.Empty(factory.Emails.To(customer.Email));
+        var emails = factory.Emails.To(customer.Email);
+        // Không email xác nhận kèm link hủy; nhánh b có đúng một email "đang chờ duyệt" (spec 7.13, chốt 24/10)
+        Assert.DoesNotContain(emails, e => e.Body.Contains("booking/cancel?token="));
+        if (branch == "b")
+            Assert.Contains("chờ duyệt", Assert.Single(emails).Subject);
+        else
+            Assert.Empty(emails);
         var booking = await FindBookingOnCourtAsync(court.CourtId) ?? throw new InvalidOperationException("Không thấy booking");
         Assert.Null(booking.CancelTokenHash);
     }

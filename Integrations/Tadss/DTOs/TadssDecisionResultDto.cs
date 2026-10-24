@@ -12,7 +12,7 @@ public class TadssDecisionResultDto
     public required string StrategyVersion { get; set; }
     public required string ExecutionType { get; set; }
     public required bool FallbackUsed { get; set; }
-    /// <summary>Giữ dạng chuỗi: mã lạ không được làm lỗi (INTEGRATION_SPEC mục 6).</summary>
+    /// <summary>Giữ dạng chuỗi: TADSS được thêm mã mới mà không đổi phiên bản, mã lạ không được làm lỗi.</summary>
     public required string ReasonCode { get; set; }
     public required List<string> Reasons { get; set; }
     public required List<TadssRecommendationDto> Recommendations { get; set; }
