@@ -47,6 +47,7 @@ namespace SmashCourt_BE.Helpers
                 // Cancellation flow
                 (BookingStatus.CANCELLED_PENDING_REFUND, BookingStatus.CANCELLED_REFUNDED) => true,
                 (BookingStatus.CANCELLED, BookingStatus.CANCELLED_PENDING_REFUND) => true,  // Tiền về sau khi đơn đã hủy
+                (BookingStatus.CANCELLED_REFUNDED, BookingStatus.CANCELLED_PENDING_REFUND) => true,  // Tiền về sau khi đã hoàn xong khoản trước
                 
                 // Default: không cho phép
                 _ => false

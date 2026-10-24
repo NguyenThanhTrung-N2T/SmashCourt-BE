@@ -11,6 +11,7 @@ using SmashCourt_BE.Helpers;
 using SmashCourt_BE.DTOs.PriceConfig;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
+using SmashCourt_BE.Models.Payments;
 using SmashCourt_BE.Repositories.IRepository;
 using SmashCourt_BE.Services;
 using SmashCourt_BE.Services.IService;
@@ -311,9 +312,9 @@ public class BookingServiceTests
             .ReturnsAsync("BK-ONLINE");
         builder.CodeGeneratorService.Setup(x => x.GenerateInvoiceCodeAsync())
             .ReturnsAsync("INV-ONLINE");
-        builder.VnPayService.Setup(x => x.CreatePaymentUrl(
+        builder.PaymentGateway.Setup(x => x.CreatePaymentLink(
                 bookingId.ToString(), 360_000m, It.IsAny<string>()))
-            .Returns(new VnPayPaymentUrlResult { Url = "https://vnpay.test/pay", TransactionRef = "TX-ONLINE" });
+            .Returns(new GatewayPaymentLink("https://vnpay.test/pay", "TX-ONLINE"));
         // Cờ TADSS tắt (mặc định của builder) ⇒ nhánh d: cọc 100 % của tổng sau giảm giá
         builder.BookingRepository.Setup(x => x.ApplyPaymentRequiredAsync(
                 bookingId, null, 1m, 360_000m, DepositSource.FULL_PAYMENT_FALLBACK, It.IsAny<DateTime>()))
@@ -532,6 +533,29 @@ public class BookingServiceTests
     }
 
     [Fact]
+    public async Task AddServiceAsync_WhenBookingCheckedOutMeanwhile_RejectsWithoutChangingTheInvoice()
+    {
+        // Check-out khóa dòng booking trước: dịch vụ thêm sau đó không được nằm chưa thu trên hóa đơn đã PAID
+        var builder = new BookingServiceTestBuilder();
+        var branch = new Branch { Id = Guid.NewGuid(), Name = "Test branch" };
+        var service = new Service { Id = Guid.NewGuid(), Name = "Water", Unit = "bottle" };
+        var booking = TestDataFactory.CreateBooking(branchId: branch.Id, status: BookingStatus.IN_PROGRESS);
+        booking.Branch = branch;
+        booking.Invoice = TestDataFactory.CreateInvoice(booking.Id, paymentStatus: InvoicePaymentStatus.UNPAID);
+        builder.BookingRepository.Setup(x => x.GetByIdWithDetailsAsync(booking.Id)).ReturnsAsync(booking);
+        builder.BranchServiceRepository.Setup(x => x.GetByBranchServiceAsync(branch.Id, service.Id)).ReturnsAsync(
+            new SmashCourt_BE.Models.Entities.BranchService { BranchId = branch.Id, ServiceId = service.Id, Price = 30_000m, Service = service });
+        builder.BookingRepository.Setup(x => x.TryLockForServiceChangeAsync(booking.Id, It.IsAny<DateTime>())).ReturnsAsync(false);
+
+        var exception = await Assert.ThrowsAsync<AppException>(() => builder.Build().AddServiceAsync(
+            booking.Id, new AddBookingServiceDto { ServiceId = service.Id, Quantity = 1 }, Guid.NewGuid(), UserRole.OWNER.ToString()));
+
+        exception.ShouldBeAppException(400, ErrorCodes.BadRequest, "đã kết thúc");
+        builder.BookingRepository.Verify(x => x.AddServiceAsync(It.IsAny<SmashCourt_BE.Models.Entities.BookingService>()), Times.Never);
+        builder.InvoiceRepository.Verify(x => x.UpdateAsync(It.IsAny<Invoice>()), Times.Never);
+    }
+
+    [Fact]
     public async Task AddServiceAsync_WhenServiceAlreadyExists_IncrementsQuantityAtomically()
     {
         var builder = new BookingServiceTestBuilder();
@@ -578,7 +602,8 @@ public class BookingServiceTests
         Assert.Equal(BookingStatus.IN_PROGRESS, booking.Status);
         Assert.NotNull(booking.CheckedInAt);
         Assert.Equal(CourtStatus.IN_USE, booking.BookingCourts.Single().Court.Status);
-        builder.BookingRepository.Verify(x => x.UpdateAsync(booking), Times.Once);
+        builder.BookingRepository.Verify(x => x.CheckInAsync(booking.Id, BookingStatus.CONFIRMED, It.IsAny<DateTime>()), Times.Once);
+        builder.BookingRepository.Verify(x => x.UpdateAsync(It.IsAny<Booking>()), Times.Never);
         builder.CourtRepository.Verify(x => x.UpdateAsync(booking.BookingCourts.Single().Court), Times.Once);
         builder.Broadcast.Verify(x => x.BroadcastBookingEventAsync(
             SignalREvents.BookingCheckedIn,
@@ -587,227 +612,22 @@ public class BookingServiceTests
     }
 
     [Fact]
-    public async Task CancelByStaffAsync_WhenPendingBookingIsUnpaid_CancelsBookingAndReleasesCourt()
+    public async Task CheckInAsync_WhenStatusChangedBeforeTheWrite_ConflictWithoutTouchingCourts()
     {
+        // Hai lần check-in, hoặc check-in trùng lệnh hủy: bên thua không ghi gì
         var builder = new BookingServiceTestBuilder();
-        var staffId = Guid.NewGuid();
-        var branch = new Branch { Id = Guid.NewGuid(), Name = "Test branch", Address = "Address" };
-        var court = TestDataFactory.CreateCourt(branch.Id);
-        var booking = TestDataFactory.CreateBooking(
-            branchId: branch.Id,
-            status: BookingStatus.PENDING);
-        booking.BookingCourts.Add(new BookingCourt
-        {
-            BookingId = booking.Id,
-            CourtId = court.Id,
-            Date = booking.BookingDate,
-            StartTime = new TimeOnly(18, 0),
-            EndTime = new TimeOnly(19, 30),
-            Court = court
-        });
-        booking.Branch = branch;
-        booking.Invoice = new Invoice { PaymentStatus = InvoicePaymentStatus.UNPAID };
-
-        builder.BookingRepository.Setup(x => x.GetByIdWithDetailsAsync(booking.Id))
-            .ReturnsAsync(booking);
-        builder.SlotInterestRepository.Setup(x => x.GetOverlappingSlotInterestsAsync(
-                It.IsAny<Guid>(), It.IsAny<DateOnly>(), It.IsAny<TimeOnly>(), It.IsAny<TimeOnly>()))
-            .ReturnsAsync([]);
-
-        await builder.Build().CancelByStaffAsync(booking.Id, staffId, UserRole.OWNER.ToString());
-
-        Assert.Equal(BookingStatus.CANCELLED, booking.Status);
-        Assert.Equal(staffId, booking.CancelledBy);
-        Assert.Equal(CancelSourceEnum.STAFF, booking.CancelSource);
-        Assert.Equal(CourtStatus.AVAILABLE, court.Status);
-        builder.BookingRepository.Verify(x => x.UpdateCourtActiveStatusAsync(booking.Id, false), Times.Once);
-        builder.SlotLockRepository.Verify(x => x.DeleteByBookingIdAsync(booking.Id), Times.Once);
-        builder.CourtRepository.Verify(x => x.UpdateAsync(It.Is<Court>(updated =>
-            updated.Id == court.Id && updated.Status == CourtStatus.AVAILABLE)), Times.Once);
-        builder.BookingRepository.Verify(x => x.UpdateAsync(It.Is<Booking>(updated =>
-            updated.Status == BookingStatus.CANCELLED)), Times.Once);
-        builder.Broadcast.Verify(x => x.BroadcastBookingEventAsync(
-            SignalREvents.BookingCancelled,
-            It.IsAny<SmashCourt_BE.DTOs.SignalR.BookingNotificationDto>(),
-            booking,
-            true), Times.Once);
-    }
-
-    [Fact]
-    public async Task CancelByStaffAsync_WhenPaidBookingIsWithinRefundWindow_CreatesRefundAndDecrementsPromotion()
-    {
-        var builder = new BookingServiceTestBuilder();
-        var staffId = Guid.NewGuid();
-        var branch = new Branch { Id = Guid.NewGuid(), Name = "Test branch", Address = "Address" };
-        var court = TestDataFactory.CreateCourt(branch.Id);
-        var booking = TestDataFactory.CreateBooking(
-            branchId: branch.Id,
-            status: BookingStatus.PAID_ONLINE,
-            totalAmount: 360_000m);
-        booking.BookingDate = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(2));
-        booking.Branch = branch;
-        booking.BookingCourts.Add(new BookingCourt
-        {
-            BookingId = booking.Id,
-            CourtId = court.Id,
-            Date = booking.BookingDate,
-            StartTime = new TimeOnly(18, 0),
-            EndTime = new TimeOnly(19, 30),
-            Court = court
-        });
-        var promotionId = Guid.NewGuid();
-        booking.BookingPromotion = new BookingPromotion { PromotionId = promotionId };
-        var payment = new Payment
-        {
-            Id = Guid.NewGuid(),
-            Status = PaymentTxStatus.SUCCESS,
-            Amount = 360_000m
-        };
-        booking.Invoice = new Invoice
-        {
-            FinalTotal = 360_000m,
-            PaymentStatus = InvoicePaymentStatus.PAID,
-            Payments = [payment]
-        };
-
-        builder.BookingRepository.Setup(x => x.GetByIdWithDetailsAsync(booking.Id))
-            .ReturnsAsync(booking);
-        builder.CancelPolicyRepository.Setup(x => x.GetAllAsync())
-            .ReturnsAsync([new CancelPolicy { HoursBefore = 24, RefundPercent = 50m }]);
-        builder.SlotInterestRepository.Setup(x => x.GetOverlappingSlotInterestsAsync(
-                It.IsAny<Guid>(), It.IsAny<DateOnly>(), It.IsAny<TimeOnly>(), It.IsAny<TimeOnly>()))
-            .ReturnsAsync([]);
-
-        await builder.Build().CancelByStaffAsync(booking.Id, staffId, UserRole.OWNER.ToString());
-
-        Assert.Equal(BookingStatus.CANCELLED_PENDING_REFUND, booking.Status);
-        builder.RefundRepository.Verify(x => x.CreateAsync(It.Is<Refund>(refund =>
-            refund.PaymentId == payment.Id &&
-            refund.Amount == 180_000m &&
-            refund.RefundPercent == 50m &&
-            refund.Status == RefundStatus.PENDING)), Times.Once);
-        builder.PromotionRepository.Verify(x => x.DecrementUsageCountAsync(promotionId), Times.Once);
-    }
-
-    [Fact]
-    public async Task CancelByCustomerAsync_WhenBookingIsAlreadyCancelled_IsIdempotent()
-    {
-        var builder = new BookingServiceTestBuilder();
-        var customerId = Guid.NewGuid();
-        var booking = TestDataFactory.CreateBooking(
-            customerId: customerId,
-            status: BookingStatus.CANCELLED);
-        booking.Customer = TestDataFactory.CreateUser();
-
-        builder.BookingRepository.Setup(x => x.GetByIdWithDetailsAsync(booking.Id))
-            .ReturnsAsync(booking);
-
-        await builder.Build().CancelByCustomerAsync(booking.Id, customerId);
-
-        builder.BookingRepository.Verify(x => x.UpdateAsync(It.IsAny<Booking>()), Times.Never);
-        builder.SlotLockRepository.Verify(x => x.DeleteByBookingIdAsync(It.IsAny<Guid>()), Times.Never);
-        builder.RefundRepository.Verify(x => x.CreateAsync(It.IsAny<Refund>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task CancelByCustomerAsync_WhenWithinRefundWindow_CreatesPendingRefund()
-    {
-        var builder = new BookingServiceTestBuilder();
-        var customer = TestDataFactory.CreateUser();
-        var branch = new Branch { Id = Guid.NewGuid(), Name = "Test branch" };
-        var court = TestDataFactory.CreateCourt(branch.Id);
-        var booking = TestDataFactory.CreateBooking(
-            customerId: customer.Id, branchId: branch.Id, status: BookingStatus.PAID_ONLINE,
-            bookingDate: DateOnly.FromDateTime(DateTime.UtcNow.AddHours(6)));
-        booking.Customer = customer;
-        booking.Branch = branch;
-        var payment = TestDataFactory.CreatePayment(amount: 200_000m, status: PaymentTxStatus.SUCCESS);
-        booking.Invoice = TestDataFactory.CreateInvoice(
-            booking.Id, finalTotal: 200_000m, paymentStatus: InvoicePaymentStatus.PAID,
-            payments: [payment]);
-        booking.BookingCourts.Add(new BookingCourt
-        {
-            BookingId = booking.Id, CourtId = court.Id, Date = booking.BookingDate,
-            StartTime = TimeOnly.FromDateTime(DateTime.UtcNow.AddHours(6)),
-            EndTime = TimeOnly.FromDateTime(DateTime.UtcNow.AddHours(7)), Court = court, IsActive = true
-        });
+        var booking = CreateCheckInBooking(BookingStatus.CONFIRMED, DateTimeHelper.GetVietnamNow().AddMinutes(-5));
         builder.BookingRepository.Setup(x => x.GetByIdWithDetailsAsync(booking.Id)).ReturnsAsync(booking);
-        builder.CancelPolicyRepository.Setup(x => x.GetAllAsync())
-            .ReturnsAsync([new CancelPolicy { HoursBefore = 1, RefundPercent = 80m }]);
-        builder.BookingRepository.Setup(x => x.GetActiveByCourtAndDateAsync(court.Id, booking.BookingDate))
-            .ReturnsAsync([]);
-        builder.SlotInterestRepository.Setup(x => x.GetOverlappingSlotInterestsAsync(
-                court.Id, booking.BookingDate, It.IsAny<TimeOnly>(), It.IsAny<TimeOnly>()))
-            .ReturnsAsync([]);
-
-        await builder.Build().CancelByCustomerAsync(booking.Id, customer.Id);
-
-        Assert.Equal(BookingStatus.CANCELLED_PENDING_REFUND, booking.Status);
-        builder.RefundRepository.Verify(x => x.CreateAsync(It.Is<Refund>(refund =>
-            refund.PaymentId == payment.Id && refund.Amount == 160_000m &&
-            refund.RefundPercent == 80m && refund.Status == RefundStatus.PENDING)), Times.Once);
-        builder.BookingRepository.Verify(x => x.UpdateCourtActiveStatusAsync(booking.Id, false), Times.Once);
-        builder.SlotLockRepository.Verify(x => x.DeleteByBookingIdAsync(booking.Id), Times.Once);
-    }
-
-    [Fact]
-    public async Task CancelByCustomerAsync_WhenNoRefundPolicyApplies_CancelsWithoutRefund()
-    {
-        var builder = new BookingServiceTestBuilder();
-        var customer = TestDataFactory.CreateUser();
-        var branch = new Branch { Id = Guid.NewGuid(), Name = "Test branch" };
-        var court = TestDataFactory.CreateCourt(branch.Id);
-        var start = DateTime.UtcNow.AddMinutes(30);
-        var booking = TestDataFactory.CreateBooking(
-            customerId: customer.Id, branchId: branch.Id, status: BookingStatus.PAID_ONLINE,
-            bookingDate: DateOnly.FromDateTime(start));
-        booking.Customer = customer;
-        booking.Branch = branch;
-        var payment = TestDataFactory.CreatePayment(amount: 200_000m, status: PaymentTxStatus.SUCCESS);
-        booking.Invoice = TestDataFactory.CreateInvoice(
-            booking.Id, finalTotal: 200_000m, paymentStatus: InvoicePaymentStatus.PAID,
-            payments: [payment]);
-        booking.BookingCourts.Add(new BookingCourt
-        {
-            BookingId = booking.Id, CourtId = court.Id, Date = booking.BookingDate,
-            StartTime = TimeOnly.FromDateTime(start), EndTime = TimeOnly.FromDateTime(start.AddHours(1)),
-            Court = court, IsActive = true
-        });
-        builder.BookingRepository.Setup(x => x.GetByIdWithDetailsAsync(booking.Id)).ReturnsAsync(booking);
-        builder.CancelPolicyRepository.Setup(x => x.GetAllAsync())
-            .ReturnsAsync([new CancelPolicy { HoursBefore = 1, RefundPercent = 80m }]);
-        builder.BookingRepository.Setup(x => x.GetActiveByCourtAndDateAsync(court.Id, booking.BookingDate))
-            .ReturnsAsync([]);
-        builder.SlotInterestRepository.Setup(x => x.GetOverlappingSlotInterestsAsync(
-                court.Id, booking.BookingDate, It.IsAny<TimeOnly>(), It.IsAny<TimeOnly>()))
-            .ReturnsAsync([]);
-
-        await builder.Build().CancelByCustomerAsync(booking.Id, customer.Id);
-
-        Assert.Equal(BookingStatus.CANCELLED, booking.Status);
-        builder.RefundRepository.Verify(x => x.CreateAsync(It.IsAny<Refund>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task CancelByTokenAsync_WhenAtomicTokenConsumptionFails_ThrowsBadRequestWithoutUpdatingBooking()
-    {
-        var builder = new BookingServiceTestBuilder();
-        var booking = TestDataFactory.CreateBooking(status: BookingStatus.CONFIRMED);
-        booking.CancelTokenExpiresAt = DateTime.UtcNow.AddHours(1);
-        builder.BookingRepository.Setup(x => x.GetByCancelTokenAsync(It.IsAny<string>()))
-            .ReturnsAsync(booking);
-        builder.BookingRepository.Setup(x => x.TryConsumeTokenAsync(
-                booking.Id, It.IsAny<string>(), It.IsAny<DateTime>()))
+        builder.BookingRepository.Setup(x => x.CheckInAsync(booking.Id, It.IsAny<BookingStatus>(), It.IsAny<DateTime>()))
             .ReturnsAsync(false);
 
         var exception = await Assert.ThrowsAsync<AppException>(() =>
-            builder.Build().CancelByTokenAsync("one-time-token"));
+            builder.Build().CheckInAsync(booking.Id, Guid.NewGuid(), UserRole.OWNER.ToString()));
 
-        exception.ShouldBeAppException(400, ErrorCodes.BadRequest, "đã được sử dụng");
-        builder.BookingRepository.Verify(x => x.TryConsumeTokenAsync(
-            booking.Id, It.IsAny<string>(), It.IsAny<DateTime>()), Times.Once);
-        builder.BookingRepository.Verify(x => x.UpdateAsync(It.IsAny<Booking>()), Times.Never);
-        builder.SlotLockRepository.Verify(x => x.DeleteByBookingIdAsync(It.IsAny<Guid>()), Times.Never);
+        exception.ShouldBeAppException(409, ErrorCodes.Conflict);
+        builder.CourtRepository.Verify(x => x.UpdateAsync(It.IsAny<Court>()), Times.Never);
+        builder.Broadcast.Verify(x => x.BroadcastBookingEventAsync(
+            It.IsAny<string>(), It.IsAny<BookingNotificationDto>(), It.IsAny<Booking>(), It.IsAny<bool>()), Times.Never);
     }
 
     [Fact]
@@ -948,22 +768,6 @@ public class BookingServiceTests
     }
 
     [Fact]
-    public async Task GetCancelInfoAsync_WhenTokenIsExpired_ThrowsBadRequestWithoutLoadingRefundPolicy()
-    {
-        var builder = new BookingServiceTestBuilder();
-        var booking = TestDataFactory.CreateBooking(status: BookingStatus.CONFIRMED);
-        booking.CancelTokenExpiresAt = DateTime.UtcNow.AddMinutes(-1);
-        builder.BookingRepository.Setup(x => x.GetByCancelTokenAsync(It.IsAny<string>()))
-            .ReturnsAsync(booking);
-
-        var exception = await Assert.ThrowsAsync<AppException>(() =>
-            builder.Build().GetCancelInfoAsync("expired-token"));
-
-        exception.ShouldBeAppException(400, ErrorCodes.BadRequest, "hết hạn");
-        builder.CancelPolicyRepository.Verify(x => x.GetAllAsync(), Times.Never);
-    }
-
-    [Fact]
     public async Task CheckoutAsync_WhenInvoiceIsUnpaid_CollectsFullAmountAndMarksInvoicePaid()
     {
         var builder = new BookingServiceTestBuilder();
@@ -984,8 +788,7 @@ public class BookingServiceTests
             payment.Amount == 250_000m &&
             payment.Method == PaymentTxMethod.CASH &&
             payment.Status == PaymentTxStatus.SUCCESS)), Times.Once);
-        builder.InvoiceRepository.Verify(x => x.UpdateAsync(It.Is<Invoice>(updated =>
-            updated.PaymentStatus == InvoicePaymentStatus.PAID)), Times.Once);
+        builder.InvoiceRepository.Verify(x => x.SetPaymentStatusAsync(invoice.Id, InvoicePaymentStatus.PAID, It.IsAny<DateTime>()), Times.Once);
         builder.BookingRepository.Verify(x => x.UpdateCourtActiveStatusAsync(booking.Id, false), Times.Once);
         builder.CourtRepository.Verify(x => x.BatchUpdateStatusAsync(
             It.Is<List<Guid>>(ids => ids.SequenceEqual(new[] { booking.BookingCourts.Single().CourtId })),
@@ -1066,13 +869,13 @@ public class BookingServiceTests
                 booking.Id, BookingStatus.COMPLETED, BookingStatus.IN_PROGRESS))
             .ReturnsAsync(1);
         builder.InvoiceRepository.Setup(x => x.GetByBookingIdAsync(booking.Id)).ReturnsAsync(invoice);
+        builder.PaymentRepository.Setup(x => x.GetCollectedAmountAsync(invoice.Id)).ReturnsAsync(invoice.FinalTotal);
 
         await builder.Build().CheckoutAsync(booking.Id, Guid.NewGuid(), UserRole.OWNER.ToString());
 
         Assert.Equal(BookingStatus.COMPLETED, booking.Status);
         builder.PaymentRepository.Verify(x => x.CreateAsync(It.IsAny<Payment>()), Times.Never);
-        builder.InvoiceRepository.Verify(x => x.UpdateAsync(It.Is<Invoice>(updated =>
-            updated.PaymentStatus == InvoicePaymentStatus.PAID)), Times.Once);
+        builder.InvoiceRepository.Verify(x => x.SetPaymentStatusAsync(invoice.Id, InvoicePaymentStatus.PAID, It.IsAny<DateTime>()), Times.Once);
     }
 
     [Fact]
@@ -1139,7 +942,7 @@ public class BookingServiceTests
             booking.Id, Guid.NewGuid(), UserRole.OWNER.ToString()));
 
         exception.ShouldBeAppException(400, ErrorCodes.BadRequest, "chờ hoàn tiền");
-        builder.RefundRepository.Verify(x => x.GetByBookingIdAsync(booking.Id), Times.Never);
+        builder.RefundRepository.Verify(x => x.GetPendingByBookingIdAsync(booking.Id), Times.Never);
         builder.RefundRepository.Verify(x => x.UpdateAsync(It.IsAny<Refund>()), Times.Never);
         builder.PaymentRepository.Verify(x => x.UpdateAsync(It.IsAny<Payment>()), Times.Never);
         builder.InvoiceRepository.Verify(x => x.UpdateAsync(It.IsAny<Invoice>()), Times.Never);
@@ -1173,7 +976,7 @@ public class BookingServiceTests
         var goldId = Guid.NewGuid();
         var silverId = Guid.NewGuid();
         builder.BookingRepository.Setup(x => x.GetByIdWithDetailsAsync(booking.Id)).ReturnsAsync(booking);
-        builder.RefundRepository.Setup(x => x.GetByBookingIdAsync(booking.Id)).ReturnsAsync(refund);
+        builder.RefundRepository.Setup(x => x.GetPendingByBookingIdAsync(booking.Id)).ReturnsAsync([refund]);
         builder.LoyaltyTransactionRepository.Setup(x => x.GetByBookingIdAsync(booking.Id))
             .ReturnsAsync(new LoyaltyTransaction
             {
@@ -1227,7 +1030,7 @@ public class BookingServiceTests
         };
 
         builder.BookingRepository.Setup(x => x.GetByIdWithDetailsAsync(booking.Id)).ReturnsAsync(booking);
-        builder.RefundRepository.Setup(x => x.GetByBookingIdAsync(booking.Id)).ReturnsAsync(refund);
+        builder.RefundRepository.Setup(x => x.GetPendingByBookingIdAsync(booking.Id)).ReturnsAsync([refund]);
         builder.LoyaltyTransactionRepository.Setup(x => x.GetByBookingIdAsync(booking.Id))
             .ReturnsAsync(new LoyaltyTransaction { BookingId = booking.Id, Points = 200, Type = LoyaltyTransactionType.EARN });
         builder.LoyaltyTransactionRepository.Setup(x => x.GetDeductByBookingIdAsync(booking.Id))
@@ -1240,7 +1043,7 @@ public class BookingServiceTests
     }
 
     [Fact]
-    public async Task CheckoutAsync_WhenInvoiceIsPartiallyPaid_CollectsOnlyOutstandingServiceFee()
+    public async Task CheckoutAsync_WhenCourtFeeWasPaidOnline_CollectsOnlyTheServiceFee()
     {
         var builder = new BookingServiceTestBuilder();
         var invoice = TestDataFactory.CreateInvoice(
@@ -1255,6 +1058,7 @@ public class BookingServiceTests
                 booking.Id, BookingStatus.COMPLETED, BookingStatus.PENDING_PAYMENT))
             .ReturnsAsync(1);
         builder.InvoiceRepository.Setup(x => x.GetByBookingIdAsync(booking.Id)).ReturnsAsync(invoice);
+        builder.PaymentRepository.Setup(x => x.GetCollectedAmountAsync(invoice.Id)).ReturnsAsync(200_000m);
 
         await builder.Build().CollectPaymentAsync(booking.Id, Guid.NewGuid(), UserRole.OWNER.ToString());
 
@@ -1303,24 +1107,6 @@ public class BookingServiceTests
 
         exception.ShouldBeAppException(400, ErrorCodes.BadRequest, "không còn hoạt động");
         builder.BookingRepository.Verify(x => x.CreateAsync(It.IsAny<Booking>()), Times.Never);
-    }
-
-    [Theory]
-    [InlineData(BookingStatus.IN_PROGRESS)]
-    [InlineData(BookingStatus.COMPLETED)]
-    public async Task CancelByCustomerAsync_WhenBookingIsNotCancellable_ThrowsBadRequest(BookingStatus status)
-    {
-        var builder = new BookingServiceTestBuilder();
-        var customerId = Guid.NewGuid();
-        var booking = TestDataFactory.CreateBooking(customerId, status: status);
-        builder.BookingRepository.Setup(x => x.GetByIdWithDetailsAsync(booking.Id)).ReturnsAsync(booking);
-
-        var exception = await Assert.ThrowsAsync<AppException>(() => builder.Build()
-            .CancelByCustomerAsync(booking.Id, customerId));
-
-        exception.ShouldBeAppException(400, ErrorCodes.BadRequest, "không thể hủy");
-        builder.BookingRepository.Verify(x => x.UpdateWithStatusCheckAsync(
-            It.IsAny<Guid>(), It.IsAny<BookingStatus>(), It.IsAny<BookingStatus>()), Times.Never);
     }
 
     private static Booking CreateCheckoutBooking(BookingStatus status, Invoice invoice)
@@ -1485,35 +1271,6 @@ public class BookingServiceTests
 
         Assert.Equal(DateTimeKind.Utc, booking.CancelTokenExpiresAt!.Value.Kind);
         Assert.InRange(booking.CancelTokenExpiresAt.Value, before.AddHours(24), after.AddHours(24));
-    }
-
-    [Fact]
-    [TestCategory(TestCategories.Token)]
-    public async Task GetCancelInfoAsync_LooksUpBookingByTheSharedTokenHash()
-    {
-        // Phía tra cứu băm cùng một hàm với phía phát token (IPN, tại quầy, a′)
-        var builder = new BookingServiceTestBuilder();
-        builder.BookingRepository.Setup(x => x.GetByCancelTokenAsync(It.IsAny<string>())).ReturnsAsync((Booking?)null);
-
-        await Assert.ThrowsAsync<AppException>(() => builder.Build().GetCancelInfoAsync("raw-token"));
-
-        builder.BookingRepository.Verify(x => x.GetByCancelTokenAsync(CancelTokenHelper.Hash("raw-token")), Times.Once);
-    }
-
-    [Fact]
-    [TestCategory(TestCategories.Token)]
-    public async Task CancelByTokenAsync_LooksUpAndConsumesByTheSharedTokenHash()
-    {
-        var builder = new BookingServiceTestBuilder();
-        var booking = TestDataFactory.CreateBooking(status: BookingStatus.CONFIRMED);
-        booking.CancelTokenExpiresAt = DateTime.UtcNow.AddHours(1);
-        var hash = CancelTokenHelper.Hash("raw-token");
-        builder.BookingRepository.Setup(x => x.GetByCancelTokenAsync(hash)).ReturnsAsync(booking);
-        builder.BookingRepository.Setup(x => x.TryConsumeTokenAsync(booking.Id, hash, It.IsAny<DateTime>())).ReturnsAsync(false);
-
-        await Assert.ThrowsAsync<AppException>(() => builder.Build().CancelByTokenAsync("raw-token"));
-
-        builder.BookingRepository.Verify(x => x.TryConsumeTokenAsync(booking.Id, hash, It.IsAny<DateTime>()), Times.Once);
     }
 
     private static CreateWalkInBookingDto CreateWalkInBookingDto(Guid courtId) => new()

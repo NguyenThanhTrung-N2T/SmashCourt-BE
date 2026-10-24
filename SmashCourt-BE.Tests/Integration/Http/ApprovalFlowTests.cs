@@ -203,11 +203,15 @@ public sealed partial class ApprovalFlowTests(PostgreSqlIntegrationFixture datab
         var today = DateOnly.FromDateTime(vnNow);
         var start = TimeOnly.FromDateTime(vnNow.AddMinutes(-5));
         start = new TimeOnly(start.Hour, start.Minute);
+        if (start > TimeOnly.FromDateTime(vnNow))
+            start = TimeOnly.MinValue; // vừa qua nửa đêm
+        // Giờ kết thúc phải cùng ngày (chk_booking_courts_valid_time): sau 23:00 cộng một giờ sẽ vòng qua 00:xx
+        var end = start < new TimeOnly(23, 0) ? start.AddHours(1) : new TimeOnly(23, 59);
         await WithDbAsync(db => db.Bookings.Where(b => b.Id == pending.BookingId)
             .ExecuteUpdateAsync(s => s.SetProperty(b => b.BookingDate, today)));
         await WithDbAsync(db => db.BookingCourts.Where(c => c.BookingId == pending.BookingId)
             .ExecuteUpdateAsync(s => s.SetProperty(c => c.Date, today).SetProperty(c => c.StartTime, start)
-                .SetProperty(c => c.EndTime, start.AddHours(1))));
+                .SetProperty(c => c.EndTime, end)));
 
         using var checkIn = await managerClient.PostAsync($"/api/bookings/{pending.BookingId}/check-in", null);
         Assert.True(checkIn.IsSuccessStatusCode, await checkIn.Content.ReadAsStringAsync());

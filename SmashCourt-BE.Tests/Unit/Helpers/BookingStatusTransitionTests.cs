@@ -30,7 +30,9 @@ public class BookingStatusTransitionTests
         (BookingStatus.IN_PROGRESS, BookingStatus.COMPLETED),
         (BookingStatus.PENDING_PAYMENT, BookingStatus.COMPLETED),
         (BookingStatus.CANCELLED_PENDING_REFUND, BookingStatus.CANCELLED_REFUNDED),
-        (BookingStatus.CANCELLED, BookingStatus.CANCELLED_PENDING_REFUND)
+        (BookingStatus.CANCELLED, BookingStatus.CANCELLED_PENDING_REFUND),
+        // Tiền của một link khác về sau khi đã hoàn xong: đơn quay lại chờ hoàn cho khoản mới
+        (BookingStatus.CANCELLED_REFUNDED, BookingStatus.CANCELLED_PENDING_REFUND)
     ];
 
     public static TheoryData<BookingStatus, BookingStatus> AllPairs()
@@ -53,9 +55,17 @@ public class BookingStatusTransitionTests
     [Fact]
     public void CanTransition_FromTerminalStatuses_AllowsNothing()
     {
-        foreach (var terminal in new[] { BookingStatus.COMPLETED, BookingStatus.NO_SHOW, BookingStatus.CANCELLED_REFUNDED })
+        foreach (var terminal in new[] { BookingStatus.COMPLETED, BookingStatus.NO_SHOW })
             foreach (var to in Enum.GetValues<BookingStatus>())
                 Assert.False(BookingStatusTransition.CanTransition(terminal, to), $"{terminal} -> {to}");
+    }
+
+    [Fact]
+    public void CanTransition_FromRefunded_OnlyBackToPendingRefund()
+    {
+        foreach (var to in Enum.GetValues<BookingStatus>())
+            Assert.Equal(to == BookingStatus.CANCELLED_PENDING_REFUND,
+                BookingStatusTransition.CanTransition(BookingStatus.CANCELLED_REFUNDED, to));
     }
 
     [Theory]

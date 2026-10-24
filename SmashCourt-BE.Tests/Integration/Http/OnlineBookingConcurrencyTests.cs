@@ -173,9 +173,8 @@ public sealed class OnlineBookingConcurrencyTests(PostgreSqlIntegrationFixture d
         // Việc hủy của nhân viên giữ nguyên, transaction 2 không ghi gì
         Assert.Equal(BookingStatus.CANCELLED, booking.Status);
         Assert.Equal(CancelSourceEnum.STAFF, booking.CancelSource);
-        // Đường hủy hiện có của nhân viên chưa ghi cancel_reason (6A-4 đưa về lõi hủy chung với STAFF_CANCELLED, spec 7.9);
-        // điều cần chứng minh ở đây: transaction 2 không ghi đè thành lý do của nhánh (POLICY_REJECTED)
-        Assert.NotEqual(BookingCancelReason.POLICY_REJECTED, booking.CancelReason);
+        // Transaction 2 không ghi đè lý do của nhân viên thành lý do của nhánh (POLICY_REJECTED)
+        Assert.Equal(BookingCancelReason.STAFF_CANCELLED, booking.CancelReason);
         Assert.Null(booking.TadssDecisionId);
         Assert.Null(booking.CancelTokenHash);
         Assert.Null(booking.Invoice?.DepositSource);
@@ -210,7 +209,7 @@ public sealed class OnlineBookingConcurrencyTests(PostgreSqlIntegrationFixture d
     [Trait("Catalog", "G-02")]
     public async Task StaffCancelsASmallDepositOrder_NoUseIsCounted()
     {
-        // Nhánh a′ thua cổng không tăng lượt; lượt chỉ phản ánh đường hủy cũ của nhân viên (giảm 1, sửa ở 6A-4 theo 7.9 bước 5)
+        // Nhánh a′ thua câu cập nhật có điều kiện nên không tăng lượt; nhân viên hủy đơn online chưa có tiền về cũng không trả lượt
         var tadss = await GetTadssAsync();
         using var _ = await UseTadssAsync(timeoutMs: 3_000);
         ReplyByBranch(tadss, "a'", SlowTadss);
@@ -220,6 +219,6 @@ public sealed class OnlineBookingConcurrencyTests(PostgreSqlIntegrationFixture d
         var (call, booking) = await StaffCancelsWhileWaitingAsync(court, promotion.Id);
 
         await AssertLostGateAsync(call, booking);
-        Assert.Equal(2, await ReadUsedCountAsync(promotion.Id));
+        Assert.Equal(3, await ReadUsedCountAsync(promotion.Id));
     }
 }

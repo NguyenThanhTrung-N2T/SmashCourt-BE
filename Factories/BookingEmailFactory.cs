@@ -3,6 +3,7 @@ using SmashCourt_BE.DTOs.Email;
 using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
+using SmashCourt_BE.Services.Deposit;
 
 namespace SmashCourt_BE.Factories;
 
@@ -67,6 +68,11 @@ public static class BookingEmailFactory
             ? "-" + FormatCurrency(invoice.PromotionDiscountAmount)
             : null;
 
+        // Chỉ hiện phần cọc khi khách mới trả một phần, phần còn lại thu tại quầy
+        var remaining = invoice?.DepositAmount is > 0 and var deposit
+            ? DepositFieldsMapper.RemainingAmount(invoice.FinalTotal, deposit)
+            : 0m;
+
         var paymentMethod = MapPaymentMethod(invoice?.Payments?.FirstOrDefault()?.Method);
         var paymentStatus = MapPaymentStatus(invoice?.PaymentStatus);
 
@@ -97,6 +103,8 @@ public static class BookingEmailFactory
             PromotionDiscount = promotionDiscount,
             PaymentMethod = paymentMethod,
             PaymentStatus = paymentStatus,
+            DepositPaid = remaining > 0 ? FormatCurrency(invoice!.DepositAmount!.Value) : null,
+            RemainingAmount = remaining > 0 ? FormatCurrency(remaining) : null,
             CancelUrl = cancelUrl
         };
     }

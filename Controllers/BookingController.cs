@@ -17,11 +17,14 @@ namespace SmashCourt_BE.Controllers
     {
         private readonly IBookingService _service;
         private readonly IBookingApprovalService _approvalService;
+        private readonly IBookingCancellationService _cancellationService;
 
-        public BookingController(IBookingService service, IBookingApprovalService approvalService)
+        public BookingController(
+            IBookingService service, IBookingApprovalService approvalService, IBookingCancellationService cancellationService)
         {
             _service = service;
             _approvalService = approvalService;
+            _cancellationService = cancellationService;
         }
         [HttpGet("{bookingId:guid}")]
         [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
@@ -286,7 +289,7 @@ namespace SmashCourt_BE.Controllers
         {
             var cancelledBy = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
             var role = User.FindFirstValue(ClaimTypes.Role)!;
-            await _service.CancelByStaffAsync(id, cancelledBy, role);
+            await _cancellationService.CancelByStaffAsync(id, cancelledBy, role);
             return Ok(ApiResponse.Ok(message: "Hủy đơn thành công"));
         }
 
@@ -311,7 +314,7 @@ namespace SmashCourt_BE.Controllers
         [HttpGet("cancel/{token}")]
         public async Task<IActionResult> GetCancelInfo(string token)
         {
-            var result = await _service.GetCancelInfoAsync(token);
+            var result = await _cancellationService.GetCancelInfoAsync(token);
             return Ok(ApiResponse<CancelTokenInfoDto>.Ok(result, "Lấy thông tin đặt sân thành công"));
         }
 
@@ -322,7 +325,7 @@ namespace SmashCourt_BE.Controllers
         [HttpPost("cancel/{token}")]
         public async Task<IActionResult> CancelByToken(string token)
         {
-            await _service.CancelByTokenAsync(token);
+            await _cancellationService.CancelByTokenAsync(token);
             return Ok(ApiResponse.Ok(message: "Hủy đơn thành công"));
         }
 

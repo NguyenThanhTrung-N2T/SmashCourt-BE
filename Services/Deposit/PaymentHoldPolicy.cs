@@ -71,6 +71,18 @@ public static class PaymentHoldPolicy
         return true;
     }
 
+    // Thanh toán thất bại: hạn = min(hạn hiện tại, now + ân hạn); chỉ rút ngắn, không mở lại hạn đã qua
+    public static DateTime ForPaymentFailure(DateTime nowUtc, DateTime currentExpiresAtUtc, int graceMinutes)
+    {
+        EnsureUtc(nowUtc, nameof(nowUtc));
+        EnsureUtc(currentExpiresAtUtc, nameof(currentExpiresAtUtc));
+        if (graceMinutes < 1)
+            throw new ArgumentOutOfRangeException(nameof(graceMinutes), graceMinutes, "Số phút phải ≥ 1.");
+
+        var graceEnd = nowUtc.AddMinutes(graceMinutes);
+        return graceEnd < currentExpiresAtUtc ? graceEnd : currentExpiresAtUtc;
+    }
+
     private static void EnsureUtc(DateTime value, string paramName)
     {
         if (value.Kind != DateTimeKind.Utc)

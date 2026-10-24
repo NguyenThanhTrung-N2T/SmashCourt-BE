@@ -1,4 +1,5 @@
-﻿using SmashCourt_BE.Models.Entities;
+using SmashCourt_BE.Models.Entities;
+using SmashCourt_BE.Models.Enums;
 
 namespace SmashCourt_BE.Repositories.IRepository
 {
@@ -11,5 +12,8 @@ namespace SmashCourt_BE.Repositories.IRepository
 
         // Cập nhật invoice
         Task UpdateAsync(Invoice invoice);
+
+        // Đổi trạng thái thanh toán bằng một câu lệnh (không ghi đè các cột khác của hóa đơn)
+        Task SetPaymentStatusAsync(Guid invoiceId, InvoicePaymentStatus status, DateTime nowUtc);
     }
 }

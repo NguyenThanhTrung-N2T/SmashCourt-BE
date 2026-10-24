@@ -144,7 +144,11 @@ builder.Services.AddScoped<IPaymentService, PaymentService>();
 builder.Services.AddScoped<ITimeGridService, TimeGridService>();
 builder.Services.AddScoped<IBookingJob, BookingJob>();
 builder.Services.AddScoped<IBroadcastService, BroadcastService>();
-builder.Services.AddScoped<IVnPayService, VnPayService>();
+// Mỗi cổng thanh toán đăng ký một IPaymentGateway; nghiệp vụ thanh toán dùng chung cho mọi cổng
+builder.Services.AddScoped<IPaymentGateway, VnPayService>();
+builder.Services.AddScoped<IPaymentGatewayResolver, PaymentGatewayResolver>();
+builder.Services.AddScoped<IOnlinePaymentStarter, OnlinePaymentStarter>();
+builder.Services.AddScoped<IPaymentResultService, PaymentResultService>();
 builder.Services.AddScoped<IBranchManagerService, BranchManagerService>();
 builder.Services.AddScoped<IBranchStaffService, BranchStaffService>();
 builder.Services.AddScoped<IBranchUserService, BranchUserService>();
@@ -186,6 +190,7 @@ builder.Services.AddScoped<IBookingDepositService, BookingDepositService>();
 builder.Services.AddScoped<ISlotInterestNotificationService, SlotInterestNotificationService>();
 builder.Services.AddScoped<IBookingApprovalService, BookingApprovalService>();
 builder.Services.AddScoped<IBookingNotificationService, BookingNotificationService>();
+builder.Services.AddScoped<IBookingCancellationService, BookingCancellationService>();
 
 builder.Services.AddScoped<EmailService>();
 builder.Services.AddScoped<OtpService>();

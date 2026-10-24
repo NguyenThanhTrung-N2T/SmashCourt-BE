@@ -34,17 +34,15 @@ namespace SmashCourt_BE.Services
         private readonly ICustomerLoyaltyRepository _loyaltyRepo;
         private readonly ILoyaltyTierRepository _loyaltyTierRepo;
         private readonly ILoyaltyTransactionRepository _loyaltyTransactionRepo;
-        private readonly ICancelPolicyRepository _cancelPolicyRepo;
         private readonly IBranchServiceRepository _branchServiceRepo;
         private readonly ICourtRepository _courtRepo;
         private readonly IUserBranchRepository _userBranchRepo;
         private readonly IUserRepository _userRepo;
         private readonly ITimeSlotRepository _timeSlotRepo;
-        private readonly IVnPayService _vnPayService;
+        private readonly IOnlinePaymentStarter _paymentStarter;
         private readonly EmailService _emailService;
         private readonly ICodeGeneratorService _codeGeneratorService;
         private readonly ISlotInterestRepository _slotInterestRepo;
-        private readonly ISlotInterestNotificationService _slotInterestNotifier;
         private readonly IBookingNotificationService _notifications;
         private readonly IUnitOfWork _unitOfWork;
         private readonly ILogger<BookingService> _logger;
@@ -67,17 +65,15 @@ namespace SmashCourt_BE.Services
             ICustomerLoyaltyRepository loyaltyRepo,
             ILoyaltyTierRepository loyaltyTierRepo,
             ILoyaltyTransactionRepository loyaltyTransactionRepo,
-            ICancelPolicyRepository cancelPolicyRepo,
             IBranchServiceRepository branchServiceRepo,
             ICourtRepository courtRepo,
             IUserBranchRepository userBranchRepo,
             IUserRepository userRepo,
             ITimeSlotRepository timeSlotRepo,
-            IVnPayService vnPayService,
+            IOnlinePaymentStarter paymentStarter,
             EmailService emailService,
             ICodeGeneratorService codeGeneratorService,
             ISlotInterestRepository slotInterestRepo,
-            ISlotInterestNotificationService slotInterestNotifier,
             IBookingNotificationService notifications,
             IUnitOfWork unitOfWork,
             ILogger<BookingService> logger,
@@ -98,17 +94,15 @@ namespace SmashCourt_BE.Services
             _loyaltyRepo = loyaltyRepo;
             _loyaltyTierRepo = loyaltyTierRepo;
             _loyaltyTransactionRepo = loyaltyTransactionRepo;
-            _cancelPolicyRepo = cancelPolicyRepo;
             _branchServiceRepo = branchServiceRepo;
             _courtRepo = courtRepo;
             _userBranchRepo = userBranchRepo;
             _userRepo = userRepo;
             _timeSlotRepo = timeSlotRepo;
-            _vnPayService = vnPayService;
+            _paymentStarter = paymentStarter;
             _emailService = emailService;
             _codeGeneratorService = codeGeneratorService;
             _slotInterestRepo = slotInterestRepo;
-            _slotInterestNotifier = slotInterestNotifier;
             _notifications = notifications;
             _unitOfWork = unitOfWork;
             _logger = logger;
@@ -671,26 +665,11 @@ namespace SmashCourt_BE.Services
             List<(CourtSlotDto Slot, Court Court)> courtEntities,
             DateTime now)
         {
-            var courtNames = string.Join(", ",
-                courtEntities.Select(x => x.Court.Name).Distinct());
-            var courtNamesAscii = StringHelper.RemoveDiacritics(courtNames);
-            var paymentInfo = _vnPayService.CreatePaymentUrl(
-                bookingId.ToString(),
-                amount,
-                $"Dat san {courtNamesAscii}");
-
-            await _paymentRepo.CreateAsync(new Payment
-            {
-                InvoiceId = invoiceId,
-                Method = PaymentTxMethod.VNPAY,
-                Amount = amount,
-                Status = PaymentTxStatus.PENDING,
-                TransactionRef = paymentInfo.TransactionRef,
-                CreatedAt = now,
-                UpdatedAt = now
-            });
-
-            return paymentInfo.Url;
+            var courtNames = string.Join(", ", courtEntities.Select(x => x.Court.Name).Distinct());
+            // Đặt online hiện chỉ thanh toán qua VNPay
+            return await _paymentStarter.StartAsync(
+                invoiceId, bookingId.ToString(), amount, $"Dat san {StringHelper.RemoveDiacritics(courtNames)}",
+                PaymentTxMethod.VNPAY, now);
         }
 
         /// <summary>
@@ -748,8 +727,8 @@ namespace SmashCourt_BE.Services
 
             Guid bookingId;
 
-            using (var transaction = new System.Transactions.TransactionScope(
-                System.Transactions.TransactionScopeAsyncFlowOption.Enabled))
+            // Read Committed như transaction 1 của đặt online: trùng sân do exclusion constraint chặn (23P01/40P01)
+            using (var transaction = TransactionScopeHelper.ReadCommitted())
             {
                 // 2. Check slot_lock + overlap
                 await _slotLockRepo.DeleteExpiredByBranchAsync(branchId);
@@ -970,660 +949,12 @@ namespace SmashCourt_BE.Services
 
             return MapToDto(result!, includeApprovalReasons: true);
         }
-        // Hủy sân bởi nhân viên 
-        public async Task CancelByStaffAsync(
-            Guid id, Guid cancelledBy, string currentUserRole)
-        {
-            var booking = await _bookingRepo.GetByIdWithDetailsAsync(id);
-            if (booking == null)
-                throw new AppException(404, "Không tìm thấy đơn đặt sân", ErrorCodes.NotFound);
-
-            // kiểm tra quyền hủy booking theo chi nhánh
-            await ValidateBranchAccessAsync(booking.BranchId, cancelledBy, currentUserRole);
-
-            var cancellableStatuses = new[]
-            {
-                BookingStatus.PENDING,
-                BookingStatus.CONFIRMED,
-                BookingStatus.PAID_ONLINE
-                // ❌ KHÔNG cho hủy IN_PROGRESS - khách đang chơi phải dùng checkout sớm
-            };
-
-            if (!cancellableStatuses.Contains(booking.Status))
-                throw new AppException(400,
-                    "Không thể hủy đơn ở trạng thái này", ErrorCodes.BadRequest);
-
-            var invoice = booking.Invoice;
-            var now = DateTime.UtcNow;
-
-            // Set CANCELLED trước (default)
-            booking.Status = BookingStatus.CANCELLED;
-            booking.CancelledBy = cancelledBy;
-            booking.CancelledAt = now;
-            booking.CancelSource = CancelSourceEnum.STAFF;
-            booking.UpdatedAt = now;
-
-            // cập nhật booking_court → is_active = false
-            await _bookingRepo.UpdateCourtActiveStatusAsync(booking.Id, false);
-
-            // Xóa slot_lock nếu có
-            await _slotLockRepo.DeleteByBookingIdAsync(booking.Id);
-
-            // Cập nhật court → AVAILABLE (kiểm tra guard để tránh conflict)
-            // bc.Court đã được load sẵn qua GetByIdWithDetailsAsync().ThenInclude
-            foreach (var bc in booking.BookingCourts)
-            {
-                var court = bc.Court;
-                if (court != null)
-                {
-                    // Chỉ set AVAILABLE nếu court không ở trạng thái đặc biệt
-                    if (court.Status != CourtStatus.SUSPENDED &&
-                        court.Status != CourtStatus.IN_USE &&
-                        court.Status != CourtStatus.INACTIVE)
-                    {
-                        court.Status = CourtStatus.AVAILABLE;
-                        court.UpdatedAt = now;
-                        await _courtRepo.UpdateAsync(court);
-                    }
-                }
-            }
-
-            // Xử lý refund nếu đã thanh toán
-            decimal refundAmount = 0;
-            if (invoice?.PaymentStatus != InvoicePaymentStatus.UNPAID)
-            {
-                // Defensive: Check BookingCourts không empty
-                var firstCourt = booking.BookingCourts.FirstOrDefault();
-                if (firstCourt == null)
-                    throw new AppException(500, "Booking không có sân nào", ErrorCodes.InternalError);
-
-                var refundPercent = await CalculateRefundPercentAsync(
-                    firstCourt.StartTime, booking.BookingDate);
-
-                var payment = invoice?.Payments?.FirstOrDefault(
-                    p => p.Status == PaymentTxStatus.SUCCESS);
-
-                // Chỉ tạo refund và set CANCELLED_PENDING_REFUND khi thực sự có tiền hoàn
-                if (payment != null && refundPercent > 0)
-                {
-                    // Dùng invoice.FinalTotal thay vì payment.Amount để nhất quán với GetCancelInfoAsync
-                    refundAmount = Math.Round(invoice!.FinalTotal * refundPercent / 100, 0);
-
-                    await _refundRepo.CreateAsync(new Refund
-                    {
-                        PaymentId = payment.Id,
-                        Amount = refundAmount,
-                        RefundPercent = refundPercent,
-                        Status = RefundStatus.PENDING,
-                        CreatedAt = now
-                    });
-
-                    // Chỉ set CANCELLED_PENDING_REFUND khi thực sự có tiền cần hoàn
-                    booking.Status = BookingStatus.CANCELLED_PENDING_REFUND;
-                }
-                // refundPercent = 0 → giữ CANCELLED, không tạo refund
-            }
-
-            await _bookingRepo.UpdateAsync(booking);
-
-            // 🎯 Giảm usage count của promotion (nếu có)
-            // Khi hủy booking, cần giải phóng slot promotion cho customer khác
-            if (booking.BookingPromotion != null)
-            {
-                await _promotionRepo.DecrementUsageCountAsync(booking.BookingPromotion.PromotionId);
-                _logger.LogInformation(
-                    "[PROMOTION_USAGE] Decremented usage for promotion (staff cancel) | PromotionId={PromotionId} | BookingId={BookingId}",
-                    booking.BookingPromotion.PromotionId, booking.Id);
-            }
-
-            // Gửi email thông báo hủy
-            try
-            {
-                var email = booking.Customer?.Email ?? booking.GuestEmail;
-                var name = booking.Customer?.FullName ?? booking.GuestName;
-                if (!string.IsNullOrEmpty(email))
-                    await _emailService.SendCancelConfirmationAsync(
-                        email, name!, booking.Id,
-                        booking.Branch.Name,
-                        booking.Branch.Address,
-                        booking.Branch.Phone,
-                        refundAmount);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to send cancel email for booking {Id}", booking.Id);
-            }
-
-            // Notify users interested in the freed slots (after commit, outside transaction)
-            await _slotInterestNotifier.NotifyReleasedSlotsAsync(booking);
-
-            // Broadcast SignalR notification
-            var customerName = booking.Customer?.FullName ?? booking.GuestName ?? "Khách";
-            // includeTimeGrid=true: cancellation releases slot
-            await _broadcast.BroadcastBookingEventAsync(
-                SignalREvents.BookingCancelled,
-                new BookingNotificationDto
-                {
-                    BookingId = booking.Id,
-                    CustomerId = booking.CustomerId ?? Guid.Empty,
-                    CustomerName = customerName,
-                    BranchId = booking.BranchId,
-                    BranchName = booking.Branch.Name,
-                    CourtIds = booking.BookingCourts.Select(bc => bc.CourtId.ToString()).ToList(),
-                    Status = booking.Status.ToString(),
-                    Message = $"Booking #{booking.BookingCode} của {customerName} đã được yêu cầu hủy",
-                    Timestamp = DateTimeHelper.GetUtcNow()
-                },
-                booking,
-                includeTimeGrid: true
-            );
-        }
-
         // Thu tiền cho booking đang chờ (PENDING_PAYMENT) và hoàn tất đơn
         public async Task CollectPaymentAsync(Guid id, Guid currentUserId, string currentUserRole)
         {
             // Reuse Checkout logic which already handles PENDING_PAYMENT and IN_PROGRESS states,
             // creates necessary Payment records and updates invoice/booking status.
             await CheckoutAsync(id, currentUserId, currentUserRole);
-        }
-
-        /// <summary>
-        /// Hủy booking bởi khách hàng (authenticated cancel from booking history)
-        /// Flow: Validate ownership → Atomic status update → Update courts → Create refund → Send email
-        /// </summary>
-        /// <param name="id">Booking ID</param>
-        /// <param name="customerId">Customer user ID (from JWT)</param>
-        public async Task CancelByCustomerAsync(Guid id, Guid customerId)
-        {
-            // 1. Tìm booking với details
-            var booking = await _bookingRepo.GetByIdWithDetailsAsync(id);
-            if (booking == null)
-                throw new AppException(404, "Không tìm thấy đơn đặt sân", ErrorCodes.NotFound);
-
-            // 2. Validate ownership — customer chỉ được hủy booking của chính mình
-            // Guest bookings (CustomerId = null) không thể hủy qua endpoint này
-            if (!booking.CustomerId.HasValue || booking.CustomerId.Value != customerId)
-                throw new AppException(403,
-                    "Bạn không có quyền hủy đơn này", ErrorCodes.Forbidden);
-
-            // 3. Kiểm tra tài khoản có bị khóa không
-            if (booking.Customer?.Status == UserStatus.LOCKED)
-                throw new AppException(403,
-                    "Tài khoản bị khóa, vui lòng liên hệ nhân viên",
-                    ErrorCodes.AccountLocked);
-
-            // 4. IDEMPOTENCY: Nếu booking đã bị hủy rồi, trả về success (không throw error)
-            // Tránh lỗi khi user click nút hủy nhiều lần
-            if (booking.Status == BookingStatus.CANCELLED ||
-                booking.Status == BookingStatus.CANCELLED_PENDING_REFUND ||
-                booking.Status == BookingStatus.CANCELLED_REFUNDED)
-            {
-                return;
-            }
-
-            // 5. Kiểm tra trạng thái có thể hủy không
-            // Chỉ cho phép hủy CONFIRMED (walk-in) hoặc PAID_ONLINE (online booking đã thanh toán)
-            var cancellableStatuses = new[]
-            {
-                BookingStatus.CONFIRMED,
-                BookingStatus.PAID_ONLINE
-            };
-
-            if (!cancellableStatuses.Contains(booking.Status))
-                throw new AppException(400,
-                    "Đơn đặt sân không thể hủy ở trạng thái hiện tại",
-                    ErrorCodes.BadRequest);
-
-            // 6. Validate booking có courts không (safety check)
-            var firstCourt = booking.BookingCourts.FirstOrDefault()
-                ?? throw new AppException(500, "Booking không có sân", ErrorCodes.InternalError);
-
-            var invoice = booking.Invoice;
-            decimal refundAmount = 0;
-            var now = DateTime.UtcNow;
-
-            // 7. Transaction scope - đảm bảo tất cả DB operations là atomic
-            using (var transaction = new System.Transactions.TransactionScope(
-                System.Transactions.TransactionScopeAsyncFlowOption.Enabled))
-            {
-                var statusUpdated = await _bookingRepo.UpdateWithStatusCheckAsync(
-                    booking.Id, BookingStatus.CANCELLED, booking.Status);
-                if (statusUpdated == 0)
-                    throw new AppException(409,
-                        "Đơn đã được xử lý bởi người khác",
-                        ErrorCodes.Conflict);
-
-                // 7.1. Set booking status = CANCELLED (default, có thể đổi thành CANCELLED_PENDING_REFUND sau)
-                booking.Status = BookingStatus.CANCELLED;
-                booking.CancelledAt = now;
-                booking.CancelSource = CancelSourceEnum.CUSTOMER;
-                booking.UpdatedAt = now;
-
-                // 7.2. Vô hiệu hóa cancel token nếu có (customer đã cancel qua app, không cần token nữa)
-                if (!string.IsNullOrEmpty(booking.CancelTokenHash))
-                {
-                    booking.CancelTokenUsedAt = now;
-                }
-
-                // 7.3. Cập nhật booking_courts → is_active = false
-                await _bookingRepo.UpdateCourtActiveStatusAsync(booking.Id, false);
-
-                // 7.4. Xóa slot_lock nếu có (cleanup)
-                await _slotLockRepo.DeleteByBookingIdAsync(booking.Id);
-
-                // 7.5. Batch update court status → AVAILABLE
-                var courtIds = booking.BookingCourts
-                    .Where(bc => bc.Court != null)
-                    .Select(bc => bc.CourtId)
-                    .ToList();
-
-                if (courtIds.Any())
-                {
-                    // Check busy courts cho TẤT CẢ courtIds
-                    var busyIds = new HashSet<Guid>();
-
-                    foreach (var courtId in courtIds)
-                    {
-                        var busyCourts = await _bookingRepo.GetActiveByCourtAndDateAsync(
-                            courtId, booking.BookingDate);
-
-                        // Lọc ra courts của booking khác (không phải booking đang cancel)
-                        foreach (var bc in busyCourts.Where(bc => bc.BookingId != booking.Id))
-                        {
-                            busyIds.Add(bc.CourtId);
-                        }
-                    }
-
-                    // Chỉ update courts không bị busy
-                    var courtsToUpdate = courtIds.Where(id => !busyIds.Contains(id)).ToList();
-
-                    if (courtsToUpdate.Any())
-                    {
-                        await _courtRepo.BatchUpdateStatusAsync(
-                            courtsToUpdate,
-                            CourtStatus.AVAILABLE,
-                            now);
-
-                        _logger.LogInformation(
-                            "[CANCEL_CUSTOMER] Updated {Count} courts to AVAILABLE. Skipped {SkippedCount} busy courts.",
-                            courtsToUpdate.Count, busyIds.Count);
-                    }
-                }
-
-                // 7.6. Xử lý refund nếu đã thanh toán
-                if (invoice?.PaymentStatus != InvoicePaymentStatus.UNPAID)
-                {
-                    // Tính % refund dựa trên cancel policy
-                    var refundPercent = await CalculateRefundPercentAsync(
-                        firstCourt.StartTime, booking.BookingDate);
-
-                    var payment = invoice?.Payments?.FirstOrDefault(
-                        p => p.Status == PaymentTxStatus.SUCCESS);
-
-                    if (payment != null && refundPercent > 0)
-                    {
-                        // Tính số tiền hoàn = FinalTotal * refundPercent / 100
-                        refundAmount = Math.Round(invoice!.FinalTotal * refundPercent / 100, 0);
-
-                        // Tạo refund record với status PENDING (chờ staff confirm)
-                        await _refundRepo.CreateAsync(new Refund
-                        {
-                            PaymentId = payment.Id,
-                            Amount = refundAmount,
-                            RefundPercent = refundPercent,
-                            Status = RefundStatus.PENDING,
-                            CreatedAt = now
-                        });
-
-                        // Đổi status thành CANCELLED_PENDING_REFUND
-                        booking.Status = BookingStatus.CANCELLED_PENDING_REFUND;
-                    }
-                }
-
-                // 7.7. Lưu booking với status mới
-                await _bookingRepo.UpdateAsync(booking);
-
-                // 🎯 Giảm usage count của promotion (nếu có) - trong transaction để atomic
-                // Khi customer cancel booking, cần giải phóng slot promotion cho customer khác
-                if (booking.BookingPromotion != null)
-                {
-                    await _promotionRepo.DecrementUsageCountAsync(booking.BookingPromotion.PromotionId);
-                    _logger.LogInformation(
-                        "[PROMOTION_USAGE] Decremented usage for promotion (customer cancel) | PromotionId={PromotionId} | BookingId={BookingId}",
-                        booking.BookingPromotion.PromotionId, booking.Id);
-                }
-
-                // 7.8. Commit transaction
-                transaction.Complete();
-            }
-
-            // 8. Logging để tracking
-            _logger.LogInformation(
-                "[CANCEL_CUSTOMER] Booking {BookingId} cancelled by customer {CustomerId}. Refund: {RefundAmount} VND",
-                booking.Id, customerId, refundAmount);
-
-            // 9. Gửi email xác nhận hủy NGOÀI transaction
-            // Lỗi email không ảnh hưởng đến việc hủy booking
-            try
-            {
-                var email = booking.Customer?.Email ?? booking.GuestEmail;
-                var name = booking.Customer?.FullName ?? booking.GuestName;
-                if (!string.IsNullOrEmpty(email))
-                    await _emailService.SendCancelConfirmationAsync(
-                        email, name!, booking.Id,
-                        booking.Branch.Name,
-                        booking.Branch.Address,
-                        booking.Branch.Phone,
-                        refundAmount);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to send cancel email for booking {BookingId}", booking.Id);
-            }
-
-            // Notify users interested in the freed slots (sau commit, ngoài transaction)
-            await _slotInterestNotifier.NotifyReleasedSlotsAsync(booking);
-
-            // Broadcast SignalR notification
-            var customerName = booking.Customer?.FullName ?? booking.GuestName ?? "Khách";
-            // includeTimeGrid=true: cancellation releases slot
-            await _broadcast.BroadcastBookingEventAsync(
-                SignalREvents.BookingCancelled,
-                new BookingNotificationDto
-                {
-                    BookingId = booking.Id,
-                    CustomerId = booking.CustomerId ?? Guid.Empty,
-                    CustomerName = customerName,
-                    BranchId = booking.BranchId,
-                    BranchName = booking.Branch.Name,
-                    CourtIds = booking.BookingCourts.Select(bc => bc.CourtId.ToString()).ToList(),
-                    Status = booking.Status.ToString(),
-                    Message = $"Booking #{booking.BookingCode} của {customerName} đã được yêu cầu hủy",
-                    Timestamp = DateTimeHelper.GetUtcNow()
-                },
-                booking,
-                includeTimeGrid: true
-            );
-        }
-
-        // Lấy thông tin hủy booking theo token (dùng cho khách hàng hủy booking online)
-        public async Task<CancelTokenInfoDto> GetCancelInfoAsync(string token)
-        {
-            var tokenHash = CancelTokenHelper.Hash(token);
-            var booking = await _bookingRepo.GetByCancelTokenAsync(tokenHash);
-
-            if (booking == null)
-                throw new AppException(404,
-                    "Link hủy không hợp lệ hoặc đã hết hạn", ErrorCodes.NotFound);
-
-            if (booking.CancelTokenUsedAt.HasValue)
-                throw new AppException(400,
-                    "Link hủy đã được sử dụng", ErrorCodes.BadRequest);
-
-            if (booking.CancelTokenExpiresAt < DateTimeHelper.GetUtcNow())
-                throw new AppException(400,
-                    "Link hủy đã hết hạn", ErrorCodes.BadRequest);
-
-            // Kiểm tra tài khoản có bị khóa không
-            if (booking.CustomerId.HasValue && booking.Customer?.Status == UserStatus.LOCKED)
-                throw new AppException(403,
-                    "Tài khoản bị khóa, vui lòng liên hệ nhân viên để được hỗ trợ",
-                    ErrorCodes.AccountLocked);
-
-            // Defensive: Check BookingCourts không empty
-            // Các sân trong cùng booking đều có chung StartTime/EndTime
-            // → lấy FirstOrDefault() cho thời gian là đúng; CourtNames liệt kê tất cả sân
-            var firstCourt = booking.BookingCourts.FirstOrDefault();
-            if (firstCourt == null)
-                throw new AppException(500, "Booking không có sân nào", ErrorCodes.InternalError);
-
-            var refundPercent = await CalculateRefundPercentAsync(
-                firstCourt.StartTime, booking.BookingDate);
-
-            var invoice = booking.Invoice;
-            var refundAmount = invoice != null
-                ? Math.Round(invoice.FinalTotal * refundPercent / 100, 0)
-                : 0;
-
-            return new CancelTokenInfoDto
-            {
-                BookingId = booking.Id,
-                BranchName = booking.Branch.Name,
-                CourtNames = booking.BookingCourts
-                    .Select(bc => bc.Court?.Name ?? string.Empty)
-                    .Where(n => !string.IsNullOrEmpty(n))
-                    .ToList(),
-                BookingDate = booking.BookingDate.ToDateTime(TimeOnly.MinValue),
-                StartTime = firstCourt.StartTime.ToTimeSpan(),
-                EndTime = firstCourt.EndTime.ToTimeSpan(),
-                RefundAmount = refundAmount,
-                RefundPercent = refundPercent,
-                Status = booking.Status.ToString()
-            };
-        }
-
-        /// <summary>
-        /// Hủy booking qua cancel token (link hủy trong email)
-        /// Flow: Validate → Atomic token consumption → Update booking → Batch update courts → Create refund → Send email
-        /// </summary>
-        /// <param name="token">Cancel token từ URL (plain text, chưa hash)</param>
-        public async Task CancelByTokenAsync(string token)
-        {
-            // 1. Hash token và tìm booking
-            var tokenHash = CancelTokenHelper.Hash(token);
-            var booking = await _bookingRepo.GetByCancelTokenAsync(tokenHash);
-
-            if (booking == null)
-                throw new AppException(404,
-                    "Link hủy không hợp lệ", ErrorCodes.NotFound);
-
-            // 2. Kiểm tra tài khoản có bị khóa không
-            if (booking.CustomerId.HasValue && booking.Customer?.Status == UserStatus.LOCKED)
-                throw new AppException(403,
-                    "Tài khoản bị khóa, vui lòng liên hệ nhân viên",
-                    ErrorCodes.AccountLocked);
-
-            // 3. IDEMPOTENCY: Nếu booking đã bị hủy rồi, trả về success (không throw error)
-            // Tránh lỗi khi user click link hủy nhiều lần
-            if (booking.Status == BookingStatus.CANCELLED ||
-                booking.Status == BookingStatus.CANCELLED_PENDING_REFUND ||
-                booking.Status == BookingStatus.CANCELLED_REFUNDED)
-            {
-                return;
-            }
-
-            var now = DateTime.UtcNow;
-
-            // 4. ATOMIC TOKEN CONSUMPTION - Race condition protection
-            // Nếu 2 users click cùng link → chỉ 1 người thắng, người kia nhận "Link đã được sử dụng"
-            // TryConsumeTokenAsync dùng UPDATE ... WHERE để đảm bảo atomic
-            var tokenConsumed = await _bookingRepo.TryConsumeTokenAsync(
-                booking.Id, tokenHash, now);
-
-            if (!tokenConsumed)
-            {
-                throw new AppException(400,
-                    "Link hủy đã được sử dụng", ErrorCodes.BadRequest);
-            }
-
-            // 5. Reload booking để đảm bảo state fresh sau khi consume token
-            booking = await _bookingRepo.GetByIdWithDetailsAsync(booking.Id);
-            if (booking == null)
-                throw new AppException(404, "Không tìm thấy đơn đặt sân", ErrorCodes.NotFound);
-
-            // 6. Kiểm tra token đã hết hạn chưa (24h hoặc trước giờ chơi)
-            if (booking.CancelTokenExpiresAt < now)
-                throw new AppException(400,
-                    "Link hủy đã hết hạn", ErrorCodes.BadRequest);
-
-            // 7. Kiểm tra trạng thái có thể hủy không
-            // Chỉ cho phép hủy CONFIRMED (walk-in) hoặc PAID_ONLINE (online booking đã thanh toán)
-            var cancellableStatuses = new[]
-            {
-                BookingStatus.CONFIRMED,
-                BookingStatus.PAID_ONLINE
-            };
-
-            if (!cancellableStatuses.Contains(booking.Status))
-                throw new AppException(400,
-                    "Đơn đặt sân không thể hủy ở trạng thái hiện tại",
-                    ErrorCodes.BadRequest);
-
-            // 8. Validate booking có courts không (safety check)
-            var firstCourt = booking.BookingCourts.FirstOrDefault()
-                ?? throw new AppException(500, "Booking không có sân", ErrorCodes.InternalError);
-
-            var invoice = booking.Invoice;
-            decimal refundAmount = 0;
-
-            // 9. Transaction scope - đảm bảo tất cả DB operations là atomic
-            using (var transaction = new System.Transactions.TransactionScope(
-                System.Transactions.TransactionScopeAsyncFlowOption.Enabled))
-            {
-                // 9.1. Set booking status = CANCELLED (default, có thể đổi thành CANCELLED_PENDING_REFUND sau)
-                booking.Status = BookingStatus.CANCELLED;
-                booking.CancelledAt = now;
-                booking.CancelSource = CancelSourceEnum.LINK;
-                // NOTE: KHÔNG set CancelTokenUsedAt ở đây - DB đã set trong TryConsumeTokenAsync
-                booking.UpdatedAt = now;
-
-                // 9.2. Cập nhật booking_courts → is_active = false
-                // Đánh dấu các court slot này không còn active
-                await _bookingRepo.UpdateCourtActiveStatusAsync(booking.Id, false);
-
-                // 9.3. Xóa slot_lock nếu có (cleanup)
-                await _slotLockRepo.DeleteByBookingIdAsync(booking.Id);
-
-                // 9.4. Batch update court status → AVAILABLE
-                // Tránh N+1 queries bằng cách update tất cả courts cùng lúc
-                var courtIds = booking.BookingCourts
-                    .Where(bc => bc.Court != null)
-                    .Select(bc => bc.CourtId)
-                    .ToList();
-
-                if (courtIds.Any())
-                {
-                    // ✔️ FIX: Check busy courts cho TẤT CẢ courtIds (không chỉ court đầu tiên)
-                    // Mỗi court có thể có booking khác nhau, cần check riêng lẻ
-                    var busyIds = new HashSet<Guid>();
-
-                    foreach (var courtId in courtIds)
-                    {
-                        var busyCourts = await _bookingRepo.GetActiveByCourtAndDateAsync(
-                            courtId, booking.BookingDate);
-
-                        // Lọc ra courts của booking khác (không phải booking đang cancel)
-                        foreach (var bc in busyCourts.Where(bc => bc.BookingId != booking.Id))
-                        {
-                            busyIds.Add(bc.CourtId);
-                        }
-                    }
-
-                    // Chỉ update courts không bị busy
-                    var courtsToUpdate = courtIds.Where(id => !busyIds.Contains(id)).ToList();
-
-                    if (courtsToUpdate.Any())
-                    {
-                        await _courtRepo.BatchUpdateStatusAsync(
-                            courtsToUpdate,
-                            CourtStatus.AVAILABLE,
-                            now);
-
-                        _logger.LogInformation(
-                            "[CANCEL] Updated {Count} courts to AVAILABLE. Skipped {SkippedCount} busy courts.",
-                            courtsToUpdate.Count, busyIds.Count);
-                    }
-                    else
-                    {
-                        _logger.LogInformation(
-                            "[CANCEL] All {Count} courts are busy, no status update needed.",
-                            courtIds.Count);
-                    }
-                }
-
-                // 9.5. Xử lý refund nếu đã thanh toán
-                if (invoice?.PaymentStatus != InvoicePaymentStatus.UNPAID)
-                {
-                    // Tính % refund dựa trên cancel policy
-                    var refundPercent = await CalculateRefundPercentAsync(
-                        firstCourt.StartTime, booking.BookingDate);
-
-                    var payment = invoice?.Payments?.FirstOrDefault(
-                        p => p.Status == PaymentTxStatus.SUCCESS);
-
-                    if (payment != null && refundPercent > 0)
-                    {
-                        // Tính số tiền hoàn = FinalTotal * refundPercent / 100
-                        refundAmount = Math.Round(invoice!.FinalTotal * refundPercent / 100, 0);
-
-                        // Tạo refund record với status PENDING (chờ staff confirm)
-                        await _refundRepo.CreateAsync(new Refund
-                        {
-                            PaymentId = payment.Id,
-                            Amount = refundAmount,
-                            RefundPercent = refundPercent,
-                            Status = RefundStatus.PENDING,
-                            CreatedAt = now
-                        });
-
-                        // Đổi status thành CANCELLED_PENDING_REFUND
-                        booking.Status = BookingStatus.CANCELLED_PENDING_REFUND;
-                    }
-                }
-
-                // 9.6. Lưu booking với status mới
-                await _bookingRepo.UpdateAsync(booking);
-
-                // 9.7. Commit transaction
-                transaction.Complete();
-            }
-
-            // 10. Logging để tracking
-            _logger.LogInformation(
-                "[CANCEL] Booking {BookingId} cancelled via token. Refund: {RefundAmount} VND",
-                booking.Id, refundAmount);
-
-            // 11. Gửi email xác nhận hủy NGOÀI transaction
-            // Lỗi email không ảnh hưởng đến việc hủy booking
-            try
-            {
-                var email = booking.Customer?.Email ?? booking.GuestEmail;
-                var name = booking.Customer?.FullName ?? booking.GuestName;
-                if (!string.IsNullOrEmpty(email))
-                    await _emailService.SendCancelConfirmationAsync(
-                        email, name!, booking.Id,
-                        booking.Branch.Name,
-                        booking.Branch.Address,
-                        booking.Branch.Phone,
-                        refundAmount);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to send cancel email for booking {BookingId}", booking.Id);
-            }
-
-            // Notify users interested in the freed slots (sau commit, ngoài transaction)
-            await _slotInterestNotifier.NotifyReleasedSlotsAsync(booking);
-
-            // Broadcast SignalR notification
-            var customerName = booking.Customer?.FullName ?? booking.GuestName ?? "Khách";
-            await _broadcast.BroadcastBookingEventAsync(
-                SignalREvents.BookingCancelled,
-                new BookingNotificationDto
-                {
-                    BookingId = booking.Id,
-                    CustomerId = booking.CustomerId ?? Guid.Empty,
-                    CustomerName = customerName,
-                    BranchId = booking.BranchId,
-                    BranchName = booking.Branch.Name,
-                    CourtIds = booking.BookingCourts.Select(bc => bc.CourtId.ToString()).ToList(),
-                    Status = booking.Status.ToString(),
-                    Message = $"{customerName} đã hủy booking qua link email",
-                    Timestamp = DateTimeHelper.GetUtcNow()
-                },
-                booking,
-                includeTimeGrid: true
-            );
         }
 
         // Check-in khách hàng đến sân, chỉ cho phép check-in khi booking đang CONFIRMED hoặc PAID_ONLINE
@@ -1658,23 +989,16 @@ namespace SmashCourt_BE.Services
                     "Chỉ có thể check-in đơn đang xác nhận hoặc đã thanh toán trực tuyến",
                     ErrorCodes.BadRequest);
 
-            using (var transaction = new System.Transactions.TransactionScope(
-                System.Transactions.TransactionScopeAsyncFlowOption.Enabled))
+            using (var transaction = TransactionScopeHelper.ReadCommitted())
             {
-                // Validate chuyển trạng thái sử dụng BookingStatusTransition helper
                 BookingStatusTransition.ValidateTransition(booking.Status, BookingStatus.IN_PROGRESS);
 
+                // Hai lần check-in, hoặc check-in trùng lệnh hủy: chỉ một bên thắng. Link hủy hết dùng được khi khách đang chơi
+                if (!await _bookingRepo.CheckInAsync(booking.Id, booking.Status, now))
+                    throw new AppException(409, "Đơn đã được xử lý bởi người khác", ErrorCodes.Conflict);
                 booking.Status = BookingStatus.IN_PROGRESS;
                 booking.CheckedInAt = now;
                 booking.UpdatedAt = now;
-
-                // Vô hiệu hóa cancel token khi check-in để khách không thể hủy khi đang chơi
-                if (!string.IsNullOrEmpty(booking.CancelTokenHash))
-                {
-                    booking.CancelTokenUsedAt = now;
-                }
-
-                await _bookingRepo.UpdateAsync(booking);
 
                 // Cập nhật court → IN_USE
                 // bc.Court đã được load sẵn qua GetByIdWithDetailsAsync().ThenInclude
@@ -1737,13 +1061,11 @@ namespace SmashCourt_BE.Services
             var now = DateTime.UtcNow;
             var originalStatus = booking.Status;
 
-            // Bọc toàn bộ checkout logic trong transaction để đảm bảo atomicity
-            // Tránh trường hợp: payment created nhưng booking status update fail
-            using (var transaction = new System.Transactions.TransactionScope(
-                System.Transactions.TransactionScopeAsyncFlowOption.Enabled))
+            // Read Committed an toàn vì câu cập nhật có điều kiện trên booking chạy đầu tiên: thêm/bớt dịch vụ cũng khóa dòng booking
+            // trước, nên hóa đơn đọc sau đó luôn là bản mới nhất
+            using (var transaction = TransactionScopeHelper.ReadCommitted())
             {
-                // 1. Conditional update booking status TRƯỚC (DB-level concurrency control)
-                // Chỉ 1 trong 2 concurrent requests sẽ thành công
+                // 1. Chỉ một trong hai lần check-out đồng thời thắng
                 var rowsAffected = await _bookingRepo.UpdateWithStatusCheckAsync(
                     booking.Id,
                     BookingStatus.COMPLETED,
@@ -1765,44 +1087,33 @@ namespace SmashCourt_BE.Services
                 if (latestInvoice == null)
                     throw new AppException(500, "Không tìm thấy hóa đơn", ErrorCodes.InternalError);
 
-                // 2. Tạo Payment record CASH cho phần chưa thu tiền
-                // Dùng latestInvoice để đảm bảo FinalTotal và ServiceFee là mới nhất
-                // - Invoice UNPAID (walk-in chưa thu tiền): thu toàn bộ FinalTotal
-                // - Invoice PARTIALLY_PAID (online có service fee phát sinh): thu phần ServiceFee
-                // - Invoice PAID (trả trước đủ): không cần tạo thêm
-                if (latestInvoice.PaymentStatus == InvoicePaymentStatus.UNPAID)
+                // 2. Thu tại quầy phần còn lại: tổng hiện tại (gồm dịch vụ) trừ số đã thu, không âm
+                var collected = await _paymentRepo.GetCollectedAmountAsync(latestInvoice.Id);
+                var remaining = Math.Max(0m, latestInvoice.FinalTotal - collected);
+                if (remaining > 0)
                 {
                     await _paymentRepo.CreateAsync(new Payment
                     {
                         InvoiceId = latestInvoice.Id,
                         Method = PaymentTxMethod.CASH,
-                        Amount = latestInvoice.FinalTotal,  // ← Dùng latest
+                        Amount = remaining,
                         Status = PaymentTxStatus.SUCCESS,
                         PaidAt = now,
                         CreatedAt = now,
                         UpdatedAt = now
                     });
                 }
-                else if (latestInvoice.PaymentStatus == InvoicePaymentStatus.PARTIALLY_PAID
-                         && latestInvoice.ServiceFee > 0)
+                else if (collected > latestInvoice.FinalTotal)
                 {
-                    // Đã thanh toán sân online (PARTIALLY_PAID), còn lại service fee thu tại quầy
-                    await _paymentRepo.CreateAsync(new Payment
-                    {
-                        InvoiceId = latestInvoice.Id,
-                        Method = PaymentTxMethod.CASH,
-                        Amount = latestInvoice.ServiceFee,  // ← Dùng latest
-                        Status = PaymentTxStatus.SUCCESS,
-                        PaidAt = now,
-                        CreatedAt = now,
-                        UpdatedAt = now
-                    });
+                    // Khách trả online nhiều lần (link cũ vẫn trả được): phần thừa hoàn tiền mặt tại chi nhánh
+                    _logger.LogError(
+                        "Booking {BookingId} đã thu {Collected} đ, vượt tổng {FinalTotal} đ: thừa {Overpaid} đ, cần hoàn tại chi nhánh",
+                        booking.Id, collected, latestInvoice.FinalTotal, collected - latestInvoice.FinalTotal);
                 }
 
-                // 3. Cập nhật invoice → PAID
+                // 3. Hóa đơn PAID (chỉ đổi trạng thái, không ghi đè các cột khác)
+                await _invoiceRepo.SetPaymentStatusAsync(latestInvoice.Id, InvoicePaymentStatus.PAID, now);
                 latestInvoice.PaymentStatus = InvoicePaymentStatus.PAID;
-                latestInvoice.UpdatedAt = now;
-                await _invoiceRepo.UpdateAsync(latestInvoice);
 
                 // 3.1. Trường hợp check-out sớm, cập nhật actual_end_play_time
                 // After fetching booking courts
@@ -1896,11 +1207,14 @@ namespace SmashCourt_BE.Services
                 throw new AppException(400,
                     "Dịch vụ không tồn tại hoặc đã bị tắt", ErrorCodes.BadRequest);
 
-            // Wrap toàn bộ logic trong transaction để đảm bảo atomicity
-            // Nếu update invoice fail → rollback service insert
-            using (var transaction = new System.Transactions.TransactionScope(
-                System.Transactions.TransactionScopeAsyncFlowOption.Enabled))
+            using (var transaction = TransactionScopeHelper.ReadCommitted())
             {
+                // Khóa dòng booking trước: check-out cũng khóa dòng này, nên hóa đơn đọc dưới đây là bản mới nhất
+                // và không bao giờ có dịch vụ chưa thu nằm trên hóa đơn đã PAID
+                if (!await _bookingRepo.TryLockForServiceChangeAsync(booking.Id, DateTime.UtcNow))
+                    throw new AppException(400,
+                        "Không thể thêm/xóa dịch vụ - đơn đã kết thúc hoặc bị hủy", ErrorCodes.BadRequest);
+
                 // LAYER B: Source of truth - Re-check TRONG transaction (CRITICAL)
                 // Query fresh data từ DB và validate bằng consolidated method
                 var currentStatus = await _bookingRepo.GetBookingStatusAsync(booking.Id);
@@ -2045,11 +1359,14 @@ namespace SmashCourt_BE.Services
                 return MapToDto(currentBooking!, includeApprovalReasons: true);
             }
 
-            // Wrap toàn bộ logic trong transaction để đảm bảo atomicity
-            // Nếu update invoice fail → rollback service delete
-            using (var transaction = new System.Transactions.TransactionScope(
-                System.Transactions.TransactionScopeAsyncFlowOption.Enabled))
+            using (var transaction = TransactionScopeHelper.ReadCommitted())
             {
+                // Khóa dòng booking trước: check-out cũng khóa dòng này, nên hóa đơn đọc dưới đây là bản mới nhất
+                // và không bao giờ có dịch vụ chưa thu nằm trên hóa đơn đã PAID
+                if (!await _bookingRepo.TryLockForServiceChangeAsync(booking.Id, DateTime.UtcNow))
+                    throw new AppException(400,
+                        "Không thể thêm/xóa dịch vụ - đơn đã kết thúc hoặc bị hủy", ErrorCodes.BadRequest);
+
                 // LAYER B: Source of truth - Re-check TRONG transaction (CRITICAL)
                 // Query fresh data từ DB và validate bằng consolidated method
                 var currentStatus = await _bookingRepo.GetBookingStatusAsync(booking.Id);
@@ -2151,44 +1468,44 @@ namespace SmashCourt_BE.Services
                 throw new AppException(400,
                     "Đơn không ở trạng thái chờ hoàn tiền", ErrorCodes.BadRequest);
 
-            // 4. Tìm refund record
-            var refund = await _refundRepo.GetByBookingIdAsync(id);
-            if (refund == null)
+            // 4. Mọi khoản hoàn đang chờ của đơn (một khoản cho mỗi Payment đã thu); khách nhận một lần bằng tiền mặt tại chi nhánh
+            var refunds = await _refundRepo.GetPendingByBookingIdAsync(id);
+            if (refunds.Count == 0)
                 throw new AppException(404, "Không tìm thấy bản ghi hoàn tiền", ErrorCodes.NotFound);
+            var refundAmount = refunds.Sum(r => r.Amount);
 
             var now = DateTime.UtcNow;
 
-            // 5. Transaction scope - đảm bảo tất cả DB operations là atomic
-            using (var transaction = new System.Transactions.TransactionScope(
-                System.Transactions.TransactionScopeAsyncFlowOption.Enabled))
+            using (var transaction = TransactionScopeHelper.ReadCommitted())
             {
-                // 5.1. Update refund status → COMPLETED
-                refund.Status = RefundStatus.COMPLETED;
-                refund.ProcessedBy = confirmedBy;
-                refund.ProcessedAt = now;
-                await _refundRepo.UpdateAsync(refund);
-
-                // 5.2. Update payment refunded_amount
-                refund.Payment.RefundedAmount = refund.Amount;
-                await _paymentRepo.UpdateAsync(refund.Payment);
-
-                // 5.3. Update invoice payment status → REFUNDED
-                var invoice = booking.Invoice!;
-                invoice.PaymentStatus = InvoicePaymentStatus.REFUNDED;
-                invoice.UpdatedAt = now;
-                await _invoiceRepo.UpdateAsync(invoice);
-
-                // 5.4. Update booking status → CANCELLED_REFUNDED
+                // 5.1. Hai nhân viên cùng xác nhận: chỉ một người thắng, người kia không ghi gì
+                if (await _bookingRepo.UpdateWithStatusCheckAsync(
+                        booking.Id, BookingStatus.CANCELLED_REFUNDED, BookingStatus.CANCELLED_PENDING_REFUND) == 0)
+                    throw new AppException(409, "Đơn đã được xử lý bởi người khác", ErrorCodes.Conflict);
                 booking.Status = BookingStatus.CANCELLED_REFUNDED;
                 booking.UpdatedAt = now;
-                await _bookingRepo.UpdateAsync(booking);
 
-                // 5.5. Trừ điểm loyalty theo % refund (chỉ khi có customer và refund > 0)
-                // Ví dụ: Refund 50% → trừ 50% điểm đã cộng
-                if (booking.CustomerId.HasValue && refund.RefundPercent > 0)
-                    await DeductLoyaltyPointsAsync(booking, refund.RefundPercent);
+                // 5.2. Refund hoàn tất, cộng dồn số đã hoàn vào Payment tương ứng
+                foreach (var refund in refunds)
+                {
+                    refund.Status = RefundStatus.COMPLETED;
+                    refund.ProcessedBy = confirmedBy;
+                    refund.ProcessedAt = now;
+                    await _refundRepo.UpdateAsync(refund);
 
-                // 5.6. Commit transaction
+                    refund.Payment.RefundedAmount += refund.Amount;
+                    await _paymentRepo.UpdateAsync(refund.Payment);
+                }
+
+                // 5.3. Hóa đơn REFUNDED (chỉ đổi trạng thái)
+                await _invoiceRepo.SetPaymentStatusAsync(booking.Invoice!.Id, InvoicePaymentStatus.REFUNDED, now);
+                booking.Invoice.PaymentStatus = InvoicePaymentStatus.REFUNDED;
+
+                // 5.4. Trừ điểm theo % hoàn lớn nhất (VD hoàn 50 % ⇒ trừ 50 % điểm đã cộng)
+                var refundPercent = refunds.Max(r => r.RefundPercent);
+                if (booking.CustomerId.HasValue && refundPercent > 0)
+                    await DeductLoyaltyPointsAsync(booking, refundPercent);
+
                 transaction.Complete();
             }
 
@@ -2204,7 +1521,7 @@ namespace SmashCourt_BE.Services
                         booking.Branch.Name,
                         booking.Branch.Address,
                         booking.Branch.Phone,
-                        refund.Amount);
+                        refundAmount);
             }
             catch (Exception ex)
             {
@@ -2223,7 +1540,7 @@ namespace SmashCourt_BE.Services
                     BranchName = booking.Branch.Name,
                     CourtIds = booking.BookingCourts.Select(bc => bc.CourtId.ToString()).ToList(),
                     Status = booking.Status.ToString(),
-                    Message = $"Hoàn tiền thành công cho booking #{booking.BookingCode} - Số tiền: {refund.Amount:N0} VND",
+                    Message = $"Hoàn tiền thành công cho booking #{booking.BookingCode} - Số tiền: {refundAmount:N0} VND",
                     Timestamp = DateTimeHelper.GetUtcNow()
                 };
 
@@ -2278,29 +1595,6 @@ namespace SmashCourt_BE.Services
             if (!isInBranch)
                 throw new AppException(403,
                     "Bạn không có quyền thao tác chi nhánh này", ErrorCodes.Forbidden);
-        }
-
-        // Tính phần trăm hoàn tiền dựa trên cancel policy
-        private async Task<decimal> CalculateRefundPercentAsync(
-            TimeOnly startTime, DateOnly bookingDate)
-        {
-            // Lấy thời gian hiện tại ở VN để tính số giờ còn lại trước khi bắt đầu booking
-            var bookingDateTime = bookingDate.ToDateTime(startTime);
-            var vnNow = DateTimeHelper.GetUtcNow();
-
-            var hoursUntilStart = (bookingDateTime - vnNow).TotalHours;
-
-            // Đã qua giờ bắt đầu → không hoàn tiền
-            if (hoursUntilStart < 0)
-                return 0;
-
-            var policies = await _cancelPolicyRepo.GetAllAsync();
-            var applicable = policies
-                .Where(p => p.HoursBefore <= hoursUntilStart)
-                .OrderByDescending(p => p.HoursBefore)
-                .FirstOrDefault();
-
-            return applicable?.RefundPercent ?? 0;
         }
 
         /// <summary>
@@ -2388,8 +1682,7 @@ namespace SmashCourt_BE.Services
 
                 // Wrap toàn bộ loyalty logic trong transaction để đảm bảo atomicity
                 // Nếu insert transaction log fail → rollback points và tier
-                using (var transaction = new System.Transactions.TransactionScope(
-                    System.Transactions.TransactionScopeAsyncFlowOption.Enabled))
+                using (var transaction = TransactionScopeHelper.ReadCommitted())
                 {
                     // Atomic update: Cập nhật TotalPoints trực tiếp trong DB để tránh race condition
                     // Không read → modify → write (có thể bị overwrite)
@@ -2514,8 +1807,7 @@ namespace SmashCourt_BE.Services
 
                 // Wrap toàn bộ loyalty logic trong transaction để đảm bảo atomicity
                 // Nếu insert transaction log fail → rollback points và tier
-                using (var transaction = new System.Transactions.TransactionScope(
-                    System.Transactions.TransactionScopeAsyncFlowOption.Enabled))
+                using (var transaction = TransactionScopeHelper.ReadCommitted())
                 {
                     // 6. Atomic update: Trừ điểm trực tiếp trong DB để tránh race condition
                     // Không read → modify → write (có thể bị overwrite)

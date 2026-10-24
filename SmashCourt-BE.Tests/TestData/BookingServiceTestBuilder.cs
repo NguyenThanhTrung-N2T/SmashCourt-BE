@@ -36,7 +36,7 @@ internal sealed class BookingServiceTestBuilder
     public Mock<IUserBranchRepository> UserBranchRepository { get; } = new();
     public Mock<IUserRepository> UserRepository { get; } = new();
     public Mock<ITimeSlotRepository> TimeSlotRepository { get; } = new();
-    public Mock<IVnPayService> VnPayService { get; } = new();
+    public Mock<IPaymentGateway> PaymentGateway { get; } = new();
     public Mock<ICodeGeneratorService> CodeGeneratorService { get; } = new();
     public Mock<ISlotInterestRepository> SlotInterestRepository { get; } = new();
     public Mock<IUnitOfWork> UnitOfWork { get; } = new();
@@ -54,9 +54,14 @@ internal sealed class BookingServiceTestBuilder
     public BookingServiceTestBuilder()
     {
         Email = new RecordingEmailService(Configuration);
+        PaymentGateway.Setup(x => x.Method).Returns(PaymentTxMethod.VNPAY);
         BookingRepository.Setup(x => x.UpdateWithStatusCheckAsync(
                 It.IsAny<Guid>(), It.IsAny<BookingStatus>(), It.IsAny<BookingStatus>()))
             .ReturnsAsync(1);
+        BookingRepository.Setup(x => x.CheckInAsync(It.IsAny<Guid>(), It.IsAny<BookingStatus>(), It.IsAny<DateTime>()))
+            .ReturnsAsync(true);
+        BookingRepository.Setup(x => x.TryLockForServiceChangeAsync(It.IsAny<Guid>(), It.IsAny<DateTime>()))
+            .ReturnsAsync(true);
         // Mặc định như cờ EnableTadssDecision tắt: dự phòng 100 % (d), hoặc a′ khi đơn dưới mức tối thiểu
         DepositService.Setup(x => x.DecideAsync(It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((Guid _, decimal finalTotal, CancellationToken _) =>
@@ -84,17 +89,15 @@ internal sealed class BookingServiceTestBuilder
             LoyaltyRepository.Object,
             LoyaltyTierRepository.Object,
             LoyaltyTransactionRepository.Object,
-            CancelPolicyRepository.Object,
             BranchServiceRepository.Object,
             CourtRepository.Object,
             UserBranchRepository.Object,
             UserRepository.Object,
             TimeSlotRepository.Object,
-            VnPayService.Object,
+            new OnlinePaymentStarter(new PaymentGatewayResolver([PaymentGateway.Object]), PaymentRepository.Object),
             Email,
             CodeGeneratorService.Object,
             SlotInterestRepository.Object,
-            slotInterestNotifier,
             notifications,
             UnitOfWork.Object,
             Logger,

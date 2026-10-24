@@ -1,5 +1,6 @@
-﻿using SmashCourt_BE.Data;
+using SmashCourt_BE.Data;
 using SmashCourt_BE.Models.Entities;
+using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
 using Microsoft.EntityFrameworkCore;
 
@@ -33,6 +34,15 @@ namespace SmashCourt_BE.Repositories
         {
             _context.Invoices.Update(invoice);
             await _context.SaveChangesAsync();
+        }
+
+        public async Task SetPaymentStatusAsync(Guid invoiceId, InvoicePaymentStatus status, DateTime nowUtc)
+        {
+            await _context.Invoices
+                .Where(i => i.Id == invoiceId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(i => i.PaymentStatus, status)
+                    .SetProperty(i => i.UpdatedAt, nowUtc));
         }
     }
 }

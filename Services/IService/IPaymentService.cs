@@ -6,22 +6,13 @@ namespace SmashCourt_BE.Services.IService
 {
     public interface IPaymentService
     {
-        /// <summary>
-        /// Xử lý IPN callback từ VNPay (server-to-server)
-        /// ✅ UPDATE DATABASE - đây là nơi chính thức xử lý payment
-        /// </summary>
+        // IPN của VNPay (server gọi server): nơi duy nhất ghi kết quả giao dịch VNPay
         Task HandleVnPayIpnAsync(IQueryCollection query, HttpRequest request);
 
-        /// <summary>
-        /// Xử lý Return URL từ VNPay (browser redirect)
-        /// ⚠️ READ-ONLY - chỉ verify và trả về thông tin để FE hiển thị
-        /// </summary>
+        // Trình duyệt quay lại từ VNPay: chỉ kiểm chữ ký và đọc trạng thái để FE hiển thị, không ghi DB
         Task<VnPayReturnResult> HandleVnPayReturnAsync(IQueryCollection query);
 
-        /// <summary>
-        /// Tạo lại URL thanh toán VNPay cho booking PENDING đã bị gián đoạn
-        /// Validate: booking thuộc customer, status = PENDING, now &lt; ExpiresAt
-        /// </summary>
+        // "Thanh toán ngay" / "Thanh toán cọc": link mới đúng tiền cọc, hạn không vượt hạn giữ chỗ tuyệt đối
         Task<OnlineBookingResponse> RetryPaymentAsync(Guid bookingId, Guid customerId);
     }
 }

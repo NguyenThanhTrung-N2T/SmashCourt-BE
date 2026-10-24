@@ -29,6 +29,10 @@ public class BookingEmailModel
     public string? PromotionDiscount { get; set; }
     public string PaymentMethod { get; set; } = null!;
     public string PaymentStatus { get; set; } = null!;
+    /// <summary>Tiền cọc đã trả online; null khi đơn không cọc một phần (trả đủ, thu tại quầy, đơn cũ)</summary>
+    public string? DepositPaid { get; set; }
+    /// <summary>Phần còn lại thu tại quầy; null cùng điều kiện với <see cref="DepositPaid"/></summary>
+    public string? RemainingAmount { get; set; }
 
     // Link hủy booking
     public string CancelUrl { get; set; } = null!;

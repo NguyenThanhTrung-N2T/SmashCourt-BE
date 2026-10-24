@@ -1,5 +1,7 @@
 using SmashCourt_BE.Services.IService;
 using SmashCourt_BE.Helpers;
+using SmashCourt_BE.Models.Enums;
+using SmashCourt_BE.Models.Payments;
 using System.Globalization;
 using System.Net;
 using System.Security.Cryptography;
@@ -27,7 +29,10 @@ namespace SmashCourt_BE.Services
         }
     }
 
-    public class VnPayService : IVnPayService
+    /// <summary>
+    /// Cổng VNPay: tạo link qua <c>VNPAY.NET</c> và kiểm chữ ký kết quả theo đúng thư viện mẫu của VNPay.
+    /// </summary>
+    public class VnPayService : IPaymentGateway
     {
         private readonly IConfiguration _config;
         private readonly IHttpContextAccessor _httpContextAccessor;
@@ -55,7 +60,9 @@ namespace SmashCourt_BE.Services
             _logger = logger;
         }
 
-        public VnPayPaymentUrlResult CreatePaymentUrl(string transactionRef, decimal amount, string orderInfo)
+        public PaymentTxMethod Method => PaymentTxMethod.VNPAY;
+
+        public GatewayPaymentLink CreatePaymentLink(string reference, decimal amount, string orderInfo)
         {
             orderInfo = NormalizeOrderInfo(orderInfo);
             var paymentUrlInfo = _vnpayClient.CreatePaymentUrl(
@@ -65,29 +72,34 @@ namespace SmashCourt_BE.Services
 
             _logger.LogInformation(
                 "VNPay package generated URL | RequestedRef: {RequestedRef} | PaymentId: {PaymentId} | Url: {Url}",
-                transactionRef,
+                reference,
                 paymentUrlInfo.PaymentId,
                 paymentUrlInfo.Url);
 
-            return new VnPayPaymentUrlResult
-            {
-                Url = paymentUrlInfo.Url,
-                TransactionRef = paymentUrlInfo.PaymentId.ToString(CultureInfo.InvariantCulture)
-            };
+            return new GatewayPaymentLink(
+                paymentUrlInfo.Url,
+                paymentUrlInfo.PaymentId.ToString(CultureInfo.InvariantCulture));
         }
 
-        public bool VerifyIpn(
-            IQueryCollection query,
-            out string transactionRef,
-            out bool isSuccess,
-            out string rawPayload)
+        public GatewayPaymentResult ReadResult(IQueryCollection query)
         {
-            transactionRef = query["vnp_TxnRef"].ToString();
             var responseCode = query["vnp_ResponseCode"].ToString();
-            isSuccess = responseCode == "00";
-            rawPayload = string.Join("&", query.OrderBy(q => q.Key)
-                .Select(q => q.Key + "=" + q.Value));
+            // vnp_Amount là số tiền × 100
+            decimal? amount = long.TryParse(query["vnp_Amount"], out var rawAmount) ? rawAmount / 100m : null;
+            var rawPayload = string.Join("&", query.OrderBy(q => q.Key).Select(q => q.Key + "=" + q.Value));
 
+            return new GatewayPaymentResult(
+                IpnProvider.VNPAY,
+                query["vnp_TxnRef"].ToString(),
+                IsSignatureValid(query, responseCode),
+                responseCode == "00",
+                amount,
+                responseCode,
+                rawPayload);
+        }
+
+        private bool IsSignatureValid(IQueryCollection query, string responseCode)
+        {
             var vnpSecureHash = query["vnp_SecureHash"].ToString();
 
             // === ValidateSignature — copy y chang GetResponseData() trong VnPayLibrary.cs ===
@@ -118,7 +130,7 @@ namespace SmashCourt_BE.Services
             string computedHash = HmacSha512(HashSecret, hashStr);
             bool match = computedHash.Equals(vnpSecureHash, StringComparison.OrdinalIgnoreCase);
 
-            _logger.LogInformation("VerifyIpn — ResponseCode: {C} | HashStr: {H} | Match: {M}",
+            _logger.LogInformation("VNPay signature — ResponseCode: {C} | HashStr: {H} | Match: {M}",
                 responseCode, hashStr, match);
 
             return match;

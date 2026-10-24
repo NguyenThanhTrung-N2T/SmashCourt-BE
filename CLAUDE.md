@@ -30,9 +30,11 @@ Services/ + IService/   → nghiệp vụ, validate, ném AppException(status, m
   AccessControl/        → IBranchScopeResolver: phân quyền dữ liệu theo chi nhánh
   Internal/             → DTO nội bộ (dữ liệu chuẩn bị cho AI)
   Deposit/              → luật thuần của luồng cọc (resolver, policy giữ chỗ, mapper), không I/O
+  Cancellation/         → luật thuần của hủy (tiền hoàn, đã tới giờ, trả lượt khuyến mãi)
+  (gốc)                 → thanh toán: IPaymentGateway (VnPayService), OnlinePaymentStarter, PaymentResultService dùng chung mọi cổng
 Repositories/ + IRepository/ → truy vấn EF Core, SaveChangesAsync
 Data/                   → SmashCourtContext (DbSet theo Module 1–8, HasPostgresEnum), UnitOfWork
-Models/Entities|Enums|ViewModels|Promotions|Deposit
+Models/Entities|Enums|ViewModels|Promotions|Deposit|Cancellation|Payments
 DTOs/{Feature}/         → Create{X}Dto, Update{X}Dto, {X}Dto, {X}ListQuery : PaginationQuery
 Common/                 → ApiResponse<T>, AppException, ErrorCodes, PagedResult, PaginationQuery, Constants/SignalREvents
 Configurations/         → AuthorizationPolicies (OwnerOnly, OwnerOrManager, ManagerOnly, StaffAndAbove, CustomerOnly, AnyAuthenticated), *Settings

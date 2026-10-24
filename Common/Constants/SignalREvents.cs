@@ -32,4 +32,5 @@ public static class SignalREvents
     public const string QueueReasonNew = "NEW";
     public const string QueueReasonApproved = "APPROVED";
     public const string QueueReasonRejected = "REJECTED";
+    public const string QueueReasonCancelled = "CANCELLED";
 }

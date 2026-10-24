@@ -38,6 +38,7 @@ public static class ErrorCodes
     public const string ApprovalDecisionNotFound  = "APPROVAL_DECISION_NOT_FOUND";  // 409: không tìm thấy quyết định cọc của đơn
     public const string TadssUnavailable          = "TADSS_UNAVAILABLE";            // 503: TADSS không phản hồi khi duyệt/từ chối, đơn vẫn chờ
     public const string PaymentHoldExpired        = "PAYMENT_HOLD_EXPIRED";         // 400: thanh toán lại sau hạn giữ chỗ tuyệt đối
+    public const string BookingAlreadyStarted     = "BOOKING_ALREADY_STARTED";      // 400: khách tự hủy khi đã tới giờ bắt đầu
 
     // ─── Branch Management ───────────────────────────────────────────────
     public const string BranchNotFound         = "BRANCH_NOT_FOUND";

@@ -133,6 +133,18 @@
                                                 <td style="color: #64748b; font-size: 13px; padding: 4px 0;">Trạng thái:</td>
                                                 <td style="color: #16a34a; font-size: 13px; font-weight: 600; text-align: right;">{{PaymentStatus}}</td>
                                             </tr>
+                                            {{#if DepositPaid}}
+                                            <tr>
+                                                <td style="color: #64748b; font-size: 13px; padding: 4px 0;">Đã cọc:</td>
+                                                <td style="color: #16a34a; font-size: 13px; font-weight: 600; text-align: right;">{{DepositPaid}}</td>
+                                            </tr>
+                                            {{/if}}
+                                            {{#if RemainingAmount}}
+                                            <tr>
+                                                <td style="color: #64748b; font-size: 13px; padding: 4px 0;">Còn lại thu tại quầy:</td>
+                                                <td style="color: #0f172a; font-size: 13px; font-weight: 600; text-align: right;">{{RemainingAmount}}</td>
+                                            </tr>
+                                            {{/if}}
                                         </table>
                                     </td>
                                 </tr>

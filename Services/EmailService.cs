@@ -138,6 +138,8 @@ public class EmailService
         // Xử lý conditional rendering cho discounts
         body = ProcessConditionalSection(body, "LoyaltyDiscount", model.LoyaltyDiscount);
         body = ProcessConditionalSection(body, "PromotionDiscount", model.PromotionDiscount);
+        body = ProcessConditionalSection(body, "DepositPaid", model.DepositPaid);
+        body = ProcessConditionalSection(body, "RemainingAmount", model.RemainingAmount);
 
         await SendAsync(model.Email, subject, body);
     }
@@ -295,11 +297,16 @@ public class EmailService
     /// <param name="branchAddress">Địa chỉ chi nhánh</param>
     /// <param name="branchPhone">Số điện thoại chi nhánh (optional)</param>
     /// <param name="refundAmount">Số tiền hoàn (0 = không hoàn tiền)</param>
+    /// <param name="hasPaidAmount">Đơn đã có khoản thanh toán thành công; hoàn 0 đ mà chưa trả gì thì báo "chưa thanh toán", không báo "hủy quá gần giờ chơi"</param>
     public async Task SendCancelConfirmationAsync(
-        string toEmail, string fullName, Guid bookingId, string branchName, 
-        string branchAddress, string? branchPhone, decimal refundAmount)
+        string toEmail, string fullName, Guid bookingId, string branchName,
+        string branchAddress, string? branchPhone, decimal refundAmount, bool hasPaidAmount)
     {
         var subject = "❌ Xác nhận hủy đặt sân - SmashCourt";
+
+        var noRefundNotice = hasPaidAmount
+            ? "Đơn này không được hoàn tiền do hủy quá gần giờ chơi."
+            : "Đơn chưa được thanh toán nên không phát sinh khoản hoàn tiền nào.";
 
         // Conditional rendering: Có tiền hoàn vs Không hoàn tiền
         var refundMessage = refundAmount > 0
@@ -369,7 +376,7 @@ public class EmailService
                     <tr><td style="padding: 25px;">
                         <p style="margin: 0; color: #92400e; font-size: 15px; line-height: 1.8; text-align: center;">
                             <strong style="font-size: 16px;">⚠️ Thông báo</strong><br/><br/>
-                            Đơn này không được hoàn tiền do hủy quá gần giờ chơi.<br/>
+                            {noRefundNotice}<br/>
                             Cảm ơn bạn đã thông báo trước cho chúng tôi.
                         </p>
                     </td></tr>

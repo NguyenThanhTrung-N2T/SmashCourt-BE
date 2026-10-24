@@ -1,6 +1,7 @@
 using SmashCourt_BE.Common.Constants;
 using SmashCourt_BE.DTOs.SignalR;
 using SmashCourt_BE.Factories;
+using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Services.IService;
@@ -8,7 +9,7 @@ using SmashCourt_BE.Services.IService;
 namespace SmashCourt_BE.Services;
 
 /// <summary>
-/// Thông báo sau commit của luồng đặt online và duyệt cọc (sự kiện SignalR, email). Mỗi bước tự bắt lỗi và chỉ ghi log:
+/// Thông báo sau commit của luồng đặt online, duyệt cọc và hủy (sự kiện SignalR, email). Mỗi bước tự bắt lỗi và chỉ ghi log:
 /// thông báo hỏng không được làm hỏng kết quả đã lưu.
 /// </summary>
 public class BookingNotificationService : IBookingNotificationService
@@ -137,6 +138,87 @@ public class BookingNotificationService : IBookingNotificationService
         if (rawCancelToken != null)
             return SendConfirmationEmailAsync(booking, rawCancelToken);
         return SendIfCustomerHasEmailAsync(booking, url => _emailService.SendDepositApprovedAsync(BookingEmailFactory.BuildApproval(booking, url)));
+    }
+
+    // ── Hủy ───────────────────────────────────────────────────────────────
+
+    public async Task NotifyCancelledAsync(Booking booking, BookingStatus previousStatus, decimal refundAmount)
+    {
+        var timestamp = UtcNow();
+        var customerName = CustomerName(booking);
+        var message = booking.CancelSource == CancelSourceEnum.LINK
+            ? $"{customerName} đã hủy booking qua link email"
+            : $"Booking #{booking.BookingCode} của {customerName} đã được yêu cầu hủy";
+
+        await RunSafelyAsync("CancelEmail", booking.Id, () => SendCancelEmailAsync(booking, refundAmount));
+        await RunSafelyAsync("SlotInterest", booking.Id, () => _slotInterestNotifier.NotifyReleasedSlotsAsync(booking));
+        await RunSafelyAsync("BookingCancelled", booking.Id, () => _broadcast.BroadcastBookingEventAsync(
+            SignalREvents.BookingCancelled, BookingNotification(booking, message, timestamp), booking, includeTimeGrid: true));
+
+        if (previousStatus == BookingStatus.PENDING_APPROVAL)
+            await RunSafelyAsync("PendingApprovalQueueChanged", booking.Id, () => _broadcast.BroadcastPendingApprovalQueueChangedAsync(
+                QueueChanged(booking, SignalREvents.QueueChangeRemoved, SignalREvents.QueueReasonCancelled, timestamp)));
+    }
+
+    // ── Thanh toán ────────────────────────────────────────────────────────
+
+    public async Task NotifyPaymentSucceededAsync(Booking booking, Payment payment, string rawCancelToken)
+    {
+        // Đơn online cũ của khách vãng lai không có tài khoản: gửi về email khách để lại
+        await RunSafelyAsync("PaymentConfirmationEmail", booking.Id, () => _emailService.SendBookingConfirmationAsync(
+            BookingEmailFactory.Build(booking, rawCancelToken, _configuration["FrontendBaseUrl"] ?? "http://localhost:3000")));
+        await RunSafelyAsync("PaymentSuccess", booking.Id, () => _broadcast.BroadcastPaymentEventAsync(
+            SignalREvents.PaymentSuccess,
+            PaymentNotification(booking, payment, "SUCCESS",
+                $"Thanh toán thành công cho booking #{booking.BookingCode} của {CustomerName(booking)}"),
+            booking, includeTimeGrid: false));
+    }
+
+    public Task NotifyPaymentFailedAsync(Booking booking, Payment payment, DateTime? holdUntilUtc)
+    {
+        var message = holdUntilUtc is { } holdUntil
+            ? $"Thanh toán thất bại cho booking #{booking.BookingCode} của {CustomerName(booking)}. " +
+              $"Đơn được giữ đến {DateTimeHelper.ToVietnamTime(holdUntil):HH:mm} để thanh toán lại."
+            : $"Thanh toán thất bại cho booking #{booking.BookingCode} của {CustomerName(booking)}.";
+
+        // Lưới giờ cập nhật số phút giữ chỗ còn lại
+        return RunSafelyAsync("PaymentFailed", booking.Id, () => _broadcast.BroadcastPaymentEventAsync(
+            SignalREvents.PaymentFailed, PaymentNotification(booking, payment, "FAILED", message), booking,
+            includeTimeGrid: holdUntilUtc.HasValue));
+    }
+
+    public async Task NotifyLatePaymentAsync(Booking booking, decimal refundAmount)
+    {
+        await RunSafelyAsync("LatePaymentEmail", booking.Id, () => SendCancelEmailAsync(booking, refundAmount));
+        await RunSafelyAsync("BookingCancelled", booking.Id, () => _broadcast.BroadcastBookingEventAsync(
+            SignalREvents.BookingCancelled,
+            BookingNotification(booking,
+                $"Tiền thanh toán của booking #{booking.BookingCode} về sau khi đơn đã hủy, chờ hoàn {refundAmount:N0} đ tại chi nhánh",
+                UtcNow()),
+            booking, includeTimeGrid: false));
+    }
+
+    private PaymentNotificationDto PaymentNotification(Booking booking, Payment payment, string status, string message) => new()
+    {
+        BookingId = booking.Id,
+        InvoiceId = payment.InvoiceId,
+        Amount = payment.Amount,
+        Status = status,
+        Message = message,
+        Timestamp = UtcNow()
+    };
+
+    // Đơn tại quầy của khách vãng lai dùng email khách để lại. Hoàn 0 đ: đơn chưa có tiền về thì báo "chưa thanh toán", không báo "hủy quá gần giờ chơi"
+    private Task SendCancelEmailAsync(Booking booking, decimal refundAmount)
+    {
+        var email = booking.Customer?.Email ?? booking.GuestEmail;
+        if (string.IsNullOrWhiteSpace(email))
+            return Task.CompletedTask;
+
+        var hasPaidAmount = booking.Invoice?.Payments.Any(p => p.Status == PaymentTxStatus.SUCCESS) == true;
+        return _emailService.SendCancelConfirmationAsync(
+            email, booking.Customer?.FullName ?? booking.GuestName ?? "Khách", booking.Id,
+            booking.Branch.Name, booking.Branch.Address, booking.Branch.Phone, refundAmount, hasPaidAmount);
     }
 
     // ── Email dùng chung ───────────────────────────────────────────────────

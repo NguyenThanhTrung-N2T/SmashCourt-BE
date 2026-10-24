@@ -158,5 +158,28 @@ namespace SmashCourt_BE.Repositories.IRepository
 
         // Từ chối: hủy STAFF / APPROVAL_REJECTED, nhả sân, hóa đơn EXPIRED; đơn chờ duyệt chưa có tiền nên không hoàn tiền
         Task<bool> RejectByManagerAsync(Guid bookingId, Guid? resolvedBy, string note, DateTime nowUtc);
+
+        // ── Thanh toán và hoàn tiền ───────────────────────────────────────────────────────────────────
+
+        // Khóa dòng booking tới hết transaction mà không đổi dữ liệu. Mọi luồng khóa booking trước Payment; luồng nào khóa
+        // Payment trước rồi mới chờ booking sẽ deadlock với lệnh hủy đang giữ booking và chờ Payment
+        Task LockAsync(Guid bookingId);
+
+        // Thanh toán thất bại: rút hạn của hóa đơn và slot lock về expiresAtUtc, không kéo dài; false khi đơn không còn PENDING
+        Task<bool> ShortenPaymentWindowAsync(Guid bookingId, DateTime expiresAtUtc, DateTime nowUtc);
+
+        // Thanh toán lại: đặt hạn mới cho hóa đơn và slot lock (caller đã bảo đảm không rút ngắn); false khi đơn không còn PENDING
+        Task<bool> ExtendPaymentWindowAsync(Guid bookingId, DateTime expiresAtUtc, DateTime nowUtc);
+
+        // Check-in: trạng thái đã đọc → IN_PROGRESS kèm giờ check-in, link hủy hết dùng được; false khi trạng thái đã đổi
+        Task<bool> CheckInAsync(Guid bookingId, BookingStatus expectedStatus, DateTime nowUtc);
+
+        // Khóa dòng booking trước khi thêm/bớt dịch vụ, chỉ khi đơn đang chơi hoặc chờ thanh toán; check-out khóa cùng dòng này
+        // nên hai thao tác không chen nhau. False khi đơn không còn sửa được
+        Task<bool> TryLockForServiceChangeAsync(Guid bookingId, DateTime nowUtc);
+
+        // Tiền về sau khi đơn đã hủy: chuyển sang chờ hoàn tiền, giữ lý do hủy; expectedStatus là trạng thái đã đọc
+        // (CANCELLED hoặc CANCELLED_REFUNDED)
+        Task<bool> MarkPendingRefundAsync(Guid bookingId, BookingStatus expectedStatus, DateTime nowUtc);
     }
 }

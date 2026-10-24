@@ -610,6 +610,8 @@ namespace SmashCourt_BE.Repositories
                 .Include(b => b.Invoice)
                     .ThenInclude(i => i!.Payments)   // cần để tạo refund record khi hủy
                         .ThenInclude(p => p.Refunds)  // cần để tính tổng refund amount
+                // Hủy qua link trả lượt khuyến mãi như mọi đường hủy; thiếu Include thì lượt đã tính không bao giờ được trả
+                .Include(b => b.BookingPromotion)
                 .FirstOrDefaultAsync(b => b.CancelTokenHash == tokenHash);
         }
 
@@ -1165,6 +1167,100 @@ namespace SmashCourt_BE.Repositories
             return true;
         }
 
+        public async Task LockAsync(Guid bookingId)
+        {
+            EnsureInTransaction();
+            await _context.Bookings
+                .Where(b => b.Id == bookingId)
+                .ExecuteUpdateAsync(s => s.SetProperty(b => b.UpdatedAt, b => b.UpdatedAt));
+        }
+
+        public async Task<bool> ShortenPaymentWindowAsync(Guid bookingId, DateTime expiresAtUtc, DateTime nowUtc)
+        {
+            EnsureInTransaction();
+            EnsureUtc(expiresAtUtc, nameof(expiresAtUtc));
+            EnsureUtc(nowUtc, nameof(nowUtc));
+
+            // Khóa dòng booking trước để lệnh hủy hoặc tiền về đồng thời phải chờ, rồi mới rút hạn
+            var stillPending = await _context.Bookings
+                .Where(b => b.Id == bookingId && b.Status == BookingStatus.PENDING)
+                .ExecuteUpdateAsync(s => s.SetProperty(b => b.UpdatedAt, nowUtc)) == 1;
+            if (!stillPending)
+                return false;
+
+            await _context.Invoices
+                .Where(i => i.BookingId == bookingId && i.ExpiresAt > expiresAtUtc)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(i => i.ExpiresAt, (DateTime?)expiresAtUtc)
+                    .SetProperty(i => i.UpdatedAt, nowUtc));
+            await _context.SlotLocks
+                .Where(l => l.BookingId == bookingId && l.ExpiresAt > expiresAtUtc)
+                .ExecuteUpdateAsync(s => s.SetProperty(l => l.ExpiresAt, expiresAtUtc));
+            return true;
+        }
+
+        public async Task<bool> ExtendPaymentWindowAsync(Guid bookingId, DateTime expiresAtUtc, DateTime nowUtc)
+        {
+            EnsureInTransaction();
+            EnsureUtc(expiresAtUtc, nameof(expiresAtUtc));
+            EnsureUtc(nowUtc, nameof(nowUtc));
+
+            var stillPending = await _context.Bookings
+                .Where(b => b.Id == bookingId && b.Status == BookingStatus.PENDING)
+                .ExecuteUpdateAsync(s => s.SetProperty(b => b.UpdatedAt, nowUtc)) == 1;
+            if (!stillPending)
+                return false;
+
+            EnsureInvoiceUpdated(bookingId, await _context.Invoices
+                .Where(i => i.BookingId == bookingId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(i => i.ExpiresAt, (DateTime?)expiresAtUtc)
+                    .SetProperty(i => i.UpdatedAt, nowUtc)));
+            await _context.SlotLocks
+                .Where(l => l.BookingId == bookingId)
+                .ExecuteUpdateAsync(s => s.SetProperty(l => l.ExpiresAt, expiresAtUtc));
+            return true;
+        }
+
+        public async Task<bool> CheckInAsync(Guid bookingId, BookingStatus expectedStatus, DateTime nowUtc)
+        {
+            EnsureUtc(nowUtc, nameof(nowUtc));
+
+            return await _context.Bookings
+                .Where(b => b.Id == bookingId && b.Status == expectedStatus)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(b => b.Status, BookingStatus.IN_PROGRESS)
+                    .SetProperty(b => b.CheckedInAt, (DateTime?)nowUtc)
+                    .SetProperty(b => b.CancelTokenUsedAt,
+                        b => b.CancelTokenHash != null && b.CancelTokenUsedAt == null ? nowUtc : b.CancelTokenUsedAt)
+                    .SetProperty(b => b.UpdatedAt, nowUtc)) == 1;
+        }
+
+        public async Task<bool> TryLockForServiceChangeAsync(Guid bookingId, DateTime nowUtc)
+        {
+            EnsureInTransaction();
+            EnsureUtc(nowUtc, nameof(nowUtc));
+
+            return await _context.Bookings
+                .Where(b => b.Id == bookingId
+                            && (b.Status == BookingStatus.IN_PROGRESS || b.Status == BookingStatus.PENDING_PAYMENT))
+                .ExecuteUpdateAsync(s => s.SetProperty(b => b.UpdatedAt, nowUtc)) == 1;
+        }
+
+        public async Task<bool> MarkPendingRefundAsync(Guid bookingId, BookingStatus expectedStatus, DateTime nowUtc)
+        {
+            if (expectedStatus is not (BookingStatus.CANCELLED or BookingStatus.CANCELLED_REFUNDED))
+                throw new ArgumentOutOfRangeException(nameof(expectedStatus), expectedStatus,
+                    "Chỉ đơn đã hủy (chưa có hoặc đã xong hoàn tiền) mới chuyển sang chờ hoàn tiền.");
+            EnsureUtc(nowUtc, nameof(nowUtc));
+
+            return await _context.Bookings
+                .Where(b => b.Id == bookingId && b.Status == expectedStatus)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(b => b.Status, BookingStatus.CANCELLED_PENDING_REFUND)
+                    .SetProperty(b => b.UpdatedAt, nowUtc)) == 1;
+        }
+
         private IQueryable<Booking> AwaitingApproval(Guid bookingId, DateTime nowUtc) =>
             _context.Bookings.Where(b =>
                 b.Id == bookingId && b.Status == BookingStatus.PENDING_APPROVAL && b.ApprovalExpiresAt > nowUtc);
@@ -1180,7 +1276,7 @@ namespace SmashCourt_BE.Repositories
         private static void EnsureUtc(DateTime value, string paramName)
         {
             if (value.Kind != DateTimeKind.Utc)
-                throw new ArgumentException("Mốc thời gian phải có Kind = Utc (spec 7.14).", paramName);
+                throw new ArgumentException("Mốc thời gian phải có Kind = Utc.", paramName);
         }
 
         // Thắng câu cập nhật mà hóa đơn không cập nhật được là dữ liệu hỏng (đơn luôn có hóa đơn): ném để rollback
