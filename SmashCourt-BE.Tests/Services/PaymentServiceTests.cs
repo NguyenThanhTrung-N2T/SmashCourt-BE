@@ -340,6 +340,36 @@ public class PaymentServiceTests
     }
 
     [Fact]
+    [Trait("Catalog", "BE-UT-07")]
+    public async Task RetryPaymentAsync_ResponseCarriesTheDepositFieldsOfTheInvoice()
+    {
+        // Đơn đã được Manager duyệt 50 % (từng chờ duyệt) rồi để hết link: response có cọc và hạn duyệt cũ để tra cứu
+        var bookings = new Mock<IBookingRepository>();
+        var vnPay = new Mock<IVnPayService>();
+        var customerId = Guid.NewGuid();
+        var approvalExpiresAt = DateTime.UtcNow.AddMinutes(-3);
+        var booking = TestDataFactory.CreateBooking(customerId: customerId, status: BookingStatus.PENDING);
+        booking.ApprovalExpiresAt = approvalExpiresAt;
+        booking.ApprovalReasonCode = "NO_SHOW_HISTORY_REVIEW";
+        booking.Invoice = TestDataFactory.CreateInvoice(booking.Id, finalTotal: 300_000m, expiresAt: DateTime.UtcNow.AddMinutes(5));
+        booking.Invoice.DepositRate = 0.5m;
+        booking.Invoice.DepositAmount = 150_000m;
+        booking.Invoice.DepositSource = DepositSource.MANAGER;
+        bookings.Setup(x => x.GetByIdWithDetailsAsync(booking.Id)).ReturnsAsync(booking);
+        vnPay.Setup(x => x.CreatePaymentUrl(booking.Id.ToString(), It.IsAny<decimal>(), It.IsAny<string>()))
+            .Returns(new VnPayPaymentUrlResult { Url = "https://vnpay.test/retry", TransactionRef = "RETRY" });
+
+        var result = await CreateService(bookings: bookings, vnPay: vnPay).RetryPaymentAsync(booking.Id, customerId);
+
+        Assert.Equal("PENDING", result.Status);
+        Assert.Equal(0.5m, result.DepositRate);
+        Assert.Equal(150_000m, result.DepositAmount);
+        Assert.Equal(150_000m, result.RemainingAmount);
+        Assert.Equal("MANAGER", result.DepositSource);
+        Assert.Equal(approvalExpiresAt, result.ApprovalExpiresAt);
+    }
+
+    [Fact]
     public async Task RetryPaymentAsync_WhenPendingPaymentExists_VoidsOldPaymentCreatesNewPaymentAndExtendsExpiry()
     {
         var bookings = new Mock<IBookingRepository>();
@@ -370,6 +400,14 @@ public class PaymentServiceTests
         Assert.Equal(booking.Id, result.BookingId);
         Assert.Equal("https://vnpay.test/retry", result.PaymentUrl);
         Assert.Equal(300_000m, result.FinalTotal);
+        // Cùng DTO với đặt online (6A-2c Task 2): luôn PENDING; đơn trước Phase 6 không có trường cọc
+        Assert.Equal("TEST-BOOKING", result.BookingCode);
+        Assert.Equal("PENDING", result.Status);
+        Assert.Null(result.DepositRate);
+        Assert.Null(result.DepositAmount);
+        Assert.Null(result.RemainingAmount);
+        Assert.Null(result.DepositSource);
+        Assert.Null(result.ApprovalExpiresAt);
         Assert.Equal(PaymentTxStatus.FAILED, oldPayment.Status);
         Assert.True(invoice.ExpiresAt > DateTime.UtcNow.AddMinutes(9));
         payments.Verify(x => x.UpdateAsync(It.Is<Payment>(payment =>

@@ -826,13 +826,13 @@ CREATE TABLE public.booking_promotions (
     booking_id uuid NOT NULL,
     promotion_id uuid NOT NULL,
     promotion_name_snapshot character varying(255) NOT NULL,
-    discount_value_snapshot numeric(5,2) NOT NULL,
+    discount_value_snapshot numeric(12,2) NOT NULL,
     discount_amount numeric(12,2) NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     promotion_code_snapshot character varying(50),
     discount_type_snapshot public.discount_type_enum DEFAULT 'PERCENT'::public.discount_type_enum NOT NULL,
     CONSTRAINT chk_booking_promotions_amount CHECK ((discount_amount >= (0)::numeric)),
-    CONSTRAINT chk_booking_promotions_rate CHECK (((discount_value_snapshot > (0)::numeric) AND (discount_value_snapshot <= (100)::numeric)))
+    CONSTRAINT chk_booking_promotions_discount_value CHECK ((((discount_type_snapshot = 'PERCENT'::public.discount_type_enum) AND (discount_value_snapshot > (0)::numeric) AND (discount_value_snapshot <= (100)::numeric)) OR ((discount_type_snapshot = 'FIXED'::public.discount_type_enum) AND (discount_value_snapshot > (0)::numeric) AND (discount_value_snapshot <= 99999999.99))))
 );
 
 

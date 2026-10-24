@@ -44,4 +44,24 @@ public interface IBroadcastService
         PaymentNotificationDto notification,
         Booking booking,
         bool includeTimeGrid = false);
+
+    /// <summary>
+    /// Như <see cref="BroadcastBookingEventAsync"/> nhưng <b>không</b> gửi vào nhóm <c>user_{customerId}</c>: dùng khi khách đã nhận kết quả
+    /// ngay ở response (VD đơn online bị TADSS từ chối, C2), chỉ nhân viên chi nhánh, OWNER và lưới giờ (nếu bật) cần biết.
+    /// </summary>
+    Task BroadcastBookingEventToStaffAsync(
+        string eventName,
+        BookingNotificationDto notification,
+        Booking booking,
+        bool includeTimeGrid = false);
+
+    /// <summary>
+    /// Phát <c>BookingPendingApproval</c> tới <c>branch_{branchId}</c> và <c>role_OWNER</c> (DEPOSIT_APPROVAL_API 6).
+    /// </summary>
+    Task BroadcastBookingPendingApprovalAsync(BookingPendingApprovalNotificationDto notification);
+
+    /// <summary>
+    /// Phát <c>PendingApprovalQueueChanged</c> tới <c>branch_{branchId}</c> và <c>role_OWNER</c> (DEPOSIT_APPROVAL_API 6).
+    /// </summary>
+    Task BroadcastPendingApprovalQueueChangedAsync(PendingApprovalQueueChangedNotificationDto notification);
 }

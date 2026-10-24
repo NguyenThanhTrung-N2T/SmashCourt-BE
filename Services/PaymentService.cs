@@ -141,12 +141,21 @@ namespace SmashCourt_BE.Services
                 "NewTransactionRef={TransactionRef} | NewExpiresAt={ExpiresAt}",
                 bookingId, customerId, paymentInfo.TransactionRef, newExpiresAt);
 
+            // Cùng DTO với đặt sân online (luôn PENDING); trường cọc đọc từ hóa đơn (đơn cũ: null). Số tiền VNPay đổi theo cọc ở 6A-4.
+            var deposit = DepositFieldsHelper.FromInvoice(booking.Status, invoice);
             return new OnlineBookingResponse
             {
                 BookingId = booking.Id,
+                BookingCode = booking.BookingCode,
+                Status = booking.Status.ToString(),
                 PaymentUrl = paymentInfo.Url,
                 ExpiresAt = newExpiresAt,
-                FinalTotal = invoice.FinalTotal
+                FinalTotal = invoice.FinalTotal,
+                DepositRate = deposit?.Rate,
+                DepositAmount = deposit?.Amount,
+                RemainingAmount = deposit?.RemainingAmount,
+                DepositSource = deposit?.Source.ToString(),
+                ApprovalExpiresAt = booking.ApprovalExpiresAt
             };
         }
 

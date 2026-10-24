@@ -1,5 +1,6 @@
 using SmashCourt_BE.Common;
 using SmashCourt_BE.Data;
+using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
@@ -159,13 +160,15 @@ namespace SmashCourt_BE.Repositories
         /// </summary>
         public async Task<int> GetUserUsageCountAsync(Guid promotionId, Guid userId)
         {
+            // P6-18 (N-22): đơn đã hủy (hết hạn, bị từ chối, khách/nhân viên hủy) trả lượt cho khách; đơn còn giữ hoặc đã dùng vẫn tính
+            var cancelled = BookingStatusTransition.GetCancelledStatuses();
             return await _context.BookingPromotions
                 .Where(bp => bp.PromotionId == promotionId)
                 .Join(_context.Bookings,
                     bp => bp.BookingId,
                     b => b.Id,
                     (bp, b) => new { bp, b })
-                .Where(x => x.b.CustomerId == userId)
+                .Where(x => x.b.CustomerId == userId && !cancelled.Contains(x.b.Status))
                 .CountAsync();
         }
 

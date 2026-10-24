@@ -2,6 +2,7 @@ using System.Text.Json.Nodes;
 using SmashCourt_BE.Tests.TestData;
 using WireMock.RequestBuilders;
 using WireMock.ResponseBuilders;
+using WireMock.Settings;
 using WireMock.Server;
 
 namespace SmashCourt_BE.Tests.Integration.Http;
@@ -29,6 +30,13 @@ public sealed class TadssStub(WireMockServer server)
         Evaluations.Where(e => e.RequestMessage!.Headers != null
                                && e.RequestMessage.Headers.TryGetValue("X-Idempotency-Key", out var key)
                                && key.Contains(bookingId.ToString())).ToList();
+
+    /// <summary>
+    /// Request nhắc tới một sân (<c>resourceId</c> trong items), dùng khi test không có booking id (request bị chặn trước khi tạo đơn).
+    /// Không đọc toàn bộ log: request chậm của test trước có thể được WireMock ghi muộn, sau khi test này đã reset.
+    /// </summary>
+    public IReadOnlyList<WireMock.Logging.ILogEntry> EvaluationsMentioning(Guid courtId) =>
+        Evaluations.Where(e => e.RequestMessage?.Body?.Contains(courtId.ToString(), StringComparison.OrdinalIgnoreCase) == true).ToList();
 
     /// <summary>
     /// Như <see cref="EvaluationsFor"/> nhưng chờ WireMock ghi xong log (nó ghi sau khi trả lời nên đọc ngay có thể thiếu): chờ tới khi đủ
@@ -73,7 +81,12 @@ public sealed class TadssStub(WireMockServer server)
     public Guid ReplyFallback(Guid reservationId) => ReplyWithSample("decision-result.approved-fallback.json", reservationId);
 
     /// <summary>Trả một response tùy ý (lỗi 4xx/5xx, body hỏng...); <paramref name="retryAfter"/> là giá trị header Retry-After.</summary>
-    public void Reply(int status, string? body, string contentType = "application/problem+json", string? retryAfter = null, TimeSpan? delay = null)
+    public void Reply(int status, string? body, string contentType = "application/problem+json", string? retryAfter = null, TimeSpan? delay = null) =>
+        server.Given(Request.Create().WithPath(DecisionsPath).UsingPost())
+            .RespondWith(BuildResponse(status, body, contentType, retryAfter, delay, template: false));
+
+    private static IResponseBuilder BuildResponse(
+        int status, string? body, string contentType, string? retryAfter, TimeSpan? delay, bool template)
     {
         var response = Response.Create().WithStatusCode(status).WithHeader("Content-Type", contentType);
         if (body != null)
@@ -82,9 +95,71 @@ public sealed class TadssStub(WireMockServer server)
             response = response.WithHeader("Retry-After", retryAfter);
         if (delay != null)
             response = response.WithDelay(delay.Value);
-
-        server.Given(Request.Create().WithPath(DecisionsPath).UsingPost()).RespondWith(response);
+        if (template)
+            response = response.WithTransformer();
+        return response;
     }
+
+    // ───────── Kịch bản cho đặt sân qua HTTP: booking id chỉ biết sau transaction 1 ─────────
+
+    private const string DecisionIdToken = "__decision_id__";
+    private const string ReservationIdToken = "__reservation_id__";
+
+    /// <summary>
+    /// Body mẫu dùng được cho mọi booking (templating của WireMock): <c>decisionId</c> sinh mới mỗi lần trả (cột
+    /// <c>bookings.tadss_decision_id</c> là unique), <c>reservationId</c> lấy lại từ request như TADSS thật.
+    /// </summary>
+    private static string TemplatedSample(string sampleFile, Action<JsonObject>? customize)
+    {
+        var json = JsonNode.Parse(TadssContractFiles.Sample(sampleFile))!.AsObject();
+        customize?.Invoke(json);
+        json["decisionId"] = DecisionIdToken;
+        json["reservationId"] = ReservationIdToken;
+        return json.ToJsonString()
+            .Replace(DecisionIdToken, "{{Random Type=\"Guid\"}}")
+            .Replace(ReservationIdToken, "{{JsonPath.SelectToken request.body \"$.reservationId\"}}");
+    }
+
+    /// <summary>Mọi booking nhận cùng một quyết định (decisionId khác nhau); <paramref name="delay"/> để mô phỏng TADSS chậm.</summary>
+    public void ReplyForAnyBooking(string sampleFile, Action<JsonObject>? customize = null, TimeSpan? delay = null) =>
+        server.Given(Request.Create().WithPath(DecisionsPath).UsingPost())
+            .RespondWith(BuildResponse(200, TemplatedSample(sampleFile, customize), "application/json", null, delay, template: true));
+
+    public void ApproveAnyBooking(decimal rate, decimal amount, TimeSpan? delay = null) =>
+        ReplyForAnyBooking("decision-result.approved.json", json =>
+            json["deposit"] = new JsonObject { ["rate"] = rate, ["amount"] = amount, ["currency"] = "VND" }, delay);
+
+    public void RequireApprovalForAnyBooking(DateTimeOffset approvalExpiresAt, TimeSpan? delay = null) =>
+        ReplyForAnyBooking("decision-result.need-approval.json", json =>
+            json["approvalExpiresAt"] = approvalExpiresAt.ToString("O"), delay);
+
+    public void RejectAnyBooking(TimeSpan? delay = null) => ReplyForAnyBooking("decision-result.rejected.json", delay: delay);
+
+    /// <summary>
+    /// Z-13: lần gọi đầu trả chậm hơn <paramref name="firstDelay"/> (vượt TimeoutMs), lần sau trả ngay quyết định mẫu (kịch bản trạng thái
+    /// của WireMock: lần đầu chuyển trạng thái nên lần thử lại của client khớp mapping thứ hai).
+    /// </summary>
+    public void ReplyTooSlowlyOnceThen(string sampleFile, TimeSpan firstDelay, Action<JsonObject>? customize = null)
+    {
+        const string scenario = "first-attempt-times-out";
+        var body = TemplatedSample(sampleFile, customize);
+        server.Given(Request.Create().WithPath(DecisionsPath).UsingPost())
+            .InScenario(scenario)
+            .WillSetStateTo("answered")
+            .RespondWith(BuildResponse(200, body, "application/json", null, firstDelay, template: true));
+        server.Given(Request.Create().WithPath(DecisionsPath).UsingPost())
+            .InScenario(scenario)
+            .WhenStateIs("answered")
+            .RespondWith(BuildResponse(200, body, "application/json", null, null, template: true));
+    }
+
+    /// <summary>
+    /// Fault <c>EMPTY_RESPONSE</c> của WireMock.Net: trong tiến trình nó trả 200 body rỗng (không cắt được kết nối TCP), nên với BE đây
+    /// là phản hồi không dùng được, không phải lỗi mạng. Lỗi mạng thật: trỏ <c>TadssConfig:BaseUrl</c> sang cổng đóng.
+    /// </summary>
+    public void FailWithNetworkFault() =>
+        server.Given(Request.Create().WithPath(DecisionsPath).UsingPost())
+            .RespondWith(Response.Create().WithFault(FaultType.EMPTY_RESPONSE));
 
     /// <summary>TADSS chậm hơn nhiều so với <c>TimeoutMs</c> của host test (<see cref="SmashCourtWebApplicationFactory.TadssTimeoutMs"/>).</summary>
     public void ReplyTooSlowly() => Reply(200, "{}", "application/json", delay: TimeSpan.FromSeconds(5));

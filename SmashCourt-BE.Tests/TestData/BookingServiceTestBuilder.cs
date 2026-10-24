@@ -1,16 +1,24 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Moq;
+using SmashCourt_BE.Configurations;
 using SmashCourt_BE.Data;
+using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
 using SmashCourt_BE.Services;
 using SmashCourt_BE.Services.IService;
+using SmashCourt_BE.Tests.Integration.Http;
 
 namespace SmashCourt_BE.Tests.TestData;
 
 internal sealed class BookingServiceTestBuilder
 {
+    /// <summary>"Bây giờ" mặc định của luồng đặt online: 15/06/2026 08:00 giờ VN, trước khung 18:00 của dữ liệu mẫu.</summary>
+    public static readonly DateTimeOffset DefaultNow = new(2026, 6, 15, 1, 0, 0, TimeSpan.Zero);
+
     public Mock<IBookingRepository> BookingRepository { get; } = new();
     public Mock<ISlotLockRepository> SlotLockRepository { get; } = new();
     public Mock<IInvoiceRepository> InvoiceRepository { get; } = new();
@@ -32,18 +40,32 @@ internal sealed class BookingServiceTestBuilder
     public Mock<ISlotInterestRepository> SlotInterestRepository { get; } = new();
     public Mock<IUnitOfWork> UnitOfWork { get; } = new();
     public Mock<IBroadcastService> Broadcast { get; } = new();
+    public Mock<IBookingDepositService> DepositService { get; } = new();
+    public BookingPaymentSettings PaymentSettings { get; } = new();
+    public FakeTimeProvider Time { get; } = new(DefaultNow);
     public IConfiguration Configuration { get; set; } = TestConfigurationFactory.Create();
     public ILogger<BookingService> Logger { get; set; } = Mock.Of<ILogger<BookingService>>();
 
+    /// <summary>Ghi lại thư thay vì gửi SMTP (không có SMTP trong unit test).</summary>
+    public RecordingEmailService Email { get; }
+
     public BookingServiceTestBuilder()
     {
+        Email = new RecordingEmailService(Configuration);
         BookingRepository.Setup(x => x.UpdateWithStatusCheckAsync(
                 It.IsAny<Guid>(), It.IsAny<BookingStatus>(), It.IsAny<BookingStatus>()))
             .ReturnsAsync(1);
+        // Mặc định như cờ EnableTadssDecision tắt: dự phòng 100 % (d), hoặc a′ khi đơn dưới mức tối thiểu
+        DepositService.Setup(x => x.DecideAsync(It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Guid _, decimal finalTotal, CancellationToken _) =>
+                DepositDecisionResolver.Resolve(null, finalTotal, PaymentSettings.MinOnlinePaymentAmount));
     }
 
     public BookingService Build()
     {
+        var paymentSettings = new Mock<IOptionsMonitor<BookingPaymentSettings>>();
+        paymentSettings.Setup(x => x.CurrentValue).Returns(PaymentSettings);
+
         return new BookingService(
             BookingRepository.Object,
             SlotLockRepository.Object,
@@ -63,12 +85,15 @@ internal sealed class BookingServiceTestBuilder
             UserRepository.Object,
             TimeSlotRepository.Object,
             VnPayService.Object,
-            new EmailService(Configuration),
+            Email,
             CodeGeneratorService.Object,
             SlotInterestRepository.Object,
             UnitOfWork.Object,
             Logger,
             Configuration,
-            Broadcast.Object);
+            Broadcast.Object,
+            DepositService.Object,
+            paymentSettings.Object,
+            Time);
     }
 }

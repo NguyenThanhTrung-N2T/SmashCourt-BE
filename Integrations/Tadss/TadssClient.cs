@@ -42,7 +42,8 @@ public class TadssClient : ITadssClient
         TadssDecisionRequestDto request, Guid bookingId, CancellationToken cancellationToken = default)
     {
         var call = new TadssCall("Evaluate", HttpMethod.Post, DecisionsPath, request, bookingId.ToString(), null);
-        return SendAsync<TadssDecisionResultDto>(call, allowRetry: true, CheckDecisionResult, cancellationToken);
+        return SendAsync<TadssDecisionResultDto>(
+            call, allowRetry: true, result => CheckDecisionResult(result, request.ReservationId), cancellationToken);
     }
 
     public Task<TadssCallResult<TadssOverrideResponseDto>> OverrideAsync(
@@ -70,8 +71,12 @@ public class TadssClient : ITadssClient
 
     // INV-7 của contract: APPROVED ⇔ deposit, NEED_APPROVAL ⇔ approvalExpiresAt; cùng phạm vi deposit của decision-result.schema.json
     // (rate ∈ [0, 1], amount ≥ 0). Lệch thì không dùng được kết quả: ghi vào hóa đơn sẽ bị CHECK của DB chặn ở transaction 2 (F1)
-    private static string? CheckDecisionResult(TadssDecisionResultDto result) => result.Status switch
+    // Quyết định phải là của chính booking đã gửi: TADSS trả nhầm bản đã lưu của đơn khác (lỗi idempotency) thì không áp, đi dự phòng
+    // như mọi sự cố TADSS (chốt 24/10). So theo GUID nên khác hoa thường vẫn là cùng booking.
+    private static string? CheckDecisionResult(TadssDecisionResultDto result, Guid expectedReservationId) => result.Status switch
     {
+        _ when result.ReservationId != expectedReservationId =>
+            $"reservationId {result.ReservationId} khác booking đã gửi {expectedReservationId}",
         TadssDecisionStatus.APPROVED when result.Deposit is null => "status APPROVED nhưng thiếu deposit",
         TadssDecisionStatus.NEED_APPROVAL when result.ApprovalExpiresAt is null => "status NEED_APPROVAL nhưng thiếu approvalExpiresAt",
         _ when result.Deposit is { Rate: < 0m or > 1m } => "deposit.rate ngoài [0, 1]",

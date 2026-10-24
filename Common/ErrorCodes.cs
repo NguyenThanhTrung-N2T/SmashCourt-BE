@@ -29,6 +29,7 @@ public static class ErrorCodes
     public const string AccountLocked    = "ACCOUNT_LOCKED";
     public const string SlotUnavailable  = "SLOT_UNAVAILABLE";
     public const string SlotUnavailableNotifyRegistered = "SLOT_UNAVAILABLE_NOTIFY_REGISTERED";
+    public const string BookingRejected  = "BOOKING_REJECTED"; // TADSS từ chối đơn đặt sân online (Phase 6, nhánh c)
 
     // ─── Branch Management ───────────────────────────────────────────────
     public const string BranchNotFound         = "BRANCH_NOT_FOUND";

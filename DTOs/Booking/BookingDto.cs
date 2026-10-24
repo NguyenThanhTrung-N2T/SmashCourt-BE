@@ -29,6 +29,17 @@ namespace SmashCourt_BE.DTOs.Booking
         public string PaymentStatus { get; set; } = null!;
         public DateTime? ExpiresAt { get; set; }
 
+        // Cọc (Phase 6, DEPOSIT_APPROVAL_API 2.2): null khi PENDING_APPROVAL, đơn tại quầy và đơn online tạo trước Phase 6
+        public decimal? DepositRate { get; set; }
+        public decimal? DepositAmount { get; set; }
+        public decimal? RemainingAmount { get; set; }
+        public string? DepositSource { get; set; }
+        public DateTime? ApprovalExpiresAt { get; set; }
+        // Lý do cần duyệt: chỉ endpoint của nhân viên; endpoint của khách luôn null (Q6)
+        public string? ApprovalReasonCode { get; set; }
+        public List<string>? ApprovalReasons { get; set; }
+        public string? CancelReason { get; set; }
+
         // Courts
         public List<BookingCourtDto> Courts { get; set; } = [];
 

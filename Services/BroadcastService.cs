@@ -109,7 +109,64 @@ public class BroadcastService : IBroadcastService
         }
     }
 
+    /// <inheritdoc/>
+    public async Task BroadcastBookingEventToStaffAsync(
+        string eventName,
+        BookingNotificationDto notification,
+        Booking booking,
+        bool includeTimeGrid = false)
+    {
+        try
+        {
+            var tasks = StaffGroupTasks(eventName, notification, booking.BranchId).ToList();
+            if (includeTimeGrid)
+                tasks.AddRange(BuildTimeGridTasks(eventName, notification, booking));
+
+            await Task.WhenAll(tasks);
+
+            _logger.LogDebug(
+                "SignalR broadcast (staff only): Event={Event}, BookingId={BookingId}, TimeGrid={TimeGrid}",
+                eventName, notification.BookingId, includeTimeGrid);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "SignalR broadcast failed: Event={Event}, BookingId={BookingId}",
+                eventName, notification.BookingId);
+        }
+    }
+
+    /// <inheritdoc/>
+    public Task BroadcastBookingPendingApprovalAsync(BookingPendingApprovalNotificationDto notification) =>
+        SendToStaffAsync(SignalREvents.BookingPendingApproval, notification, notification.BranchId, notification.BookingId);
+
+    /// <inheritdoc/>
+    public Task BroadcastPendingApprovalQueueChangedAsync(PendingApprovalQueueChangedNotificationDto notification) =>
+        SendToStaffAsync(SignalREvents.PendingApprovalQueueChanged, notification, notification.BranchId, notification.BookingId);
+
     // ── Private Helpers ──────────────────────────────────────────────────────
+
+    // Nhóm vận hành: nhân viên + Manager của chi nhánh (branch_{id}) và OWNER (role_OWNER)
+    private IEnumerable<Task> StaffGroupTasks(string eventName, object payload, Guid branchId)
+    {
+        yield return _hubContext.Clients.Group($"branch_{branchId}").SendAsync(eventName, payload);
+        yield return _hubContext.Clients.Group($"role_{Models.Enums.UserRole.OWNER}").SendAsync(eventName, payload);
+    }
+
+    // Phát tới nhóm vận hành; lỗi chỉ log (best-effort như các hàm phát khác)
+    private async Task SendToStaffAsync(string eventName, object payload, Guid branchId, Guid bookingId)
+    {
+        try
+        {
+            await Task.WhenAll(StaffGroupTasks(eventName, payload, branchId));
+
+            _logger.LogDebug("SignalR broadcast: Event={Event}, BookingId={BookingId}", eventName, bookingId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "SignalR broadcast failed: Event={Event}, BookingId={BookingId}", eventName, bookingId);
+        }
+    }
 
     /// <summary>
     /// Tạo danh sách các task gửi sự kiện cho mỗi tổ hợp duy nhất (branchId, courtTypeId, date)

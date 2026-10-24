@@ -196,18 +196,24 @@ namespace SmashCourt_BE.Controllers
 
 
         /// <summary>
-        /// Đặt sân online - khách hàng có thể đặt sân mà không cần đăng nhập, nhưng nếu đã đăng nhập thì sẽ gắn booking với tài khoản đó
+        /// Đặt sân online - chỉ khách hàng đã đăng nhập (P6-01); các trường guest* trong body được nhận nhưng bỏ qua
         /// </summary>
         [HttpPost("online")]
+        [Authorize(Policy = AuthorizationPolicies.CustomerOnly)]
         [EnableRateLimiting("booking")]
         public async Task<IActionResult> CreateOnline([FromBody] CreateOnlineBookingDto dto)
         {
-            Guid? customerId = User.Identity?.IsAuthenticated == true
-                ? Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!)
-                : null;
+            var customerId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
 
             var result = await _service.CreateOnlineAsync(dto, customerId);
-            return StatusCode(201, ApiResponse<OnlineBookingResponse>.Ok(result, "Đặt sân online thành công"));
+            // Câu thông báo theo trạng thái cuối (DEPOSIT_APPROVAL_API 3.1); nhánh bị từ chối đã ném 400 BOOKING_REJECTED ở service
+            var message = result.Status switch
+            {
+                nameof(BookingStatus.PENDING_APPROVAL) => "Đơn đặt sân đang chờ quản lý chi nhánh duyệt mức cọc",
+                nameof(BookingStatus.CONFIRMED) => "Đặt sân thành công, vui lòng thanh toán tại quầy",
+                _ => "Đặt sân online thành công"
+            };
+            return StatusCode(201, ApiResponse<OnlineBookingResponse>.Ok(result, message));
         }
 
 

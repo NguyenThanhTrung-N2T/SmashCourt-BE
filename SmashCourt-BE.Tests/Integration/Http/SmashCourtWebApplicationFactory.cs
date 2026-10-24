@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using SmashCourt_BE.Services;
 
@@ -26,6 +27,8 @@ public sealed class SmashCourtWebApplicationFactory : WebApplicationFactory<Prog
     public const string TadssApiKey = "http-test-tadss-api-key";
     public const int DefaultRateLimit = 100_000;
     public const int TadssTimeoutMs = 400;
+    public const string VnPayTmnCode = "HTTPTEST";
+    public const string VnPayHashSecret = "HTTPTESTHASHSECRETHTTPTESTHASHSECRET"; // không phải bí mật: chỉ để ký IPN giả trong test
 
     private readonly Dictionary<string, string?> _previousEnvironment = new();
 
@@ -46,8 +49,8 @@ public sealed class SmashCourtWebApplicationFactory : WebApplicationFactory<Prog
             ["Smtp__Username"] = "test@example.invalid",
             ["Smtp__Password"] = "not-a-real-password",
             ["Smtp__From"] = "test@example.invalid",
-            ["VnPay__TmnCode"] = "HTTPTEST",
-            ["VnPay__HashSecret"] = "HTTPTESTHASHSECRETHTTPTESTHASHSECRET",
+            ["VnPay__TmnCode"] = VnPayTmnCode,
+            ["VnPay__HashSecret"] = VnPayHashSecret,
             ["VnPay__CallbackUrl"] = "http://localhost/api/payments/vnpay-return",
             ["Google__ClientId"] = "http-test.apps.googleusercontent.com",
             ["Google__ClientSecret"] = "not-a-real-secret",
@@ -80,6 +83,9 @@ public sealed class SmashCourtWebApplicationFactory : WebApplicationFactory<Prog
     /// <summary>Thư BE đã "gửi" (không có SMTP thật).</summary>
     public RecordingEmailService Emails { get; } = new(new ConfigurationBuilder().Build());
 
+    /// <summary>Log mức Warning trở lên của host (kiểm log, đọc stack trace của lỗi 500).</summary>
+    public RecordingLoggerProvider Logs { get; } = new();
+
     /// <summary>Đổi cấu hình lúc chạy (có báo reload cho <c>IOptionsMonitor</c>).</summary>
     public MutableConfigurationSource Overrides { get; } = new();
 
@@ -100,6 +106,7 @@ public sealed class SmashCourtWebApplicationFactory : WebApplicationFactory<Prog
     {
         builder.UseEnvironment("Testing");
         builder.ConfigureAppConfiguration((_, configuration) => configuration.Add(Overrides));
+        builder.ConfigureLogging(logging => logging.AddProvider(Logs));
         builder.ConfigureTestServices(services =>
         {
             services.RemoveAll<EmailService>();

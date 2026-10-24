@@ -51,16 +51,26 @@ public class BookingServiceTests
     }
 
     [Fact]
-    public async Task CreateOnlineAsync_WhenGuestContactIsIncomplete_ThrowsBadRequestWithoutLoadingCourts()
+    public async Task CreateOnlineAsync_IgnoresGuestFieldsOfTheRequest()
     {
+        // P6-01: endpoint chỉ cho CUSTOMER; guest* vẫn nhận trong DTO nhưng không lưu vào booking
         var builder = new BookingServiceTestBuilder();
-        var dto = CreateOnlineBookingDto();
-        dto.GuestName = null;
+        var court = TestDataFactory.CreateCourt();
+        Booking? created = null;
+        builder.CourtRepository.Setup(x => x.GetByIdsAsync(It.IsAny<IEnumerable<Guid>>())).ReturnsAsync([court]);
+        builder.PriceService.Setup(x => x.CalculateForBookingAsync(court.BranchId, It.IsAny<CalculatePriceDto>()))
+            .ReturnsAsync(TestDataFactory.CreatePriceResult([court.Id]));
+        builder.BookingRepository.Setup(x => x.CreateAsync(It.IsAny<Booking>()))
+            .Callback((Booking booking) => created = booking)
+            .ThrowsAsync(new InvalidOperationException("dừng sau khi tạo booking"));
 
-        var exception = await Assert.ThrowsAsync<AppException>(() => builder.Build().CreateOnlineAsync(dto, null));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => builder.Build().CreateOnlineAsync(
+            CreateOnlineBookingDto(court.Id), Guid.NewGuid()));
 
-        exception.ShouldBeAppException(400, ErrorCodes.BadRequest, "đầy đủ");
-        builder.CourtRepository.Verify(x => x.GetByIdsAsync(It.IsAny<IEnumerable<Guid>>()), Times.Never);
+        Assert.NotNull(created);
+        Assert.Null(created.GuestName);
+        Assert.Null(created.GuestPhone);
+        Assert.Null(created.GuestEmail);
     }
 
     [Fact]
@@ -123,10 +133,12 @@ public class BookingServiceTests
     }
 
     [Fact]
-    public async Task CreateOnlineAsync_WhenSlotOverlapsExistingBooking_RegistersInterestAndThrowsUnavailable()
+    public async Task CreateOnlineAsync_WhenSlotOverlapsExistingBooking_RegistersInterestWithAccountEmailAndThrowsUnavailable()
     {
         var builder = new BookingServiceTestBuilder();
         var court = TestDataFactory.CreateCourt();
+        var customer = TestDataFactory.CreateUser(email: "customer@example.com");
+        builder.UserRepository.Setup(x => x.GetUserByIdAsync(customer.Id)).ReturnsAsync(customer);
         builder.CourtRepository.Setup(x => x.GetByIdsAsync(It.IsAny<IEnumerable<Guid>>()))
             .ReturnsAsync([court]);
         builder.BookingRepository.Setup(x => x.HasOverlapAsync(
@@ -134,12 +146,31 @@ public class BookingServiceTests
             .ReturnsAsync(true);
 
         var exception = await Assert.ThrowsAsync<AppException>(() => builder.Build().CreateOnlineAsync(
-            CreateOnlineBookingDto(court.Id), Guid.NewGuid()));
+            CreateOnlineBookingDto(court.Id), customer.Id));
 
+        // P6-01: email tài khoản, không phải guestEmail của request
         exception.ShouldBeAppException(400, ErrorCodes.SlotUnavailableNotifyRegistered);
         builder.SlotInterestRepository.Verify(x => x.CreateAsync(It.Is<SlotInterest>(interest =>
-            interest.CourtId == court.Id && interest.Email == "guest@example.com")), Times.Once);
+            interest.CourtId == court.Id && interest.Email == "customer@example.com" && interest.CustomerId == customer.Id)), Times.Once);
         builder.BookingRepository.Verify(x => x.CreateAsync(It.IsAny<Booking>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CreateOnlineAsync_WhenSlotIsTakenAndAccountHasNoEmail_ThrowsPlainUnavailableWithoutInterest()
+    {
+        var builder = new BookingServiceTestBuilder();
+        var court = TestDataFactory.CreateCourt();
+        builder.CourtRepository.Setup(x => x.GetByIdsAsync(It.IsAny<IEnumerable<Guid>>())).ReturnsAsync([court]);
+        builder.BookingRepository.Setup(x => x.HasOverlapAsync(
+                court.Id, It.IsAny<DateOnly>(), It.IsAny<TimeOnly>(), It.IsAny<TimeOnly>()))
+            .ReturnsAsync(true);
+
+        // Request vẫn mang guestEmail nhưng không được dùng
+        var exception = await Assert.ThrowsAsync<AppException>(() => builder.Build().CreateOnlineAsync(
+            CreateOnlineBookingDto(court.Id), Guid.NewGuid()));
+
+        exception.ShouldBeAppException(400, ErrorCodes.SlotUnavailable);
+        builder.SlotInterestRepository.Verify(x => x.CreateAsync(It.IsAny<SlotInterest>()), Times.Never);
     }
 
     [Fact]
@@ -147,6 +178,8 @@ public class BookingServiceTests
     {
         var builder = new BookingServiceTestBuilder();
         var court = TestDataFactory.CreateCourt();
+        var customer = TestDataFactory.CreateUser();
+        builder.UserRepository.Setup(x => x.GetUserByIdAsync(customer.Id)).ReturnsAsync(customer);
         builder.CourtRepository.Setup(x => x.GetByIdsAsync(It.IsAny<IEnumerable<Guid>>()))
             .ReturnsAsync([court]);
         builder.SlotLockRepository.Setup(x => x.GetByCourtAndTimeAsync(
@@ -154,7 +187,7 @@ public class BookingServiceTests
             .ReturnsAsync(new SlotLock { CourtId = court.Id });
 
         var exception = await Assert.ThrowsAsync<AppException>(() => builder.Build().CreateOnlineAsync(
-            CreateOnlineBookingDto(court.Id), Guid.NewGuid()));
+            CreateOnlineBookingDto(court.Id), customer.Id));
 
         exception.ShouldBeAppException(400, ErrorCodes.SlotUnavailableNotifyRegistered);
         builder.PriceService.Verify(x => x.CalculateForBookingAsync(
@@ -211,7 +244,7 @@ public class BookingServiceTests
     }
 
     [Fact]
-    public async Task CreateOnlineAsync_WhenTwoCourtsHaveLoyaltyDiscount_CreatesInvoiceLocksAndPayment()
+    public async Task CreateOnlineAsync_WhenTwoCourtsHaveLoyaltyDiscount_CreatesInvoiceLocksAndFullFallbackPayment()
     {
         var builder = new BookingServiceTestBuilder();
         var customerId = Guid.NewGuid();
@@ -282,6 +315,10 @@ public class BookingServiceTests
         builder.VnPayService.Setup(x => x.CreatePaymentUrl(
                 bookingId.ToString(), 360_000m, It.IsAny<string>()))
             .Returns(new VnPayPaymentUrlResult { Url = "https://vnpay.test/pay", TransactionRef = "TX-ONLINE" });
+        // Cờ TADSS tắt (mặc định của builder) ⇒ nhánh d: cọc 100 % của tổng sau giảm giá
+        builder.BookingRepository.Setup(x => x.ApplyPaymentRequiredAsync(
+                bookingId, null, 1m, 360_000m, DepositSource.FULL_PAYMENT_FALLBACK, It.IsAny<DateTime>()))
+            .ReturnsAsync(true);
 
         var result = await builder.Build().CreateOnlineAsync(
             CreateOnlineBookingDto(firstCourt.Id, secondCourt.Id), customerId);
@@ -297,6 +334,34 @@ public class BookingServiceTests
             payment.InvoiceId == invoiceId &&
             payment.Amount == 360_000m &&
             payment.Status == PaymentTxStatus.PENDING)), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateWalkInAsync_StillStoresGuestContact()
+    {
+        // P6-01 chỉ bỏ guest* ở đặt online; đơn tại quầy vẫn cho khách vãng lai và lưu thông tin liên hệ
+        var builder = new BookingServiceTestBuilder();
+        var owner = TestDataFactory.CreateUser(role: UserRole.OWNER);
+        var court = TestDataFactory.CreateCourt();
+        Booking? created = null;
+        builder.CourtRepository.Setup(x => x.GetByIdsAsync(It.IsAny<IEnumerable<Guid>>())).ReturnsAsync([court]);
+        builder.UserRepository.Setup(x => x.GetUserByIdAsync(owner.Id)).ReturnsAsync(owner);
+        builder.PriceService.Setup(x => x.CalculateForBookingAsync(court.BranchId, It.IsAny<CalculatePriceDto>()))
+            .ReturnsAsync(TestDataFactory.CreatePriceResult([court.Id]));
+        builder.BookingRepository.Setup(x => x.CreateAsync(It.IsAny<Booking>()))
+            .Callback((Booking booking) => created = booking)
+            .ThrowsAsync(new InvalidOperationException("dừng sau khi tạo booking"));
+        var dto = CreateWalkInBookingDto(court.Id);
+        dto.GuestEmail = " walkin@example.com ";
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => builder.Build().CreateWalkInAsync(dto, owner.Id));
+
+        Assert.NotNull(created);
+        Assert.Null(created.CustomerId);
+        Assert.Equal("Walk-in guest", created.GuestName);
+        Assert.Equal("0900000000", created.GuestPhone);
+        Assert.Equal("walkin@example.com", created.GuestEmail);
+        Assert.Equal(BookingSource.WALK_IN, created.Source);
     }
 
     [Fact]

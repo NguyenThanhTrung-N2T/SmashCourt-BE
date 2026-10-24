@@ -532,6 +532,15 @@ public class TadssClientTests
         yield return ["deposit.rate > 1", ApprovedJson.Replace("\"rate\": 0.5", "\"rate\": 1.5"), "application/json"];
         yield return ["deposit.rate âm", ApprovedJson.Replace("\"rate\": 0.5", "\"rate\": -0.1"), "application/json"];
         yield return ["deposit.amount âm", ApprovedJson.Replace("\"amount\": 114000", "\"amount\": -1"), "application/json"];
+        // Quyết định của booking khác (VD TADSS trả nhầm bản đã lưu khi lỗi idempotency): không được áp lên đơn đang đặt
+        yield return ["reservationId của booking khác",
+            ApprovedJson.Replace("5b0a6f0e-7c0d-4a0e-9a64-0c2e7f1b9a11", "00000000-0000-4000-8000-0000000000ff"), "application/json"];
+        yield return ["NEED_APPROVAL của booking khác",
+            TadssContractFiles.Sample("decision-result.need-approval.json").Replace("5b0a6f0e-7c0d-4a0e-9a64-0c2e7f1b9a11", "00000000-0000-4000-8000-0000000000ff"),
+            "application/json"];
+        yield return ["REJECTED của booking khác",
+            TadssContractFiles.Sample("decision-result.rejected.json").Replace("5b0a6f0e-7c0d-4a0e-9a64-0c2e7f1b9a11", "00000000-0000-4000-8000-0000000000ff"),
+            "application/json"];
         yield return ["NEED_APPROVAL thiếu approvalExpiresAt",
             TadssContractFiles.Sample("decision-result.need-approval.json").Replace("\"approvalExpiresAt\": \"2026-11-18T14:15:00+07:00\"", "\"approvalExpiresAt\": null"),
             "application/json"];
@@ -566,6 +575,50 @@ public class TadssClientTests
 
         Assert.True(result.IsSuccess);
         Assert.Equal(decimal.Parse(rate, System.Globalization.CultureInfo.InvariantCulture), result.Value.Deposit!.Rate);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_WhenReservationIdDiffers_LogsBothIdsForInvestigation()
+    {
+        var other = Guid.Parse("00000000-0000-4000-8000-0000000000ff");
+        var sut = CreateReplying(() => FakeHttpMessageHandler.Json(HttpStatusCode.OK,
+            ApprovedJson.Replace(TadssTestData.BookingId.ToString(), other.ToString()), "application/json"));
+
+        var result = await Evaluate(sut);
+
+        Assert.Equal(TadssFailureKind.InvalidResponse, result.FailureKind);
+        var entry = Assert.Single(sut.Logger.Entries, e => e.Level == LogLevel.Error);
+        Assert.Contains(other.ToString(), entry.Message);
+        Assert.Contains(TadssTestData.BookingId.ToString(), entry.Message);
+        Assert.Contains("reservationId", entry.Message);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_WhenReservationIdMatchesInUpperCase_IsAccepted()
+    {
+        // So theo GUID, không theo chuỗi: TADSS viết hoa vẫn là cùng booking
+        var sut = CreateReplying(() => FakeHttpMessageHandler.Json(HttpStatusCode.OK,
+            ApprovedJson.Replace(TadssTestData.BookingId.ToString(), TadssTestData.BookingId.ToString().ToUpperInvariant()), "application/json"));
+
+        var result = await Evaluate(sut);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(TadssTestData.BookingId, result.Value.ReservationId);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_ComparesWithTheReservationIdOfTheRequest_NotOnlyTheIdempotencyKey()
+    {
+        // Request và khóa idempotency luôn cùng booking id; kiểm theo request để không phụ thuộc cách dựng khóa
+        var request = TadssTestData.DecisionRequest(full: true);
+        var reservation = Guid.NewGuid();
+        request.ReservationId = reservation;
+        var sut = CreateReplying(() => FakeHttpMessageHandler.Json(HttpStatusCode.OK,
+            ApprovedJson.Replace(TadssTestData.BookingId.ToString(), reservation.ToString()), "application/json"));
+
+        var result = await sut.Client.EvaluateAsync(request, reservation);
+
+        Assert.True(result.IsSuccess);
     }
 
     [Fact]
