@@ -1,6 +1,6 @@
 # Use Case UC-BOOKING-03: Hủy booking online
 
-> **Thay đổi ở Phase 6 (Đồ án 2, thiết kế chốt 18/10/2026).** Đặc tả dưới đây mô tả hành vi Đồ án 1. Khách tự hủy được cả đơn chưa thanh toán (`PENDING`, `PENDING_APPROVAL`); tiền hoàn = tổng **đã thanh toán** × % hoàn, % hoàn tính đúng múi giờ; mọi lần hủy ghi lý do hủy. Xem UC-DEPOSIT-04, UC-DEPOSIT-12 và `docs/api/DEPOSIT_APPROVAL_API.md` Mục 3.4. Use case UC-DEPOSIT-xx nằm ở `TADSS-Runtime/docs/report/USE_CASES.md`.
+> **Thay đổi ở Phase 6 (Đồ án 2, thiết kế chốt 18/10/2026).** Đặc tả dưới đây mô tả hành vi Đồ án 1. Khách tự hủy được cả đơn chưa thanh toán (`PENDING`, `PENDING_APPROVAL`); khách **không** tự hủy được từ giờ bắt đầu chơi (400 `BOOKING_ALREADY_STARTED`, P6-23; nhân viên vẫn hủy hộ được); tiền hoàn = tổng **đã thanh toán** × % hoàn, % hoàn tính đúng múi giờ, luôn trả tiền mặt tại chi nhánh đặt sân; mọi lần hủy ghi lý do hủy. Link hủy trong email bị vô hiệu khi khách hủy trong app. Xem UC-DEPOSIT-04, UC-DEPOSIT-12 và `docs/api/DEPOSIT_APPROVAL_API.md` Mục 3.4. Use case UC-DEPOSIT-xx nằm ở `TADSS-Runtime/docs/report/USE_CASES.md`.
 
 ## Bảng 3.7. Đặc tả Use case Hủy booking online
 
