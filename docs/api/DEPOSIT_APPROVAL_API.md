@@ -77,7 +77,11 @@ Thêm giá trị `PENDING_APPROVAL` vào enum `BookingStatus` (C#) và `booking_
 | `PENDING_APPROVAL` | `UNPAID` | **Mới.** Chờ Manager duyệt mức cọc; slot vẫn được giữ | `approvalExpiresAt` | "Chờ duyệt cọc" |
 | `CONFIRMED` | `UNPAID` | Cọc bằng 0 hoặc dưới `MinOnlinePaymentAmount` (nhánh a′, Mục 3.1), hoặc Manager duyệt 0 % (Q4): không thanh toán online, thu toàn bộ tại quầy | — | "Đã xác nhận, thanh toán tại quầy" |
 | `PAID_ONLINE` | `PARTIALLY_PAID` | Đã thanh toán cọc (giữ nguyên hành vi IPN hiện tại: thanh toán online luôn để hóa đơn `PARTIALLY_PAID`) | — | "Đã cọc" |
-| `CANCELLED` | `UNPAID` | Bị từ chối, hết hạn duyệt, hết hạn thanh toán hoặc bị hủy; lý do ở `cancelReason` (Mục 2.2) | — | "Đã hủy" (kèm lý do) |
+| `CANCELLED` | `EXPIRED` | Hết hạn thanh toán, hết hạn duyệt, Manager từ chối hoặc TADSS từ chối; lý do ở `cancelReason` (Mục 2.2) | — | "Đã hủy" (kèm lý do) |
+| `CANCELLED` | `UNPAID` | Khách, nhân viên hoặc link hủy đơn chưa trả tiền (`PENDING`, `PENDING_APPROVAL`, `CONFIRMED`) | — | "Đã hủy" (kèm lý do) |
+| `CANCELLED` | `PARTIALLY_PAID` | Hủy đơn đã cọc theo chính sách hoàn 0 % | — | "Đã hủy, không hoàn tiền" |
+| `CANCELLED_PENDING_REFUND` | `PARTIALLY_PAID`; hoặc giữ trạng thái lúc tiền về (`EXPIRED`, `UNPAID`, `REFUNDED`) | Hủy đơn đã cọc có hoàn tiền; hoặc tiền về sau khi đơn đã hủy (hoàn 100 %, P6-07). Hoàn tiền mặt tại chi nhánh đặt sân | — | "Chờ nhận tiền hoàn tại chi nhánh" |
+| `CANCELLED_REFUNDED` | `REFUNDED` | Nhân viên đã xác nhận trả tiền mặt | — | "Đã hoàn tiền" |
 
 Chuyển trạng thái mới (bổ sung vào `Helpers/BookingStatusTransition.cs`):
 
@@ -260,7 +264,7 @@ Content-Type: application/json
 }
 ```
 
-**(d) Mọi sự cố TADSS — cọc 100 %** (HTTP 201). Áp dụng khi `EnableTadssDecision = false`, TADSS timeout / lỗi mạng / 5xx / 401 / 413 / 429, và cả 400 / 409 bất thường từ TADSS (request do BE dựng sai, ví dụ thời lượng sân ngoài giới hạn của TADSS: lỗi lập trình của BE, ghi log mức Error kèm correlation id) (INTEGRATION_SPEC §1, §4.3; R-4). Khách **không** thấy lỗi; response giống nhánh (a) với cọc 100 %.
+**(d) Mọi sự cố TADSS — cọc 100 %** (HTTP 201). Áp dụng khi `EnableTadssDecision = false`, TADSS timeout / lỗi mạng / 5xx / 401 / 413 / 429, và cả 400 / 409 bất thường từ TADSS (request do BE dựng sai, ví dụ thời lượng sân ngoài giới hạn của TADSS: lỗi lập trình của BE, ghi log mức Error kèm correlation id) (INTEGRATION_SPEC §1, §4.3; R-4). Từ gói 6A-5 (P6-24, chốt 27/10) nhánh này gồm cả `NEED_APPROVAL` có hạn duyệt đã qua lúc BE ghi đơn hoặc sau giờ chơi: FE nhận `status = PENDING`, `depositSource = FULL_PAYMENT_FALLBACK` thay vì `PENDING_APPROVAL`, không phải xử lý gì thêm. Khách **không** thấy lỗi; response giống nhánh (a) với cọc 100 %.
 
 ```json
 {
@@ -307,6 +311,7 @@ Không đổi route, policy, điều kiện (`status = PENDING`, chưa quá `exp
 - Số tiền VNPay là **`depositAmount`** (booking tạo trước Phase 6: `finalTotal`); response dùng `OnlineBookingResponse` mới ở 3.1 (luôn `status = PENDING`).
 - **Hạn mới** = `min(hạn giữ chỗ tuyệt đối, max(expiresAt hiện tại, now + 10 phút))` (P6-02). Trước đây luôn là `now + 10 phút`, nên bấm liên tục giữ được slot vô hạn, và sau khi duyệt có thể **rút ngắn** hạn. Đã tới hạn giữ chỗ tuyệt đối ⇒ 400 `PAYMENT_HOLD_EXPIRED` (mới, Mục 5). BE kiểm hạn giữ chỗ **trước** hạn thanh toán; còn trong hạn giữ chỗ mà quá `expiresAt` thì vẫn là lỗi cũ 400 `BAD_REQUEST` "Đơn đặt sân đã hết hạn thanh toán". Đơn tạo trước Phase 6 (không có hạn giữ chỗ) coi hạn giữ chỗ là giờ tạo + 15 phút.
 - **Đây là cách duy nhất lấy link thanh toán sau khi được duyệt** (P6-10): duyệt không tạo Payment/URL; khách bấm "Thanh toán cọc" ở lịch sử đặt sân (email và SignalR dẫn tới đó). Booking `PENDING_APPROVAL` gọi endpoint này nhận lỗi hiện có 400 `BAD_REQUEST` "Chỉ có thể thanh toán lại cho đơn đang chờ thanh toán".
+- **Tải lại trang và link thanh toán (ghi chú 27/10, plan 6A-5 Task 1):** BE **không lưu** URL thanh toán. Mỗi lần gọi endpoint này tạo một Payment và link mới, đánh Payment chờ trước đó `FAILED`, ghi hạn mới vào hóa đơn và slot lock trong cùng transaction. Khách tải lại trang thì `GET /api/me/bookings/{id}` trả `expiresAt` mới nhất; muốn trả tiền thì gọi lại endpoint này để lấy link mới. Khách vẫn trả bằng link cũ thì tiền vẫn được ghi nhận (đơn còn `PENDING` ⇒ `PAID_ONLINE`; đơn đã trả bằng link khác ⇒ ghi nhận, không đổi đơn). Trả lại đúng link cũ khi tải trang là tính năng mới (phải lưu URL; link VNPay chưa có hạn tới khi xong P6-27), không làm.
 
 ### 3.4. Hủy booking: đơn chờ duyệt và đơn đã cọc (R-1, R-2)
 

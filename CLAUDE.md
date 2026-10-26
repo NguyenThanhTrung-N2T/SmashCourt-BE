@@ -48,12 +48,13 @@ Module nghiệp vụ: Auth & User · Branch & Court · Pricing & TimeSlot · Ser
 
 ## Phase 6 (đang làm)
 - Nhánh `feat/phase-6-deposit`; tài liệu duy nhất của phase: `../TADSS-Runtime/spec/PHASE6_DESIGN_SPEC.md`, plan từng gói `../TADSS-Runtime/spec/PHASE6_PLAN_6A-*.md`. Đặc tả API BE ↔ FE: `docs/api/DEPOSIT_APPROVAL_API.md`. Script DB: `docs/database/phase6_*.sql` (người dùng tự chạy lên Neon; bản dump schema đã cập nhật sẵn).
-- Đã xong 6A-1…6A-4 (nền, đặt online hai transaction, duyệt cọc, thanh toán / hủy / check-out); 6A-5 (job hết hạn thanh toán, hết hạn duyệt, báo outcome) đang lập plan. Cờ `TadssConfig:EnableTadssDecision` giữ **tắt**.
+- Đã xong 6A-1…6A-4 (nền, đặt online hai transaction, duyệt cọc, thanh toán / hủy / check-out); 6A-5 (job hết hạn thanh toán, hết hạn duyệt, báo outcome; Job-02/Job-04 có điều kiện; kiểm hạn duyệt lúc nhận) plan bản 5 đã chốt 27/10, chưa code. Cờ `TadssConfig:EnableTadssDecision` giữ **tắt**.
 - Luật đã chốt cần nhớ khi sửa luồng booking/thanh toán:
   - Hoàn tiền luôn tiền mặt tại chi nhánh đặt sân; không gọi API hoàn của cổng. Mỗi Payment `SUCCESS` một Refund.
   - Nghiệp vụ thanh toán không gắn VNPay: cổng mới chỉ hiện thực `IPaymentGateway`; quy tắc thất bại / thành công / tiền về sau khi hủy / trả hai lần nằm ở `PaymentResultService`.
   - Mọi luồng chạm đơn **khóa dòng booking trước** Payment (`IBookingRepository.LockAsync` hoặc câu cập nhật có điều kiện đầu tiên) — sai thứ tự từng gây deadlock `40P01`.
   - Transaction dùng `TransactionScopeHelper.ReadCommitted()` kèm câu cập nhật có điều kiện (`ExecuteUpdateAsync`, không SQL thô); scope lồng phải cùng mức cô lập với scope ngoài.
+  - Job đổi trạng thái booking xử lý từng đơn trong một transaction, câu điều kiện (hoặc khóa rồi đọc lại) chạy đầu tiên; thua thì bỏ qua, không ghi gì (P6-25). Không `SaveChanges` cả lô entity đã nạp từ trước: đè được thao tác của nhân viên vừa commit.
   - Thời gian: "bây giờ" lấy từ `TimeProvider`; giờ chơi (giờ tường VN) đổi bằng `DateTimeHelper.ToUtcFromVietnam`; DTO TADSS dùng `DateTimeOffset` có offset (P6-22).
 
 ## Điểm cần nhớ
