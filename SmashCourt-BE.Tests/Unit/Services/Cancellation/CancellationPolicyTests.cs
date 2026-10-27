@@ -229,4 +229,28 @@ public class CancellationPolicyTests
         // Xác nhận không qua VNPay, duyệt 0 %, tại quầy trả sau: lượt đã được tính lúc xác nhận
         Assert.True(CancellationPolicy.ShouldReleasePromotionUse(InvoiceWith(PaymentTiming.POSTPAID)));
     }
+
+    // ───────────────────────── Lý do hủy của đơn hết hạn thanh toán (6A-5, B1, spec 4.4.1) ─────────────────────────
+
+    [Theory]
+    [InlineData(null, 0, BookingCancelReason.SYSTEM_CLEANUP)]                       // BE dừng giữa hai transaction
+    [InlineData(null, 1, BookingCancelReason.PAYMENT_EXPIRED)]                      // dữ liệu trước Phase 6: có Payment, chưa có mức cọc
+    [InlineData(DepositSource.MANAGER, 0, BookingCancelReason.PAYMENT_EXPIRED)]     // đã duyệt, khách chưa bấm thanh toán
+    [InlineData(DepositSource.TADSS, 0, BookingCancelReason.PAYMENT_EXPIRED)]
+    [InlineData(DepositSource.FULL_PAYMENT_FALLBACK, 2, BookingCancelReason.PAYMENT_EXPIRED)]
+    public void PaymentExpiryReason_IsSystemCleanupOnlyWithoutDepositAndWithoutPayments(
+        DepositSource? depositSource, int paymentCount, BookingCancelReason expected)
+    {
+        var invoice = InvoiceWith(PaymentTiming.PREPAID, Enumerable.Repeat(PaymentTxStatus.FAILED, paymentCount).ToArray());
+        invoice.DepositSource = depositSource;
+
+        Assert.Equal(expected, CancellationPolicy.PaymentExpiryReason(invoice));
+    }
+
+    [Fact]
+    public void PaymentExpiryReason_WithoutInvoice_IsSystemCleanup()
+    {
+        // Đơn không có hóa đơn chỉ có thể là đơn dở dang của transaction 1
+        Assert.Equal(BookingCancelReason.SYSTEM_CLEANUP, CancellationPolicy.PaymentExpiryReason(null));
+    }
 }

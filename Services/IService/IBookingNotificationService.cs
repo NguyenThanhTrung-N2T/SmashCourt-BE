@@ -15,6 +15,10 @@ namespace SmashCourt_BE.Services.IService
         // đơn đang chờ duyệt thì báo rời hàng chờ
         Task NotifyCancelledAsync(Booking booking, BookingStatus previousStatus, decimal refundAmount);
 
+        // Báo đơn vừa bị job hủy vì hết hạn (thanh toán hoặc duyệt) sau commit: BookingExpired kèm lưới giờ, báo người chờ slot;
+        // đơn chờ duyệt thì báo rời hàng chờ và email hết hạn duyệt; hết hạn thanh toán không email khách
+        Task NotifyExpiredAsync(Booking booking, BookingStatus previousStatus);
+
         // Báo thanh toán thành công: email xác nhận kèm link hủy và phần cọc / còn lại, sự kiện PaymentSuccess
         Task NotifyPaymentSucceededAsync(Booking booking, Payment payment, string rawCancelToken);
 

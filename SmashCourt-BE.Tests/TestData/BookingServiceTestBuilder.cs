@@ -63,9 +63,9 @@ internal sealed class BookingServiceTestBuilder
         BookingRepository.Setup(x => x.TryLockForServiceChangeAsync(It.IsAny<Guid>(), It.IsAny<DateTime>()))
             .ReturnsAsync(true);
         // Mặc định như cờ EnableTadssDecision tắt: dự phòng 100 % (d), hoặc a′ khi đơn dưới mức tối thiểu
-        DepositService.Setup(x => x.DecideAsync(It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((Guid _, decimal finalTotal, CancellationToken _) =>
-                DepositDecisionResolver.Resolve(null, finalTotal, PaymentSettings.MinOnlinePaymentAmount));
+        DepositService.Setup(x => x.DecideAsync(It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Guid _, decimal finalTotal, DateTime playStartUtc, CancellationToken _) =>
+                DepositDecisionResolver.Resolve(null, finalTotal, PaymentSettings.MinOnlinePaymentAmount, Time.GetUtcNow().UtcDateTime, playStartUtc));
     }
 
     public BookingService Build()

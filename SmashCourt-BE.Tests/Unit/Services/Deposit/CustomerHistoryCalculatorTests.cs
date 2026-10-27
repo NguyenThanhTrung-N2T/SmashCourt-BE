@@ -1,4 +1,6 @@
 using SmashCourt_BE.Models.Deposit;
+using SmashCourt_BE.Models.Entities;
+using SmashCourt_BE.Services.Cancellation;
 using SmashCourt_BE.Services.Deposit;
 using SmashCourt_BE.Tests.TestData;
 using SmashCourt_BE.Helpers;
@@ -209,6 +211,26 @@ public class CustomerHistoryCalculatorTests
         var summary = Calculate(Cancelled(BookingCancelReason.PAYMENT_EXPIRED));
 
         Assert.Equal(new CustomerHistorySummary(0, 0, 0, 0, 1, null), summary);
+    }
+
+    // B1 (6A-5): lý do do job hết hạn ghi quyết định đơn có vào paymentExpiredCount gửi TADSS hay không.
+    // Đơn đã có mức cọc (kể cả Quản lý vừa duyệt mà khách chưa bấm thanh toán) là lỗi của khách; chỉ đơn BE dừng giữa hai transaction thì không
+    [Theory]
+    [InlineData(DepositSource.MANAGER, 0, 1)]
+    [InlineData(DepositSource.TADSS, 1, 1)]
+    [InlineData(DepositSource.FULL_PAYMENT_FALLBACK, 1, 1)]
+    [InlineData(null, 1, 1)]
+    [InlineData(null, 0, 0)]
+    public void Calculate_OrderExpiredByJob_CountedOnlyWhenTheCustomerCouldHavePaid(
+        DepositSource? depositSource, int paymentCount, int expectedPaymentExpired)
+    {
+        var invoice = new Invoice { DepositSource = depositSource };
+        for (var i = 0; i < paymentCount; i++)
+            invoice.Payments.Add(new Payment { Status = PaymentTxStatus.FAILED });
+
+        var summary = Calculate(Cancelled(CancellationPolicy.PaymentExpiryReason(invoice)));
+
+        Assert.Equal(new CustomerHistorySummary(0, 0, 0, 0, expectedPaymentExpired, null), summary);
     }
 
     [Theory]

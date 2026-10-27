@@ -125,7 +125,10 @@ public class TadssClientTests
     [Fact]
     public async Task ReportOutcomeAsync_WhenCalled_SendsOutcomeScopedIdempotencyKey()
     {
-        var sut = CreateReplying(() => FakeHttpMessageHandler.Json(HttpStatusCode.OK, TadssContractFiles.Sample("outcome-response.json")));
+        // Response phải khớp quyết định đã gửi (6A-5, B4): mẫu của contract mang decisionId khác nên sửa trường này
+        var response = JsonNode.Parse(TadssContractFiles.Sample("outcome-response.json"))!.AsObject();
+        response["decisionId"] = TadssTestData.DecisionId.ToString();
+        var sut = CreateReplying(() => FakeHttpMessageHandler.Json(HttpStatusCode.OK, response.ToJsonString()));
 
         var result = await sut.Client.ReportOutcomeAsync(TadssTestData.DecisionId, TadssTestData.OutcomeNoShow());
 

@@ -11,7 +11,8 @@ namespace SmashCourt_BE.Services.IService
         // Dựng request từ booking đã ghi rồi hỏi TADSS; trả nguyên kết quả. Không ghi DB, không đọc cờ EnableTadssDecision
         Task<TadssCallResult<TadssDecisionResultDto>> EvaluateAsync(Guid bookingId, CancellationToken cancellationToken = default);
 
-        // Chọn nhánh xử lý đơn online: cờ tắt thì không gọi TADSS; mọi lỗi TADSS thành phương án dự phòng, không ném. Không ghi DB
-        Task<DepositDecision> DecideAsync(Guid bookingId, decimal finalTotal, CancellationToken cancellationToken = default);
+        // Chọn nhánh xử lý đơn online: cờ tắt thì không gọi TADSS; mọi lỗi TADSS thành phương án dự phòng, không ném. Không ghi DB.
+        // playStartUtc = giờ bắt đầu chơi sớm nhất (kiểm hạn duyệt); kết quả mang mốc nhận quyết định cho transaction 2
+        Task<DepositDecision> DecideAsync(Guid bookingId, decimal finalTotal, DateTime playStartUtc, CancellationToken cancellationToken = default);
     }
 }

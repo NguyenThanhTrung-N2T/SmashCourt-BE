@@ -160,6 +160,31 @@ public class BookingNotificationService : IBookingNotificationService
                 QueueChanged(booking, SignalREvents.QueueChangeRemoved, SignalREvents.QueueReasonCancelled, timestamp)));
     }
 
+    // ── Hết hạn (job) ─────────────────────────────────────────────────────
+
+    public async Task NotifyExpiredAsync(Booking booking, BookingStatus previousStatus)
+    {
+        var timestamp = UtcNow();
+        var approvalExpired = previousStatus == BookingStatus.PENDING_APPROVAL;
+        var message = approvalExpired
+            ? $"Booking #{booking.BookingCode} của {CustomerName(booking)} đã bị hủy tự động do chi nhánh chưa duyệt kịp."
+            : $"Booking #{booking.BookingCode} của {CustomerName(booking)} đã bị hủy tự động do hết hạn thanh toán.";
+
+        await RunSafelyAsync("BookingExpired", booking.Id, () => _broadcast.BroadcastBookingEventAsync(
+            SignalREvents.BookingExpired, BookingNotification(booking, message, timestamp), booking, includeTimeGrid: true));
+
+        if (approvalExpired)
+            await RunSafelyAsync("PendingApprovalQueueChanged", booking.Id, () => _broadcast.BroadcastPendingApprovalQueueChangedAsync(
+                QueueChanged(booking, SignalREvents.QueueChangeRemoved, SignalREvents.QueueReasonExpired, timestamp)));
+
+        await RunSafelyAsync("SlotInterest", booking.Id, () => _slotInterestNotifier.NotifyReleasedSlotsAsync(booking));
+
+        // Hết hạn thanh toán không email khách (như Job-01 cũ): khách đã thấy hạn lúc đặt hoặc lúc được duyệt
+        if (approvalExpired)
+            await RunSafelyAsync("ApprovalExpiredEmail", booking.Id, () => SendIfCustomerHasEmailAsync(
+                booking, url => _emailService.SendApprovalExpiredAsync(BookingEmailFactory.BuildApproval(booking, url))));
+    }
+
     // ── Thanh toán ────────────────────────────────────────────────────────
 
     public async Task NotifyPaymentSucceededAsync(Booking booking, Payment payment, string rawCancelToken)

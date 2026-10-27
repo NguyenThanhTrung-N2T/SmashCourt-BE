@@ -495,7 +495,7 @@ namespace SmashCourt_BE.Services
             //     Transaction 1 đã commit nên bước này và transaction 2 luôn chạy tới cùng, không dừng khi khách ngắt kết nối:
             //     dừng giữa chừng để lại đơn PENDING không cọc, giữ sân vô ích. Thời gian chờ do TimeoutMs của TadssClient giới hạn.
             //     DecideAsync không ném khi TADSS lỗi (trả phương án dự phòng) nên không cần try/catch.
-            var decision = await _depositService.DecideAsync(bookingId, finalTotal, CancellationToken.None);
+            var decision = await _depositService.DecideAsync(bookingId, finalTotal, playStartUtc, CancellationToken.None);
 
             // 14. Transaction 2 theo nhánh; đơn đã đổi trạng thái ⇒ 409
             var applied = await ApplyDepositDecisionAsync(
@@ -570,7 +570,10 @@ namespace SmashCourt_BE.Services
             DateTime now,
             Guid? promotionId)
         {
-            var decidedAt = _timeProvider.GetUtcNow().UtcDateTime;
+            // Cùng mốc đã dùng để quyết định "còn hạn duyệt" (P6-24); hạn trôi qua trong vài ms sau đó do job hết hạn duyệt dọn
+            var decidedAt = decision.DecidedAtUtc;
+            if (decidedAt.Kind != DateTimeKind.Utc)
+                throw new InvalidOperationException($"Quyết định cọc của booking {bookingId} chưa có mốc nhận (UTC).");
             string? paymentUrl = null;
             string? rawCancelToken = null;
             bool won;

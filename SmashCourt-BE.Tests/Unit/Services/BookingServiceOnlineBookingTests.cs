@@ -67,7 +67,8 @@ public class BookingServiceOnlineBookingTests
         public Scenario(decimal pricePerCourt = 200_000m)
         {
             SecondCourt = TestDataFactory.CreateCourt(branchId: Court.BranchId, courtName: "Sân Hai");
-            Decision = finalTotal => DepositDecisionResolver.Resolve(null, finalTotal, Builder.PaymentSettings.MinOnlinePaymentAmount);
+            Decision = finalTotal => DepositDecisionResolver.Resolve(
+                null, finalTotal, Builder.PaymentSettings.MinOnlinePaymentAmount, NowUtc, PlayStartUtc);
             var b = Builder;
             b.Logger = Logger;
             b.NotificationLogger = NotificationLogger;
@@ -112,12 +113,15 @@ public class BookingServiceOnlineBookingTests
                 });
             b.UnitOfWork.Setup(x => x.ClearChangeTracker()).Callback(() => Steps.Add("clear"));
 
-            b.DepositService.Setup(x => x.DecideAsync(BookingId, It.IsAny<decimal>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync((Guid _, decimal finalTotal, CancellationToken token) =>
+            b.DepositService.Setup(x => x.DecideAsync(BookingId, It.IsAny<decimal>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((Guid _, decimal finalTotal, DateTime _, CancellationToken token) =>
                 {
                     DecideToken = token;
                     Steps.Add("decide");
                     var decision = Decision(finalTotal);
+                    // Như DecideAsync thật: quyết định mang mốc nhận; quyết định dựng tay trong test chưa có thì lấy đồng hồ lúc này
+                    if (decision.DecidedAtUtc == default)
+                        decision = decision with { DecidedAtUtc = b.Time.GetUtcNow().UtcDateTime };
                     LastBranch = decision.Branch;
                     return decision;
                 });
@@ -270,7 +274,7 @@ public class BookingServiceOnlineBookingTests
         "a'" => _ => TadssSmallDeposit(3_000m),
         "b" => _ => NeedApproval(),
         "c" => _ => Rejected(),
-        "d" => total => DepositDecisionResolver.Resolve(null, total, 5_000m),
+        "d" => total => DepositDecisionResolver.Resolve(null, total, 5_000m, NowUtc, PlayStartUtc),
         _ => throw new ArgumentOutOfRangeException(nameof(branch), branch, null)
     };
 
@@ -348,7 +352,7 @@ public class BookingServiceOnlineBookingTests
         b.CourtRepository.Verify(x => x.GetByIdsAsync(It.IsAny<IEnumerable<Guid>>()), Times.Never);
         b.SlotLockRepository.Verify(x => x.DeleteExpiredByBranchAsync(It.IsAny<Guid>()), Times.Never);
         b.BookingRepository.Verify(x => x.HasOverlapAsync(It.IsAny<Guid>(), It.IsAny<DateOnly>(), It.IsAny<TimeOnly>(), It.IsAny<TimeOnly>()), Times.Never);
-        b.DepositService.Verify(x => x.DecideAsync(It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<CancellationToken>()), Times.Never);
+        b.DepositService.Verify(x => x.DecideAsync(It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()), Times.Never);
         Assert.Empty(scenario.Steps);
         b.SlotInterestRepository.Verify(x => x.CreateAsync(It.IsAny<SlotInterest>()), Times.Never);
     }
@@ -384,7 +388,8 @@ public class BookingServiceOnlineBookingTests
             Assert.Equal(scenario.BookingId, l.BookingId);
         });
 
-        scenario.Builder.DepositService.Verify(x => x.DecideAsync(scenario.BookingId, 400_000m, It.IsAny<CancellationToken>()), Times.Once);
+        // Giờ bắt đầu chơi sớm nhất đi kèm để kiểm hạn duyệt lúc nhận (P6-24)
+        scenario.Builder.DepositService.Verify(x => x.DecideAsync(scenario.BookingId, 400_000m, PlayStartUtc, It.IsAny<CancellationToken>()), Times.Once);
         Assert.Equal(400_000m, result.FinalTotal);
     }
 
@@ -465,6 +470,49 @@ public class BookingServiceOnlineBookingTests
         Assert.Equal(200_000m, result.FinalTotal);
     }
 
+    [Theory]
+    [InlineData("a")]
+    [InlineData("b")]
+    [InlineData("d")]
+    public async Task Transaction2_WritesWithTheMomentOfReceipt_EvenIfTheClockHasMovedOn(string branch)
+    {
+        // P6-24: "còn hạn duyệt" quyết định theo mốc nhận; ghi đơn cũng bằng mốc đó để hai bước nhất quán
+        var scenario = new Scenario();
+        var decidedAt = NowUtc.AddSeconds(2);
+        var decide = DecisionFor(branch);
+        scenario.Decision = total =>
+        {
+            var decision = decide(total) with { DecidedAtUtc = decidedAt };
+            scenario.Builder.Time.SetUtcNow(decidedAt.AddSeconds(3));
+            return decision;
+        };
+
+        await scenario.RunAsync();
+
+        var repo = scenario.Builder.BookingRepository;
+        switch (branch)
+        {
+            case "b":
+                repo.Verify(x => x.HoldForApprovalAsync(scenario.BookingId, It.IsAny<Guid>(), It.IsAny<DateTime>(), It.IsAny<string>(),
+                    It.IsAny<IReadOnlyCollection<string>>(), decidedAt), Times.Once);
+                break;
+            default:
+                repo.Verify(x => x.ApplyPaymentRequiredAsync(scenario.BookingId, It.IsAny<Guid?>(), It.IsAny<decimal>(), It.IsAny<decimal>(),
+                    It.IsAny<DepositSource>(), decidedAt), Times.Once);
+                break;
+        }
+    }
+
+    [Fact]
+    public async Task Transaction2_DecisionWithoutAMomentOfReceipt_IsAProgrammingError()
+    {
+        var scenario = new Scenario();
+        // Bỏ qua bước gắn mốc của setup bằng cách trả quyết định có mốc không phải UTC
+        scenario.Decision = total => TadssDeposit(0.5m, 100_000m) with { DecidedAtUtc = DateTime.SpecifyKind(NowUtc, DateTimeKind.Local) };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => scenario.RunAsync());
+    }
+
     [Fact]
     public async Task Transaction2_UsesTheClockAfterTheDecisionForUpdatedAt()
     {
@@ -473,7 +521,7 @@ public class BookingServiceOnlineBookingTests
         scenario.Decision = total =>
         {
             scenario.Builder.Time.SetUtcNow(decidedAt);
-            return DepositDecisionResolver.Resolve(null, total, 5_000m);
+            return DepositDecisionResolver.Resolve(null, total, 5_000m, decidedAt, PlayStartUtc);
         };
 
         await scenario.RunAsync();

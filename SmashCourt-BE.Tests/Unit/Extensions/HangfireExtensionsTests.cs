@@ -11,7 +11,7 @@ namespace SmashCourt_BE.Tests.Unit.Extensions;
 
 /// <summary>
 /// Khóa <c>Hangfire:Enabled</c> (D4, 6A-2a): mặc định bật nên production không đổi; tắt thì không đăng ký Hangfire (storage, server,
-/// dashboard) và không đăng ký job định kỳ, để host test HTTP không chạy job thật trên DB test. Việc đăng ký đủ 9 job khi bật được
+/// dashboard) và không đăng ký job định kỳ, để host test HTTP không chạy job thật trên DB test. Việc đăng ký đủ các job khi bật được
 /// kiểm trên storage thật ở <c>Integration/Http/HangfireRegistrationTests</c>.
 /// </summary>
 [Trait("Category", TestCategories.Configuration)]
@@ -72,6 +72,8 @@ public class HangfireExtensionsTests
         Assert.Contains(services, d => d.ServiceType == typeof(IAuthCleanupJob));
         Assert.Contains(services, d => d.ServiceType == typeof(IPromotionJob));
         Assert.Contains(services, d => d.ServiceType == typeof(IBookingJob));
+        Assert.Contains(services, d => d.ServiceType == typeof(IBookingApprovalJob));
+        Assert.Contains(services, d => d.ServiceType == typeof(ITadssOutcomeJob));
     }
 
     [Theory]

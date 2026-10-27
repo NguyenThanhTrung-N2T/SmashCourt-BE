@@ -10,13 +10,21 @@ namespace SmashCourt_BE.Integrations.Tadss;
 /// <summary>
 /// HTTP client gọi TADSS Decision Runtime v2. Không dùng Polly: chỉ <see cref="EvaluateAsync"/> thử lại đúng một lần
 /// bằng vòng lặp tường minh để bảo đảm cùng idempotency key và không thử lại lỗi 4xx.
-/// Cấu hình (BaseUrl, ApiKey, TimeoutMs) đọc từ <see cref="IOptionsMonitor{TOptions}"/> ở mỗi lần gọi.
+/// Cấu hình (BaseUrl, ApiKey, TimeoutMs) đọc từ <see cref="IOptionsMonitor{TOptions}"/> ở mỗi lần gọi; riêng lệnh gửi outcome
+/// dùng timeout cố định <see cref="OutcomeTimeout"/> (P6-26).
 /// Không bao giờ ghi khóa API hay body request vào log.
 /// </summary>
 public class TadssClient : ITadssClient
 {
     private const int LogBodySnippetLength = 200;
     private const string DecisionsPath = "api/v2/decisions";
+
+    /// <summary>
+    /// Timeout của lệnh gửi outcome (P6-26, chốt 27/10). Job chạy nền, không ai chờ; DB Neon của TADSS tự tạm dừng khi vắng và mất 1–3 giây
+    /// để thức, trong khi healthcheck chỉ gọi /health/live. Với TimeoutMs (800 ms) lần gửi đầu mỗi chu kỳ có thể timeout lặp lại.
+    /// Giá trị khởi đầu, xem lại sau khi chạy thật.
+    /// </summary>
+    private static readonly TimeSpan OutcomeTimeout = TimeSpan.FromSeconds(5);
 
     private readonly HttpClient _httpClient;
     private readonly IOptionsMonitor<TadssSettings> _settings;
@@ -67,8 +75,9 @@ public class TadssClient : ITadssClient
         Guid decisionId, TadssOutcomeRequestDto request, CancellationToken cancellationToken = default)
     {
         var call = new TadssCall("ReportOutcome", HttpMethod.Post, $"{DecisionsPath}/{decisionId}/outcome", request,
-            $"{decisionId}:OUTCOME", null);
-        return SendAsync<TadssOutcomeResponseDto>(call, allowRetry: false, null, cancellationToken);
+            $"{decisionId}:OUTCOME", null, OutcomeTimeout);
+        return SendAsync<TadssOutcomeResponseDto>(
+            call, allowRetry: false, result => CheckOutcomeResult(result, decisionId, request), cancellationToken);
     }
 
     // Kết quả phải là của chính booking đã gửi và đúng contract: APPROVED có deposit, NEED_APPROVAL có hạn duyệt, deposit trong phạm vi
@@ -96,6 +105,19 @@ public class TadssClient : ITadssClient
         { Deposit.Amount: < 0m } => "deposit.amount âm",
         _ => null
     };
+
+    // Outcome là nhãn đánh giá: nhận 200 thì BE đánh dấu đã báo và không gửi lại, nên response phải đúng quyết định và đúng nội dung đã gửi.
+    // occurredAt so sau khi cắt về µs như TADSS (timestamptz), cùng thời điểm khác offset vẫn là một
+    private static string? CheckOutcomeResult(TadssOutcomeResponseDto result, Guid decisionId, TadssOutcomeRequestDto sent) => result switch
+    {
+        _ when result.DecisionId != decisionId => $"decisionId {result.DecisionId} khác quyết định đã gửi {decisionId}",
+        _ when result.Outcome != sent.Outcome => $"outcome {result.Outcome} khác outcome đã gửi {sent.Outcome}",
+        _ when TruncateToMicroseconds(result.OccurredAt) != TruncateToMicroseconds(sent.OccurredAt) =>
+            $"occurredAt {result.OccurredAt:O} khác occurredAt đã gửi {sent.OccurredAt:O}",
+        _ => null
+    };
+
+    private static long TruncateToMicroseconds(DateTimeOffset value) => value.UtcTicks - value.UtcTicks % 10;
 
     // Chi tiết quyết định dùng để đồng bộ ghi đè đã lưu: phải là đúng quyết định đã hỏi
     private static string? CheckDecisionDetail(TadssDecisionDetailDto detail, Guid decisionId) =>
@@ -131,8 +153,9 @@ public class TadssClient : ITadssClient
         CancellationToken cancellationToken)
     {
         var started = _timeProvider.GetTimestamp();
+        var timeout = call.Timeout ?? TimeSpan.FromMilliseconds(settings.TimeoutMs);
         // Timeout tính riêng cho từng lần gọi; token của caller hủy thì phân biệt được với timeout
-        using var timeoutSource = new CancellationTokenSource(TimeSpan.FromMilliseconds(settings.TimeoutMs), _timeProvider);
+        using var timeoutSource = new CancellationTokenSource(timeout, _timeProvider);
         using var linkedSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutSource.Token);
 
         try
@@ -150,7 +173,7 @@ public class TadssClient : ITadssClient
         {
             _logger.LogWarning(
                 "TADSS {Operation} quá thời gian chờ {TimeoutMs} ms. CorrelationId={CorrelationId}",
-                call.Operation, settings.TimeoutMs, correlationId);
+                call.Operation, (long)timeout.TotalMilliseconds, correlationId);
             return TadssCallResult<T>.Failure(TadssFailureKind.Timeout, correlationId);
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException)
@@ -301,6 +324,7 @@ public class TadssClient : ITadssClient
         return Uri.TryCreate(baseUri, path, out uri!);
     }
 
+    // Timeout null: dùng TimeoutMs của cấu hình
     private sealed record TadssCall(
-        string Operation, HttpMethod Method, string Path, object? Body, string? IdempotencyKey, string? ActorId);
+        string Operation, HttpMethod Method, string Path, object? Body, string? IdempotencyKey, string? ActorId, TimeSpan? Timeout = null);
 }

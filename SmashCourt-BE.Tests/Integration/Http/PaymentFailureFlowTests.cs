@@ -141,6 +141,11 @@ public sealed class PaymentFailureFlowTests(PostgreSqlIntegrationFixture databas
         Assert.Equal(BookingStatus.CANCELLED, booking.Status);
         Assert.All(booking.BookingCourts, c => Assert.False(c.IsActive));
         Assert.Empty(booking.SlotLocks);
+        // 6A-5: đường hủy chung ghi lý do; thẻ lỗi rồi bỏ là PAYMENT_EXPIRED; hóa đơn EXPIRED; Payment không còn PENDING
+        Assert.Equal(CancelSourceEnum.SYSTEM, booking.CancelSource);
+        Assert.Equal(BookingCancelReason.PAYMENT_EXPIRED, booking.CancelReason);
+        Assert.Equal(InvoicePaymentStatus.EXPIRED, booking.Invoice!.PaymentStatus);
+        Assert.DoesNotContain(booking.Invoice.Payments, p => p.Status == PaymentTxStatus.PENDING);
     }
 
     // ───────────────────────── BE-IT-22 ─────────────────────────
@@ -157,6 +162,8 @@ public sealed class PaymentFailureFlowTests(PostgreSqlIntegrationFixture databas
         await RunPaymentExpiryJobAsync();
         var cancelled = await RequireBookingAsync(order.BookingId);
         Assert.Equal(BookingStatus.CANCELLED, cancelled.Status);
+        // C7 (6A-5): link chưa trả của đơn hết hạn thành FAILED; tiền về sau đó vẫn được nhận (FAILED ⇒ SUCCESS)
+        Assert.Equal(PaymentTxStatus.FAILED, Assert.Single(cancelled.Invoice!.Payments).Status);
 
         Assert.Equal(HttpStatusCode.OK, await IpnAsync(order.TransactionRef, order.Amount));
 

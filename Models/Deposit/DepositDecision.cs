@@ -19,4 +19,10 @@ public sealed record DepositDecision(
     string? ApprovalReasonCode,
     IReadOnlyList<string> ApprovalReasons,
     LogLevel LogLevel,
-    string? LogMessage);
+    string? LogMessage)
+{
+    /// <summary>
+    /// Lúc BE nhận quyết định (UTC), do resolver gắn; transaction 2 ghi đơn bằng đúng mốc này để "còn hạn duyệt" và mốc ghi đơn nhất quán (P6-24)
+    /// </summary>
+    public DateTime DecidedAtUtc { get; init; }
+}

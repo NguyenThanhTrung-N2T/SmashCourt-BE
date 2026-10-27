@@ -2,7 +2,7 @@
 
 | | |
 | :--- | :--- |
-| **Trạng thái** | Đặc tả cho **Phase 6**. **BE đã hiện thực** Mục 3.1, 3.2 (6A-2), Mục 3.3, 4, 5, 6 phần duyệt (6A-3, 24/10/2026), Mục 3.4, 3.5, 3.6 (6A-4, 25/10/2026); phần job (hết hạn duyệt, sự kiện `EXPIRED`, email hết hạn duyệt) và kiểm hạn duyệt lúc nhận làm ở 6A-5; FE chưa. Viết ngày 12/10/2026 (task T5.22 / M-08, gói 5.7 của TADSS-Runtime); **đã review 18/10/2026 (T5.29)**: đối chiếu với mã BE, sửa R-1…R-8 (Mục 10), chốt Q1…Q12 (Mục 9); **cập nhật cùng ngày theo thiết kế Phase 6** (quyết định P6-01…P6-15, Mục 11) |
+| **Trạng thái** | Đặc tả cho **Phase 6**. **BE đã hiện thực** Mục 3.1, 3.2 (6A-2), Mục 3.3, 4, 5, 6 phần duyệt (6A-3, 24/10/2026), Mục 3.4, 3.5, 3.6 (6A-4, 25/10/2026); phần job (hết hạn duyệt, sự kiện `EXPIRED`, email hết hạn duyệt), báo kết quả về TADSS và kiểm hạn duyệt lúc nhận (6A-5, 27/10/2026); FE chưa. Viết ngày 12/10/2026 (task T5.22 / M-08, gói 5.7 của TADSS-Runtime); **đã review 18/10/2026 (T5.29)**: đối chiếu với mã BE, sửa R-1…R-8 (Mục 10), chốt Q1…Q12 (Mục 9); **cập nhật cùng ngày theo thiết kế Phase 6** (quyết định P6-01…P6-15, Mục 11) |
 | **Sở hữu** | Tài liệu này là nguồn duy nhất của hợp đồng **BE ↔ FE** cho luồng cọc, chờ duyệt, duyệt/từ chối |
 | **Không sở hữu** | Hợp đồng **BE ↔ TADSS** (request/response `/api/v2/decisions`, mã lỗi TADSS, idempotency, header): [`INTEGRATION_SPEC.md`](../../../TADSS-Runtime/docs/contracts/INTEGRATION_SPEC.md) Mục 1–4. Khi hai tài liệu khác nhau về phía TADSS, INTEGRATION_SPEC đúng |
 | **Người review** | T5.29, 18/10/2026: review và chốt câu hỏi mở cùng người dùng. SV2 đọc lại khi bắt đầu Epic 6B |

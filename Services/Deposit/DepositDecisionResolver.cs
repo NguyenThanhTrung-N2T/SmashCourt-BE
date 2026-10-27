@@ -10,15 +10,30 @@ namespace SmashCourt_BE.Services.Deposit;
 /// Chọn nhánh xử lý đơn online từ kết quả TADSS. Hàm thuần: không đọc DB, đồng hồ hay cấu hình.
 /// Thứ tự: cờ tắt hoặc TADSS lỗi ⇒ dự phòng 100 %; REJECTED / NEED_APPROVAL không xét tiền;
 /// APPROVED ⇒ cọc của TADSS; số tiền cần thu online dưới mức tối thiểu ⇒ xác nhận, thu tại quầy.
+/// NEED_APPROVAL có hạn duyệt không dùng được lúc nhận (đã qua, hoặc sau giờ chơi) ⇒ dự phòng như quyết định không dùng được (P6-24).
 /// </summary>
 public static class DepositDecisionResolver
 {
     // Request luôn gửi VND nên quyết định phải cùng đơn vị tiền
     private const string RequestCurrency = "VND";
 
-    // tadssResult null = không gọi TADSS (cờ EnableTadssDecision tắt)
+    // tadssResult null = không gọi TADSS (cờ EnableTadssDecision tắt). decidedAtUtc = lúc BE nhận quyết định, gắn vào kết quả cho
+    // transaction 2; playStartUtc = giờ bắt đầu chơi sớm nhất của đơn
     public static DepositDecision Resolve(
-        TadssCallResult<TadssDecisionResultDto>? tadssResult, decimal finalTotal, decimal minOnlinePaymentAmount)
+        TadssCallResult<TadssDecisionResultDto>? tadssResult, decimal finalTotal, decimal minOnlinePaymentAmount,
+        DateTime decidedAtUtc, DateTime playStartUtc)
+    {
+        if (decidedAtUtc.Kind != DateTimeKind.Utc)
+            throw new ArgumentException("Mốc nhận quyết định phải có Kind = Utc.", nameof(decidedAtUtc));
+        if (playStartUtc.Kind != DateTimeKind.Utc)
+            throw new ArgumentException("Giờ bắt đầu chơi phải có Kind = Utc.", nameof(playStartUtc));
+
+        return Choose(tadssResult, finalTotal, minOnlinePaymentAmount, decidedAtUtc, playStartUtc) with { DecidedAtUtc = decidedAtUtc };
+    }
+
+    private static DepositDecision Choose(
+        TadssCallResult<TadssDecisionResultDto>? tadssResult, decimal finalTotal, decimal minOnlinePaymentAmount,
+        DateTime decidedAtUtc, DateTime playStartUtc)
     {
         if (finalTotal < 0)
             throw new ArgumentOutOfRangeException(nameof(finalTotal), finalTotal, "Tổng tiền không được âm.");
@@ -42,6 +57,17 @@ public static class DepositDecisionResolver
                 if (decision.ApprovalExpiresAt is not { } approvalExpiresAt)
                     return Fallback(finalTotal, minOnlinePaymentAmount, LogLevel.Error,
                         $"TADSS trả NEED_APPROVAL nhưng thiếu approvalExpiresAt (decisionId {decision.DecisionId}); dùng phương án dự phòng.");
+                // P6-24: hạn đã qua lúc nhận (độ trễ mạng, lệch đồng hồ khi khách đặt sát mốc) thì không ai duyệt kịp, khách sẽ mất đơn.
+                // Cùng cách TADSS tự làm khi hết thời gian duyệt (APPROVAL_WINDOW_UNAVAILABLE): cọc 100 %
+                if (approvalExpiresAt.UtcDateTime <= decidedAtUtc)
+                    return Fallback(finalTotal, minOnlinePaymentAmount, LogLevel.Warning,
+                        $"TADSS trả NEED_APPROVAL với hạn duyệt {approvalExpiresAt:O} đã qua lúc nhận {decidedAtUtc:O} " +
+                        $"(decisionId {decision.DecisionId}); dùng phương án dự phòng.");
+                // Chỉ xảy ra khi TADSS vi phạm công thức hạn duyệt (giờ chơi − thời gian tối thiểu)
+                if (approvalExpiresAt.UtcDateTime > playStartUtc)
+                    return Fallback(finalTotal, minOnlinePaymentAmount, LogLevel.Error,
+                        $"TADSS trả NEED_APPROVAL với hạn duyệt {approvalExpiresAt:O} sau giờ bắt đầu chơi {playStartUtc:O} " +
+                        $"(decisionId {decision.DecisionId}); dùng phương án dự phòng.");
                 return NeedApproval(decision, approvalExpiresAt);
 
             case TadssDecisionStatus.APPROVED:

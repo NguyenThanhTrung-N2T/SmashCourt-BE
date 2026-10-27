@@ -9,7 +9,8 @@ using SmashCourt_BE.Tests.TestData;
 namespace SmashCourt_BE.Tests.Integration.Http;
 
 /// <summary>
-/// D4 mặt còn lại: khi khóa vắng mặt hoặc bật, app thật vẫn đăng ký đủ 9 job định kỳ vào storage Hangfire thật (PostgreSQL).
+/// D4 mặt còn lại: khi khóa vắng mặt hoặc bật, app thật vẫn đăng ký đủ các job định kỳ vào storage Hangfire thật (PostgreSQL);
+/// 6A-5 thêm job hết hạn duyệt (mỗi phút) và job báo kết quả về TADSS (mỗi 5 phút), giờ VN.
 /// Dùng database riêng mỗi test để không đụng DB của bộ HTTP (nơi khẳng định Hangfire không ghi gì).
 /// </summary>
 [Collection(IntegrationTestCollection.Name)]
@@ -20,7 +21,8 @@ public sealed class HangfireRegistrationTests(PostgreSqlIntegrationFixture datab
     private static readonly string[] ExpectedJobIds =
     [
         "cleanup-expired-otp", "cleanup-unverified-users", "cleanup-expired-refresh-tokens", "update-promotion-status",
-        "cancel-expired-pending", "process-expired-bookings", "cleanup-slot-locks", "detect-no-show", "cleanup-slot-interests"
+        "cancel-expired-pending", "process-expired-bookings", "cleanup-slot-locks", "detect-no-show", "cleanup-slot-interests",
+        "expire-approvals", "report-tadss-outcomes"
     ];
 
     private readonly string _databaseName = $"{SmashCourtWebApplicationFactory.DatabasePrefix}hf_{Guid.NewGuid():N}";
@@ -48,7 +50,10 @@ public sealed class HangfireRegistrationTests(PostgreSqlIntegrationFixture datab
         return TestConfigurationFactory.Create(values);
     }
 
-    private static IReadOnlyList<string> RegisterAndListRecurringJobIds(IConfiguration config)
+    private static IReadOnlyList<string> RegisterAndListRecurringJobIds(IConfiguration config) =>
+        RegisterAndListRecurringJobs(config).Select(j => j.Id).OrderBy(id => id).ToList();
+
+    private static List<RecurringJobDto> RegisterAndListRecurringJobs(IConfiguration config)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -59,13 +64,13 @@ public sealed class HangfireRegistrationTests(PostgreSqlIntegrationFixture datab
         new ApplicationBuilder(provider).UseHangfireServices(config);
 
         using var connection = JobStorage.Current.GetConnection();
-        return connection.GetRecurringJobs().Select(j => j.Id).OrderBy(id => id).ToList();
+        return connection.GetRecurringJobs();
     }
 
     [Theory]
     [InlineData(null)]
     [InlineData("true")]
-    public void UseHangfireServices_WhenEnabledAbsentOrTrue_RegistersAllNineRecurringJobs(string? enabled)
+    public void UseHangfireServices_WhenEnabledAbsentOrTrue_RegistersAllRecurringJobs(string? enabled)
     {
         var ids = RegisterAndListRecurringJobIds(Config(enabled));
 
@@ -73,7 +78,7 @@ public sealed class HangfireRegistrationTests(PostgreSqlIntegrationFixture datab
     }
 
     [Fact]
-    public void UseHangfireServices_WhenRunTwice_StaysAtNineJobsBecauseItUpsertsById()
+    public void UseHangfireServices_WhenRunTwice_KeepsOneEntryPerJobBecauseItUpsertsById()
     {
         // Khởi động lại app nhiều lần không nhân đôi job
         var config = Config(null);
@@ -81,6 +86,28 @@ public sealed class HangfireRegistrationTests(PostgreSqlIntegrationFixture datab
 
         var ids = RegisterAndListRecurringJobIds(config);
 
-        Assert.Equal(9, ids.Count);
+        Assert.Equal(ExpectedJobIds.Length, ids.Count);
+    }
+
+    [Fact]
+    public void UseHangfireServices_ApprovalExpiryJob_RunsEveryMinuteInVietnamTime()
+    {
+        var job = Assert.Single(RegisterAndListRecurringJobs(Config(null)), j => j.Id == "expire-approvals");
+
+        Assert.Equal("* * * * *", job.Cron);
+        Assert.Equal(SmashCourt_BE.Helpers.DateTimeHelper.VNTimezone.Id, job.TimeZoneId);
+        Assert.Equal(typeof(SmashCourt_BE.Jobs.Interfaces.IBookingApprovalJob), job.Job.Type);
+        Assert.Equal(nameof(SmashCourt_BE.Jobs.Interfaces.IBookingApprovalJob.ExpireApprovalsAsync), job.Job.Method.Name);
+    }
+
+    [Fact]
+    public void UseHangfireServices_OutcomeJob_RunsEveryFiveMinutesInVietnamTime()
+    {
+        var job = Assert.Single(RegisterAndListRecurringJobs(Config(null)), j => j.Id == "report-tadss-outcomes");
+
+        Assert.Equal("*/5 * * * *", job.Cron);
+        Assert.Equal(SmashCourt_BE.Helpers.DateTimeHelper.VNTimezone.Id, job.TimeZoneId);
+        Assert.Equal(typeof(SmashCourt_BE.Jobs.Interfaces.ITadssOutcomeJob), job.Job.Type);
+        Assert.Equal(nameof(SmashCourt_BE.Jobs.Interfaces.ITadssOutcomeJob.ReportOutcomesAsync), job.Job.Method.Name);
     }
 }

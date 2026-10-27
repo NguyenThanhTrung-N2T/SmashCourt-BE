@@ -12,7 +12,7 @@ using System.Transactions;
 
 namespace SmashCourt_BE.Repositories
 {
-    public class BookingRepository : IBookingRepository
+    public partial class BookingRepository : IBookingRepository
     {
         private readonly SmashCourtContext _context;
 

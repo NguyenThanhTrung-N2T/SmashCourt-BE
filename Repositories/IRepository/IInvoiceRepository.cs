@@ -7,6 +7,9 @@ namespace SmashCourt_BE.Repositories.IRepository
     {
         Task<Invoice?> GetByBookingIdAsync(Guid bookingId);
 
+        // Trạng thái thanh toán hiện tại trong DB (đọc thẳng, không qua entity đang track); null khi đơn không có hóa đơn
+        Task<InvoicePaymentStatus?> GetPaymentStatusByBookingIdAsync(Guid bookingId);
+
         // Tạo mới invoice, trả về invoice đã được tạo (có id)
         Task<Invoice> CreateAsync(Invoice invoice);
 

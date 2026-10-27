@@ -1,9 +1,13 @@
 using System.Text.Json.Nodes;
 using SmashCourt_BE.Tests.TestData;
+using WireMock;
+using WireMock.Matchers;
 using WireMock.RequestBuilders;
 using WireMock.ResponseBuilders;
 using WireMock.Settings;
 using WireMock.Server;
+using WireMock.Types;
+using WireMock.Util;
 
 namespace SmashCourt_BE.Tests.Integration.Http;
 
@@ -269,6 +273,99 @@ public sealed class TadssStub(WireMockServer server)
     /// <summary>Body lỗi RFC 7807 tối thiểu.</summary>
     public static string ProblemBody(int status, string code) =>
         new JsonObject { ["title"] = "lỗi", ["status"] = status, ["code"] = code, ["traceId"] = "t-1" }.ToJsonString();
+
+    // ───────── Báo kết quả (outcome, 6A-5) ─────────
+    // TADSS thật ghi outcome mới thì trả lại đúng nội dung đã nhận; gửi lại cùng nội dung nhận 200 bản đã lưu (chống trùng theo nội dung).
+    // Body trả lời dựng bằng callback (đọc chuỗi occurredAt nguyên văn): templating JSON của WireMock đọc chuỗi ngày giờ thành kiểu ngày và
+    // in lại khác định dạng, làm client (kiểm khớp tới µs) coi là lệch.
+
+    private const string OutcomeWildcardPath = DecisionsPath + "/*/outcome";
+
+    public static string OutcomePath(Guid decisionId) => $"{DecisionsPath}/{decisionId}/outcome";
+
+    /// <summary>Request outcome đã nhận cho một quyết định.</summary>
+    public IReadOnlyList<WireMock.Logging.ILogEntry> OutcomesFor(Guid decisionId) =>
+        server.LogEntries.Where(e => e.RequestMessage?.Path == OutcomePath(decisionId) && e.RequestMessage.Method == "POST").ToList();
+
+    /// <summary>Mọi request outcome đã nhận (bất kể quyết định).</summary>
+    public IReadOnlyList<WireMock.Logging.ILogEntry> AllOutcomes =>
+        server.LogEntries.Where(e => e.RequestMessage?.Path?.EndsWith("/outcome") == true && e.RequestMessage.Method == "POST").ToList();
+
+    /// <summary>Body của một request outcome đã nhận.</summary>
+    public static JsonObject OutcomeBodyOf(WireMock.Logging.ILogEntry entry) =>
+        JsonNode.Parse(entry.RequestMessage?.Body ?? "{}")?.AsObject() ?? new JsonObject();
+
+    /// <summary>Như <see cref="WaitForOverridesAsync"/> cho outcome (đếm mọi quyết định): WireMock ghi log sau khi trả lời.</summary>
+    public async Task<IReadOnlyList<WireMock.Logging.ILogEntry>> WaitForAllOutcomesAsync(int expected)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(3);
+        while (AllOutcomes.Count < expected && DateTime.UtcNow < deadline)
+            await Task.Delay(20);
+        if (expected == 0)
+            await Task.Delay(300);
+        return AllOutcomes;
+    }
+
+    /// <summary>TADSS ghi outcome của quyết định này (200 trả lại đúng nội dung đã nhận); <paramref name="delay"/> để mô phỏng DB thức dậy.</summary>
+    public void ReplyOutcome(Guid decisionId, TimeSpan? delay = null) =>
+        server.Given(Request.Create().WithPath(OutcomePath(decisionId)).UsingPost())
+            .AtPriority(1)
+            .RespondWith(EchoOutcome(delay));
+
+    /// <summary>Mọi quyết định đều ghi được outcome (ưu tiên thấp hơn kịch bản riêng của từng quyết định).</summary>
+    public void ReplyOutcomeForAny(TimeSpan? delay = null) =>
+        server.Given(Request.Create().WithPath(new WildcardMatcher(OutcomeWildcardPath)).UsingPost())
+            .AtPriority(100)
+            .RespondWith(EchoOutcome(delay));
+
+    /// <summary>TADSS trả lỗi RFC 7807 cho outcome của quyết định này; <paramref name="retryAfter"/> là header Retry-After.</summary>
+    public void ReplyOutcomeProblem(Guid decisionId, int status, string? code, string? retryAfter = null)
+    {
+        var body = new JsonObject { ["title"] = "lỗi", ["status"] = status, ["traceId"] = "t-1" };
+        if (code != null)
+            body["code"] = code;
+        server.Given(Request.Create().WithPath(OutcomePath(decisionId)).UsingPost())
+            .AtPriority(1)
+            .RespondWith(BuildResponse(status, body.ToJsonString(), "application/problem+json", retryAfter, null, template: false));
+    }
+
+    /// <summary>Response tùy ý cho outcome (trang lỗi HTML của ngrok, 200 sai nội dung…).</summary>
+    public void ReplyOutcomeRaw(Guid decisionId, int status, string body, string contentType) =>
+        server.Given(Request.Create().WithPath(OutcomePath(decisionId)).UsingPost())
+            .AtPriority(1)
+            .RespondWith(BuildResponse(status, body, contentType, null, null, template: false));
+
+    /// <summary>Body outcome-response hợp lệ (mẫu của contract) cho một quyết định và nội dung tùy ý.</summary>
+    public static string OutcomeResponseBody(Guid decisionId, string outcome, string occurredAt)
+    {
+        var json = JsonNode.Parse(TadssContractFiles.Sample("outcome-response.json"))!.AsObject();
+        json["decisionId"] = decisionId.ToString();
+        json["outcome"] = outcome;
+        json["occurredAt"] = occurredAt;
+        return json.ToJsonString();
+    }
+
+    private static IResponseBuilder EchoOutcome(TimeSpan? delay)
+    {
+        var response = Response.Create().WithCallback(request =>
+        {
+            // /api/v2/decisions/{decisionId}/outcome
+            var segments = (request.Path ?? string.Empty).Split('/', StringSplitOptions.RemoveEmptyEntries);
+            var decisionId = segments.Length >= 2 ? segments[^2] : string.Empty;
+            var sent = JsonNode.Parse(request.Body ?? "{}")?.AsObject() ?? new JsonObject();
+            var json = JsonNode.Parse(TadssContractFiles.Sample("outcome-response.json"))!.AsObject();
+            json["decisionId"] = decisionId;
+            json["outcome"] = sent["outcome"]?.GetValue<string>();
+            json["occurredAt"] = sent["occurredAt"]?.GetValue<string>();
+            return new ResponseMessage
+            {
+                StatusCode = 200,
+                Headers = new Dictionary<string, WireMockList<string>> { ["Content-Type"] = new("application/json") },
+                BodyData = new BodyData { BodyAsString = json.ToJsonString(), DetectedBodyType = BodyType.String }
+            };
+        });
+        return delay is { } wait ? response.WithDelay(wait) : response;
+    }
 
     /// <summary>Chi tiết quyết định (decision-detail.json) kèm ghi đè đã lưu (null = chưa có).</summary>
     public void ReplyDecisionDetail(Guid decisionId, Guid reservationId, JsonObject? storedOverride, TimeSpan? delay = null)

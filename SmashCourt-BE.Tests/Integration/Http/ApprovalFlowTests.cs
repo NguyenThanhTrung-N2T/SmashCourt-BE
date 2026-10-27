@@ -130,6 +130,12 @@ public sealed partial class ApprovalFlowTests(PostgreSqlIntegrationFixture datab
         var booking = await ReadApprovalBookingAsync(pending.BookingId);
         Assert.Equal(BookingStatus.CANCELLED, booking.Status);
         Assert.All(booking.BookingCourts, c => Assert.False(c.IsActive));
+        // B1 (6A-5): đã duyệt mà khách chưa bấm thanh toán (chưa có Payment) vẫn là lỗi của khách, không phải SYSTEM_CLEANUP
+        Assert.Equal(CancelSourceEnum.SYSTEM, booking.CancelSource);
+        Assert.Equal(BookingCancelReason.PAYMENT_EXPIRED, booking.CancelReason);
+        Assert.Null(booking.CancelledBy);
+        Assert.Equal(InvoicePaymentStatus.EXPIRED, booking.Invoice!.PaymentStatus);
+        Assert.Empty(booking.SlotLocks);
     }
 
     // ───────────────────────── Duyệt 0 % (Q4) ─────────────────────────

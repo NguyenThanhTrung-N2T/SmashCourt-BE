@@ -30,6 +30,9 @@ namespace SmashCourt_BE.Repositories.IRepository
         // cập nhật trạng thái nhiều sân cùng lúc (batch update để tránh N+1 query)
         Task BatchUpdateStatusAsync(List<Guid> courtIds, CourtStatus status, DateTime updatedAt);
 
+        // Trả sân về AVAILABLE sau khi đơn kết thúc / NO_SHOW; sân SUSPENDED hoặc INACTIVE giữ nguyên (điều kiện trong câu lệnh)
+        Task ReleaseToAvailableAsync(IReadOnlyCollection<Guid> courtIds, DateTime updatedAt);
+
         // lấy toàn bộ dữ liệu cho management dashboard (bulk fetch để tránh N+1 query)
         Task<CourtManagementBulkData> GetManagementDashboardDataAsync(Guid branchId, DateOnly date, string? search, Guid? typeId);
 

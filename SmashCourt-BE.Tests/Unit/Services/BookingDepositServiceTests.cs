@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Time.Testing;
 using SmashCourt_BE.Models.Deposit;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
@@ -31,6 +32,11 @@ public class BookingDepositServiceTests
     private readonly TadssSettings _settings = new() { BranchTimeZone = "Asia/Ho_Chi_Minh" };
     private readonly BookingPaymentSettings _paymentSettings = new() { MinOnlinePaymentAmount = 5000m };
     private readonly ListLogger<BookingDepositService> _logger = new();
+
+    // Lúc BE nhận quyết định: 18/11/2026 09:00 giờ VN; giờ chơi sớm nhất 22/11 18:00 giờ VN (P6-24)
+    private static readonly DateTime Now = new(2026, 11, 18, 2, 0, 0, DateTimeKind.Utc);
+    private static readonly DateTime PlayStart = new(2026, 11, 22, 11, 0, 0, DateTimeKind.Utc);
+    private readonly FakeTimeProvider _time = new(new DateTimeOffset(Now));
     private readonly List<string> _calls = [];
 
     private static BookingDecisionSnapshot Snapshot() => new(
@@ -59,7 +65,8 @@ public class BookingDepositServiceTests
         monitor.Setup(x => x.CurrentValue).Returns(_settings);
         var paymentMonitor = new Mock<IOptionsMonitor<BookingPaymentSettings>>();
         paymentMonitor.Setup(x => x.CurrentValue).Returns(_paymentSettings);
-        return new BookingDepositService(_bookings.Object, _history.Object, _client.Object, monitor.Object, paymentMonitor.Object, _logger);
+        return new BookingDepositService(
+            _bookings.Object, _history.Object, _client.Object, monitor.Object, paymentMonitor.Object, _time, _logger);
     }
 
     private void CaptureRequestInto(List<TadssDecisionRequestDto> sent) =>
@@ -235,7 +242,7 @@ public class BookingDepositServiceTests
         _settings.EnableTadssDecision = false;
         var service = CreateService(Snapshot());
 
-        var decision = await service.DecideAsync(BookingId, 228_000m);
+        var decision = await service.DecideAsync(BookingId, 228_000m, PlayStart);
 
         Assert.Equal(DepositBranch.FullPaymentFallback, decision.Branch);
         Assert.Equal(DepositSource.FULL_PAYMENT_FALLBACK, decision.DepositSource);
@@ -253,7 +260,7 @@ public class BookingDepositServiceTests
         _settings.EnableTadssDecision = false;
         var service = CreateService(Snapshot());
 
-        var decision = await service.DecideAsync(BookingId, 3_000m);
+        var decision = await service.DecideAsync(BookingId, 3_000m, PlayStart);
 
         Assert.Equal(DepositBranch.ConfirmWithoutOnlinePayment, decision.Branch);
         var entry = Assert.Single(_logger.Entries);
@@ -271,7 +278,7 @@ public class BookingDepositServiceTests
         var approved = Result(TadssDecisionStatus.APPROVED, new TadssDepositDto { Rate = 0.5m, Amount = 114_000m, Currency = "VND" });
         ClientReturns(TadssCallResult<TadssDecisionResultDto>.Success(approved, 200, "corr"));
 
-        var decision = await service.DecideAsync(BookingId, 228_000m);
+        var decision = await service.DecideAsync(BookingId, 228_000m, PlayStart);
 
         Assert.Equal(DepositBranch.TadssDeposit, decision.Branch);
         Assert.Equal(approved.DecisionId, decision.TadssDecisionId);
@@ -289,7 +296,7 @@ public class BookingDepositServiceTests
         ClientReturns(TadssCallResult<TadssDecisionResultDto>.Success(
             Result(TadssDecisionStatus.NEED_APPROVAL, approvalExpiresAt: DateTimeOffset.Parse("2026-11-18T10:30:00+07:00")), 200, "corr"));
 
-        var decision = await service.DecideAsync(BookingId, 228_000m);
+        var decision = await service.DecideAsync(BookingId, 228_000m, PlayStart);
 
         Assert.Equal(DepositBranch.NeedApproval, decision.Branch);
         Assert.Equal(new DateTime(2026, 11, 18, 3, 30, 0, DateTimeKind.Utc), decision.ApprovalExpiresAtUtc);
@@ -304,7 +311,7 @@ public class BookingDepositServiceTests
         var service = CreateService(Snapshot());
         ClientReturns(TadssCallResult<TadssDecisionResultDto>.Success(Result(TadssDecisionStatus.REJECTED), 200, "corr"));
 
-        var decision = await service.DecideAsync(BookingId, 0m);
+        var decision = await service.DecideAsync(BookingId, 0m, PlayStart);
 
         Assert.Equal(DepositBranch.Rejected, decision.Branch);
     }
@@ -322,7 +329,7 @@ public class BookingDepositServiceTests
         var service = CreateService(Snapshot());
         ClientReturns(TadssCallResult<TadssDecisionResultDto>.Failure(kind, "corr-9", http));
 
-        var decision = await service.DecideAsync(BookingId, 228_000m);
+        var decision = await service.DecideAsync(BookingId, 228_000m, PlayStart);
 
         Assert.Equal(DepositBranch.FullPaymentFallback, decision.Branch);
         Assert.Null(decision.TadssDecisionId);
@@ -341,7 +348,7 @@ public class BookingDepositServiceTests
         var service = CreateService(Snapshot());
         ClientReturns(TadssCallResult<TadssDecisionResultDto>.Failure(TadssFailureKind.Http, "corr", http, "IDEMPOTENCY_KEY_REUSE"));
 
-        var decision = await service.DecideAsync(BookingId, 228_000m);
+        var decision = await service.DecideAsync(BookingId, 228_000m, PlayStart);
 
         Assert.Equal(DepositBranch.FullPaymentFallback, decision.Branch);
         Assert.Equal(LogLevel.Error, Assert.Single(_logger.Entries).Level);
@@ -354,15 +361,15 @@ public class BookingDepositServiceTests
         var service = CreateService(Snapshot());
 
         _settings.EnableTadssDecision = false;
-        await service.DecideAsync(BookingId, 228_000m);
+        await service.DecideAsync(BookingId, 228_000m, PlayStart);
         _client.Verify(x => x.EvaluateAsync(It.IsAny<TadssDecisionRequestDto>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
 
         _settings.EnableTadssDecision = true;
-        await service.DecideAsync(BookingId, 228_000m);
+        await service.DecideAsync(BookingId, 228_000m, PlayStart);
         _client.Verify(x => x.EvaluateAsync(It.IsAny<TadssDecisionRequestDto>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Once);
 
         _settings.EnableTadssDecision = false;
-        await service.DecideAsync(BookingId, 228_000m);
+        await service.DecideAsync(BookingId, 228_000m, PlayStart);
         _client.Verify(x => x.EvaluateAsync(It.IsAny<TadssDecisionRequestDto>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -373,10 +380,10 @@ public class BookingDepositServiceTests
         var service = CreateService(Snapshot());
 
         _paymentSettings.MinOnlinePaymentAmount = 5_000m;
-        Assert.Equal(DepositBranch.FullPaymentFallback, (await service.DecideAsync(BookingId, 6_000m)).Branch);
+        Assert.Equal(DepositBranch.FullPaymentFallback, (await service.DecideAsync(BookingId, 6_000m, PlayStart)).Branch);
 
         _paymentSettings.MinOnlinePaymentAmount = 10_000m;
-        Assert.Equal(DepositBranch.ConfirmWithoutOnlinePayment, (await service.DecideAsync(BookingId, 6_000m)).Branch);
+        Assert.Equal(DepositBranch.ConfirmWithoutOnlinePayment, (await service.DecideAsync(BookingId, 6_000m, PlayStart)).Branch);
     }
 
     [Fact]
@@ -386,7 +393,7 @@ public class BookingDepositServiceTests
         var service = CreateService(Snapshot());
         using var cts = new CancellationTokenSource();
 
-        await service.DecideAsync(BookingId, 228_000m, cts.Token);
+        await service.DecideAsync(BookingId, 228_000m, PlayStart, cts.Token);
 
         _bookings.Verify(x => x.GetDecisionSnapshotAsync(BookingId, cts.Token), Times.Once);
         _client.Verify(x => x.EvaluateAsync(It.IsAny<TadssDecisionRequestDto>(), BookingId, cts.Token), Times.Once);
@@ -408,7 +415,7 @@ public class BookingDepositServiceTests
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
-        await Assert.ThrowsAsync<OperationCanceledException>(() => service.DecideAsync(BookingId, 228_000m, cts.Token));
+        await Assert.ThrowsAsync<OperationCanceledException>(() => service.DecideAsync(BookingId, 228_000m, PlayStart, cts.Token));
 
         Assert.Empty(_logger.Entries);
     }
@@ -422,7 +429,7 @@ public class BookingDepositServiceTests
         _settings.EnableTadssDecision = true;
         var service = CreateService(snapshot: null);
 
-        var decision = await service.DecideAsync(BookingId, 228_000m);
+        var decision = await service.DecideAsync(BookingId, 228_000m, PlayStart);
 
         Assert.Equal(DepositBranch.FullPaymentFallback, decision.Branch);
         Assert.Equal(DepositSource.FULL_PAYMENT_FALLBACK, decision.DepositSource);
@@ -444,7 +451,7 @@ public class BookingDepositServiceTests
         var dbError = new TimeoutException("db timeout");
         _history.Setup(x => x.GetEntriesAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>())).ThrowsAsync(dbError);
 
-        var decision = await service.DecideAsync(BookingId, 228_000m);
+        var decision = await service.DecideAsync(BookingId, 228_000m, PlayStart);
 
         Assert.Equal(DepositBranch.FullPaymentFallback, decision.Branch);
         Assert.Same(dbError, Assert.Single(_logger.Entries, e => e.Level == LogLevel.Error).Exception);
@@ -459,7 +466,7 @@ public class BookingDepositServiceTests
         _settings.EnableTadssDecision = true;
         var service = CreateService(snapshot: null);
 
-        var decision = await service.DecideAsync(BookingId, 3_000m);
+        var decision = await service.DecideAsync(BookingId, 3_000m, PlayStart);
 
         Assert.Equal(DepositBranch.ConfirmWithoutOnlinePayment, decision.Branch);
         Assert.Equal(DepositSource.FULL_PAYMENT_FALLBACK, decision.DepositSource);
@@ -475,7 +482,7 @@ public class BookingDepositServiceTests
         _client.Setup(x => x.EvaluateAsync(It.IsAny<TadssDecisionRequestDto>(), BookingId, It.IsAny<CancellationToken>()))
             .ThrowsAsync(new NullReferenceException());
 
-        var decision = await service.DecideAsync(BookingId, 228_000m);
+        var decision = await service.DecideAsync(BookingId, 228_000m, PlayStart);
 
         Assert.Equal(DepositBranch.FullPaymentFallback, decision.Branch);
         Assert.IsType<NullReferenceException>(Assert.Single(_logger.Entries).Exception);
@@ -490,7 +497,7 @@ public class BookingDepositServiceTests
         _history.Setup(x => x.GetEntriesAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new OperationCanceledException());
 
-        await Assert.ThrowsAsync<OperationCanceledException>(() => service.DecideAsync(BookingId, 228_000m));
+        await Assert.ThrowsAsync<OperationCanceledException>(() => service.DecideAsync(BookingId, 228_000m, PlayStart));
         Assert.Empty(_logger.Entries);
     }
 
@@ -510,7 +517,7 @@ public class BookingDepositServiceTests
         _settings.EnableTadssDecision = true;
         var service = CreateService(Snapshot());
 
-        await service.DecideAsync(BookingId, 228_000m);
+        await service.DecideAsync(BookingId, 228_000m, PlayStart);
 
         // chỉ đọc snapshot; không hàm ghi nào của repository được gọi
         _bookings.Verify(x => x.GetDecisionSnapshotAsync(BookingId, It.IsAny<CancellationToken>()), Times.Once);

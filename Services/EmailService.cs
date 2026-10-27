@@ -156,6 +156,10 @@ public class EmailService
     public Task SendApprovalRejectedAsync(DepositApprovalEmailModel model) =>
         SendApprovalEmailAsync("ApprovalRejected.html", $"Đơn {model.BookingCode} không được nhận - SmashCourt", model);
 
+    // Báo khách đơn chờ duyệt đã tự hủy vì chi nhánh chưa duyệt kịp; đơn chờ duyệt không có link thanh toán nên khách chưa bị trừ tiền
+    public Task SendApprovalExpiredAsync(DepositApprovalEmailModel model) =>
+        SendApprovalEmailAsync("ApprovalExpired.html", $"Đơn {model.BookingCode} đã hết hạn duyệt - SmashCourt", model);
+
     private async Task SendApprovalEmailAsync(string templateFile, string subject, DepositApprovalEmailModel model)
     {
         var templatePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Templates", templateFile);

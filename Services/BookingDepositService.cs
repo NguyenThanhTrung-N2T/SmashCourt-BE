@@ -19,6 +19,7 @@ namespace SmashCourt_BE.Services
         private readonly ITadssClient _tadssClient;
         private readonly IOptionsMonitor<TadssSettings> _settings;
         private readonly IOptionsMonitor<BookingPaymentSettings> _paymentSettings;
+        private readonly TimeProvider _timeProvider;
         private readonly ILogger<BookingDepositService> _logger;
 
         public BookingDepositService(
@@ -27,6 +28,7 @@ namespace SmashCourt_BE.Services
             ITadssClient tadssClient,
             IOptionsMonitor<TadssSettings> settings,
             IOptionsMonitor<BookingPaymentSettings> paymentSettings,
+            TimeProvider timeProvider,
             ILogger<BookingDepositService> logger)
         {
             _bookingRepo = bookingRepo;
@@ -34,10 +36,12 @@ namespace SmashCourt_BE.Services
             _tadssClient = tadssClient;
             _settings = settings;
             _paymentSettings = paymentSettings;
+            _timeProvider = timeProvider;
             _logger = logger;
         }
 
-        public async Task<DepositDecision> DecideAsync(Guid bookingId, decimal finalTotal, CancellationToken cancellationToken = default)
+        public async Task<DepositDecision> DecideAsync(
+            Guid bookingId, decimal finalTotal, DateTime playStartUtc, CancellationToken cancellationToken = default)
         {
             // Đọc cờ ở mỗi lần gọi để đổi cấu hình có hiệu lực ngay; tắt thì TADSS không nhận request nào
             TadssCallResult<TadssDecisionResultDto>? tadssResult = null;
@@ -56,7 +60,10 @@ namespace SmashCourt_BE.Services
                 }
             }
 
-            var decision = DepositDecisionResolver.Resolve(tadssResult, finalTotal, _paymentSettings.CurrentValue.MinOnlinePaymentAmount);
+            // Mốc nhận lấy sau khi TADSS trả lời: hạn duyệt so với lúc BE thật sự có quyết định (P6-24)
+            var decidedAt = _timeProvider.GetUtcNow().UtcDateTime;
+            var decision = DepositDecisionResolver.Resolve(
+                tadssResult, finalTotal, _paymentSettings.CurrentValue.MinOnlinePaymentAmount, decidedAt, playStartUtc);
             if (evaluateError != null)
             {
                 decision = decision with

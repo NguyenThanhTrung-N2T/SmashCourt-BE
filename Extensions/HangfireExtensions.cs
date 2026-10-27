@@ -21,6 +21,8 @@ public static class HangfireExtensions
         services.AddScoped<IAuthCleanupJob, AuthCleanupJob>();
         services.AddScoped<IPromotionJob, PromotionJob>();
         services.AddScoped<IBookingJob, BookingJob>();
+        services.AddScoped<IBookingApprovalJob, BookingApprovalJob>();
+        services.AddScoped<ITadssOutcomeJob, TadssOutcomeJob>();
 
         if (!IsEnabled(config))
             return services;
@@ -112,6 +114,13 @@ public static class HangfireExtensions
             "* * * * *",
             new RecurringJobOptions { TimeZone = vnTimezone });
 
+        // Mỗi 1 phút — hủy đơn chờ duyệt quá hạn duyệt (không bao giờ tự duyệt)
+        RecurringJob.AddOrUpdate<IBookingApprovalJob>(
+            "expire-approvals",
+            job => job.ExpireApprovalsAsync(),
+            "* * * * *",
+            new RecurringJobOptions { TimeZone = vnTimezone });
+
         // Mỗi 1 phút — xóa slot_locks hết hạn
         // Lưu ý: Hangfire chỉ hỗ trợ cron 5-field tiêu chuẩn (không có seconds field)
         // "*/30 * * * * *" (6-field) sẽ bị parse lỗi → phải dùng "* * * * *" (mỗi phút)
@@ -125,6 +134,13 @@ public static class HangfireExtensions
         RecurringJob.AddOrUpdate<IBookingJob>(
             "detect-no-show",
             job => job.DetectNoShowBookingsAsync(),
+            "*/5 * * * *",
+            new RecurringJobOptions { TimeZone = vnTimezone });
+
+        // Mỗi 5 phút — báo kết quả đơn đã kết thúc về TADSS (tối đa 20 đơn, tuần tự; chạy cả khi tắt cờ đánh giá)
+        RecurringJob.AddOrUpdate<ITadssOutcomeJob>(
+            "report-tadss-outcomes",
+            job => job.ReportOutcomesAsync(),
             "*/5 * * * *",
             new RecurringJobOptions { TimeZone = vnTimezone });
 

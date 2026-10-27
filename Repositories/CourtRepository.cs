@@ -113,6 +113,19 @@ namespace SmashCourt_BE.Repositories
             await _context.SaveChangesAsync();
         }
 
+        // Sân SUSPENDED / INACTIVE giữ nguyên; điều kiện nằm trong câu lệnh nên không ghi đè trạng thái vừa đổi
+        public async Task ReleaseToAvailableAsync(IReadOnlyCollection<Guid> courtIds, DateTime updatedAt)
+        {
+            if (courtIds.Count == 0) return;
+
+            var ids = courtIds.ToArray();
+            await _context.Courts
+                .Where(c => ids.Contains(c.Id) && c.Status != CourtStatus.SUSPENDED && c.Status != CourtStatus.INACTIVE)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(c => c.Status, CourtStatus.AVAILABLE)
+                    .SetProperty(c => c.UpdatedAt, updatedAt));
+        }
+
         /// <summary>
         /// Batch update trạng thái nhiều sân cùng lúc (tránh N+1 query)
         /// Dùng ExecuteUpdateAsync để update trực tiếp trong DB mà không cần load entities vào memory

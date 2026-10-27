@@ -1,3 +1,4 @@
+using System.Net;
 using SmashCourt_BE.Factories;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
@@ -124,6 +125,52 @@ public class DepositApprovalEmailTests
         Assert.Contains("0281234567", sent.Body);
         Assert.DoesNotContain("bỏ sân", sent.Body);
         AssertNoPaymentLinkAndNoPlaceholder(sent.Body);
+    }
+
+    // ── Hết hạn duyệt (6A-5) ──────────────────────────────────────────────
+
+    private static Booking ApprovalExpiredBooking()
+    {
+        var booking = WithoutPaymentDeadline(ApprovedBooking(deposit: null));
+        booking.Status = BookingStatus.CANCELLED;
+        booking.CancelReason = BookingCancelReason.APPROVAL_EXPIRED;
+        return booking;
+    }
+
+    [Fact]
+    public async Task ApprovalExpired_ShowsBookingCourtVietnamTimeAndBranch_WithoutPaymentLink()
+    {
+        await _email.SendApprovalExpiredAsync(BookingEmailFactory.BuildApproval(ApprovalExpiredBooking(), FrontendBaseUrl));
+
+        var sent = Assert.Single(_email.Sent);
+        Assert.Equal("khach@test.local", sent.To);
+        Assert.Equal("Đơn BK-20261118-000123 đã hết hạn duyệt - SmashCourt", sent.Subject);
+        // Tên sân, chi nhánh đi qua HtmlEncode (chữ có dấu thành mã số &#…;) nên so trên nội dung đã giải mã
+        var text = WebUtility.HtmlDecode(sent.Body);
+        Assert.Contains("BK-20261118-000123", text);
+        Assert.Contains("Sân 3", text);
+        Assert.Contains("20/11/2026", text);
+        Assert.Contains("18:00 – 20:00", text);
+        Assert.Contains("SmashCourt Thủ Đức", text);
+        Assert.Contains("1 Võ Văn Ngân", text);
+        Assert.Contains("0281234567", text);
+        Assert.Contains("https://fe.test/bookings", text);
+        Assert.Contains("chưa kịp xác nhận", text);
+        Assert.Contains("Bạn chưa bị trừ tiền và sân đã được trả lại.", text);
+        AssertNoPaymentLinkAndNoPlaceholder(sent.Body);
+    }
+
+    [Fact]
+    public async Task ApprovalExpired_HtmlEncodesCustomerName()
+    {
+        var booking = ApprovalExpiredBooking();
+        booking.Customer!.FullName = "<script>An</script>";
+
+        await _email.SendApprovalExpiredAsync(BookingEmailFactory.BuildApproval(booking, FrontendBaseUrl));
+
+        var body = Assert.Single(_email.Sent).Body;
+        Assert.DoesNotContain("<script>", body);
+        Assert.Contains("&lt;script&gt;An&lt;/script&gt;", body);
     }
 
     // ── Đang chờ duyệt ────────────────────────────────────────────────────

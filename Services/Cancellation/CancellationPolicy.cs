@@ -42,6 +42,13 @@ public static class CancellationPolicy
         return new RefundQuote(percent, shares.Sum(s => s.Amount), shares);
     }
 
+    // Lý do hủy của đơn PENDING hết hạn thanh toán (spec 4.4.1): SYSTEM_CLEANUP chỉ khi BE dừng giữa hai transaction của đặt online,
+    // tức hóa đơn chưa có mức cọc và chưa có Payment nào. Đơn đã được duyệt mà khách chưa bấm thanh toán vẫn là PAYMENT_EXPIRED
+    public static BookingCancelReason PaymentExpiryReason(Invoice? invoice) =>
+        invoice?.DepositSource == null && (invoice?.Payments.Count ?? 0) == 0
+            ? BookingCancelReason.SYSTEM_CLEANUP
+            : BookingCancelReason.PAYMENT_EXPIRED;
+
     // Chỉ trả lượt khuyến mãi của đơn đã được tính lượt: đã có tiền về, hoặc thu tại quầy (lượt tính lúc xác nhận)
     public static bool ShouldReleasePromotionUse(Invoice invoice) =>
         invoice.PaymentTiming == PaymentTiming.POSTPAID

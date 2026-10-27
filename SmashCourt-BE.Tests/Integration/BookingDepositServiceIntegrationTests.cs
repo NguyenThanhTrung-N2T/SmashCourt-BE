@@ -38,7 +38,7 @@ public sealed class BookingDepositServiceIntegrationTests(PostgreSqlIntegrationF
         paymentMonitor.Setup(x => x.CurrentValue).Returns(new BookingPaymentSettings());
         return new BookingDepositService(
             new BookingRepository(DbContext), new CustomerHistoryRepository(DbContext), client.Object, monitor.Object,
-            paymentMonitor.Object, NullLogger<BookingDepositService>.Instance);
+            paymentMonitor.Object, TimeProvider.System, NullLogger<BookingDepositService>.Instance);
     }
 
     private async Task<Booking> AddHistoryBookingAsync(
@@ -133,6 +133,9 @@ public sealed class BookingDepositServiceIntegrationTests(PostgreSqlIntegrationF
 
     // ── DecideAsync trên DB thật (đóng ghi chú rà soát 22/10: trước đây chỉ có unit test) ──
 
+    // Giờ chơi xa trong tương lai: các ca dưới không xét hạn duyệt (P6-24)
+    private static readonly DateTime FarPlayStart = DateTime.UtcNow.AddDays(30);
+
     private async Task<Booking> SeedSimpleBookingAsync(decimal finalTotal)
     {
         var seed = await Seeder.SeedBranchWithCourtAsync();
@@ -160,7 +163,7 @@ public sealed class BookingDepositServiceIntegrationTests(PostgreSqlIntegrationF
         var booking = await SeedSimpleBookingAsync(200_000m);
         var approved = Approved(booking.Id, 60_000m, 0.3m);
 
-        var decision = await CreateService(true, TadssCallResult<TadssDecisionResultDto>.Success(approved, 200, "corr")).DecideAsync(booking.Id, 200_000m);
+        var decision = await CreateService(true, TadssCallResult<TadssDecisionResultDto>.Success(approved, 200, "corr")).DecideAsync(booking.Id, 200_000m, FarPlayStart);
 
         Assert.Equal(DepositBranch.TadssDeposit, decision.Branch);
         Assert.Equal(approved.DecisionId, decision.TadssDecisionId);
@@ -174,7 +177,7 @@ public sealed class BookingDepositServiceIntegrationTests(PostgreSqlIntegrationF
     public async Task DecideAsync_WhenFlagOnButBookingMissing_FallsBackWithoutCallingTadss()
     {
         // F2: lỗi dựng request không làm hỏng luồng đặt sân
-        var decision = await CreateService(true).DecideAsync(Guid.NewGuid(), 200_000m);
+        var decision = await CreateService(true).DecideAsync(Guid.NewGuid(), 200_000m, FarPlayStart);
 
         Assert.Equal(DepositBranch.FullPaymentFallback, decision.Branch);
         Assert.Equal(LogLevel.Error, decision.LogLevel);
@@ -189,7 +192,7 @@ public sealed class BookingDepositServiceIntegrationTests(PostgreSqlIntegrationF
         var booking = await SeedSimpleBookingAsync(200_000m);
 
         var decision = await CreateService(true, TadssCallResult<TadssDecisionResultDto>.Success(Approved(booking.Id, 250_000m, 1m), 200, "corr"))
-            .DecideAsync(booking.Id, 200_000m);
+            .DecideAsync(booking.Id, 200_000m, FarPlayStart);
 
         Assert.Equal(DepositBranch.FullPaymentFallback, decision.Branch);
         Assert.Equal(200_000m, decision.DepositAmount);

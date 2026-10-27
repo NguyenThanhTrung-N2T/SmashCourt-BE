@@ -181,5 +181,46 @@ namespace SmashCourt_BE.Repositories.IRepository
         // Tiền về sau khi đơn đã hủy: chuyển sang chờ hoàn tiền, giữ lý do hủy; expectedStatus là trạng thái đã đọc
         // (CANCELLED hoặc CANCELLED_REFUNDED)
         Task<bool> MarkPendingRefundAsync(Guid bookingId, BookingStatus expectedStatus, DateTime nowUtc);
+
+        // ── Job (gói 6A-5): hết hạn, kết thúc giờ chơi, NO_SHOW, báo kết quả về TADSS ─────────────────────
+        // Ứng viên chỉ đọc không khóa; mỗi đơn được ghi trong transaction riêng của job bằng câu có điều kiện chạy đầu tiên (P6-25)
+
+        // Job-01: id đơn PENDING có hóa đơn UNPAID và expires_at <= now, hạn sớm nhất trước, tối đa take đơn
+        Task<List<Guid>> GetExpiredUnpaidIdsAsync(DateTime nowUtc, int take);
+
+        // Job hết hạn duyệt: id đơn PENDING_APPROVAL có approval_expires_at <= now, hạn sớm nhất trước, tối đa take đơn
+        Task<List<Guid>> GetExpiredApprovalIdsAsync(DateTime nowUtc, int take);
+
+        // Hai hàm dưới gọi trong transaction, sau LockAsync, để thấy lần gia hạn hoặc lần duyệt vừa commit (job hết hạn kiểm lại dưới khóa)
+
+        // Đơn còn PENDING, hóa đơn UNPAID và expires_at <= now
+        Task<bool> IsPaymentWindowOverAsync(Guid bookingId, DateTime nowUtc);
+
+        // Đơn còn PENDING_APPROVAL và approval_expires_at <= now
+        Task<bool> IsApprovalWindowOverAsync(Guid bookingId, DateTime nowUtc);
+
+        // Ứng viên NO_SHOW: CONFIRMED/PAID_ONLINE chưa check-in, có sân chơi không sau todayVn
+        Task<List<Booking>> GetNoShowCandidatesAsync(DateOnly todayVn);
+
+        // Ứng viên hết giờ chơi: IN_PROGRESS, hoặc CONFIRMED/PAID_ONLINE đã check-in (dữ liệu cũ), có sân chơi không sau todayVn
+        Task<List<Booking>> GetPlayEndCandidatesAsync(DateOnly todayVn);
+
+        // Sân trong courtIds đang được đơn khác (CONFIRMED/PAID_ONLINE/IN_PROGRESS, booking_courts còn hiệu lực) giữ, bất kể ngày
+        Task<List<Guid>> GetCourtsHeldByOtherBookingsAsync(IReadOnlyCollection<Guid> courtIds, Guid excludeBookingId);
+
+        // CONFIRMED/PAID_ONLINE chưa check-in ⇒ NO_SHOW, chỉ khi trạng thái vẫn là expectedStatus và checked_in_at còn trống;
+        // gọi trong transaction (câu này khóa dòng booking, chạy đầu tiên)
+        Task<bool> MarkNoShowAsync(Guid bookingId, BookingStatus expectedStatus, DateTime nowUtc);
+
+        // Hết giờ chơi: expectedStatus ⇒ newStatus (COMPLETED hoặc PENDING_PAYMENT), hóa đơn chỉ đổi updated_at;
+        // false khi trạng thái đã đổi. Gọi trong transaction, sau LockAsync
+        Task<bool> EndPlayAsync(Guid bookingId, BookingStatus expectedStatus, BookingStatus newStatus, DateTime nowUtc);
+
+        // Đơn có quyết định TADSS, chưa báo, đã kết thúc (ba trạng thái hủy, hoặc COMPLETED / NO_SHOW / PENDING_PAYMENT đã qua giờ kết thúc
+        // theo giờ VN); updated_at mới nhất trước, tối đa take đơn; kèm BookingCourts. Chỉ đọc
+        Task<IReadOnlyList<Booking>> GetOutcomeCandidatesAsync(DateOnly todayVn, TimeOnly nowTimeVn, int take);
+
+        // Đánh dấu đã báo; chỉ khi chưa đánh dấu (hai lần chạy chồng nhau không ghi đè mốc đầu). Không đổi updated_at
+        Task<bool> MarkOutcomeReportedAsync(Guid bookingId, DateTime nowUtc);
     }
 }

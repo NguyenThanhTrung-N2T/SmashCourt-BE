@@ -28,6 +28,7 @@ internal sealed class BookingCancellationServiceTestBuilder
     public Mock<ISlotLockRepository> SlotLockRepository { get; } = new();
     public Mock<ICourtRepository> CourtRepository { get; } = new();
     public Mock<IPaymentRepository> PaymentRepository { get; } = new();
+    public Mock<IInvoiceRepository> InvoiceRepository { get; } = new();
     public Mock<IRefundRepository> RefundRepository { get; } = new();
     public Mock<IPromotionRepository> PromotionRepository { get; } = new();
     public Mock<ICancelPolicyRepository> CancelPolicyRepository { get; } = new();
@@ -37,6 +38,10 @@ internal sealed class BookingCancellationServiceTestBuilder
     public FakeTimeProvider Time { get; } = new(DefaultNow);
     public IConfiguration Configuration { get; } = TestConfigurationFactory.Create();
     public ListLogger<BookingNotificationService> NotificationLogger { get; } = new();
+    public ListLogger<BookingCancellationService> Logger { get; } = new();
+
+    /// <summary>Thay dịch vụ thông báo thật (dựng từ Broadcast, Email) khi test cần thông báo ném lỗi.</summary>
+    public IBookingNotificationService? NotificationsOverride { get; set; }
 
     /// <summary>Ghi lại thư thay vì gửi SMTP.</summary>
     public RecordingEmailService Email { get; }
@@ -63,7 +68,7 @@ internal sealed class BookingCancellationServiceTestBuilder
     {
         var slotInterestNotifier = new SlotInterestNotificationService(
             SlotInterestRepository.Object, Email, Configuration, Mock.Of<ILogger<SlotInterestNotificationService>>());
-        var notifications = new BookingNotificationService(
+        var notifications = NotificationsOverride ?? new BookingNotificationService(
             Broadcast.Object, Email, slotInterestNotifier, Configuration, Time, NotificationLogger);
 
         return new BookingCancellationService(
@@ -71,12 +76,13 @@ internal sealed class BookingCancellationServiceTestBuilder
             SlotLockRepository.Object,
             CourtRepository.Object,
             PaymentRepository.Object,
+            InvoiceRepository.Object,
             RefundRepository.Object,
             PromotionRepository.Object,
             CancelPolicyRepository.Object,
             UserBranchRepository.Object,
             notifications,
             Time,
-            Mock.Of<ILogger<BookingCancellationService>>());
+            Logger);
     }
 }

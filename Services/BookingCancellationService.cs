@@ -26,6 +26,7 @@ public class BookingCancellationService : IBookingCancellationService
     private readonly ISlotLockRepository _slotLockRepo;
     private readonly ICourtRepository _courtRepo;
     private readonly IPaymentRepository _paymentRepo;
+    private readonly IInvoiceRepository _invoiceRepo;
     private readonly IRefundRepository _refundRepo;
     private readonly IPromotionRepository _promotionRepo;
     private readonly ICancelPolicyRepository _cancelPolicyRepo;
@@ -39,6 +40,7 @@ public class BookingCancellationService : IBookingCancellationService
         ISlotLockRepository slotLockRepo,
         ICourtRepository courtRepo,
         IPaymentRepository paymentRepo,
+        IInvoiceRepository invoiceRepo,
         IRefundRepository refundRepo,
         IPromotionRepository promotionRepo,
         ICancelPolicyRepository cancelPolicyRepo,
@@ -51,6 +53,7 @@ public class BookingCancellationService : IBookingCancellationService
         _slotLockRepo = slotLockRepo;
         _courtRepo = courtRepo;
         _paymentRepo = paymentRepo;
+        _invoiceRepo = invoiceRepo;
         _refundRepo = refundRepo;
         _promotionRepo = promotionRepo;
         _cancelPolicyRepo = cancelPolicyRepo;
@@ -150,6 +153,87 @@ public class BookingCancellationService : IBookingCancellationService
             RefundPercent = quote.Percent,
             Status = booking.Status.ToString()
         };
+    }
+
+    // ── Hủy do hết hạn (job) ────────────────────────────────────────────────
+
+    public Task<bool> ExpireUnpaidAsync(Guid bookingId) => ExpireAsync(bookingId, BookingStatus.PENDING);
+
+    public Task<bool> ExpireApprovalAsync(Guid bookingId) => ExpireAsync(bookingId, BookingStatus.PENDING_APPROVAL);
+
+    // Đường riêng của job, không qua CancelAsync: thua thì trả false thay vì 409, khóa rồi kiểm lại hạn, hóa đơn sang EXPIRED,
+    // không hoàn tiền và không trả lượt khuyến mãi (đơn chờ chưa có tiền về, chưa được tính lượt), thông báo hết hạn thay vì thông báo hủy
+    private async Task<bool> ExpireAsync(Guid bookingId, BookingStatus expectedStatus)
+    {
+        var booking = await _bookingRepo.GetByIdWithDetailsAsync(bookingId);
+        if (booking == null || booking.Status != expectedStatus)
+            return false;
+
+        // IPN đổi trạng thái đơn trong cùng transaction với Payment SUCCESS, nên đơn chờ có tiền về là dữ liệu hỏng: không hủy, để người xem
+        if (booking.Invoice?.Payments.Any(p => p.Status == PaymentTxStatus.SUCCESS) == true)
+        {
+            _logger.LogError(
+                "Booking {BookingId} đang {Status} nhưng đã có Payment SUCCESS; job hết hạn bỏ qua, cần kiểm tra dữ liệu",
+                bookingId, booking.Status);
+            return false;
+        }
+
+        var approvalExpiry = expectedStatus == BookingStatus.PENDING_APPROVAL;
+        var reason = approvalExpiry ? BookingCancelReason.APPROVAL_EXPIRED : CancellationPolicy.PaymentExpiryReason(booking.Invoice);
+        var now = UtcNow();
+
+        using (var transaction = TransactionScopeHelper.ReadCommitted())
+        {
+            // Khóa trước rồi mới kiểm hạn: lần gia hạn của Thanh toán lại (hoặc lần duyệt) vừa commit thì job thấy hạn mới và bỏ qua
+            await _bookingRepo.LockAsync(bookingId);
+            var windowOver = approvalExpiry
+                ? await _bookingRepo.IsApprovalWindowOverAsync(bookingId, now)
+                : await _bookingRepo.IsPaymentWindowOverAsync(bookingId, now);
+            if (!windowOver)
+            {
+                _logger.LogInformation("Booking {BookingId} không còn quá hạn khi đã khóa; job hết hạn bỏ qua", bookingId);
+                return false;
+            }
+
+            var won = await _bookingRepo.CancelWithStatusCheckAsync(
+                bookingId, [expectedStatus], BookingStatus.CANCELLED, CancelSourceEnum.SYSTEM, reason, cancelledBy: null, now) == 1;
+            if (!won)
+            {
+                _logger.LogInformation("Booking {BookingId} đã đổi trạng thái; job hết hạn bỏ qua", bookingId);
+                return false;
+            }
+
+            await ReleaseCourtsAsync(booking, now);
+
+            if (booking.Invoice != null)
+            {
+                await _paymentRepo.FailPendingByInvoiceAsync(booking.Invoice.Id, exceptPaymentId: null, now);
+                await _invoiceRepo.SetPaymentStatusAsync(booking.Invoice.Id, InvoicePaymentStatus.EXPIRED, now);
+            }
+
+            transaction.Complete();
+        }
+
+        booking.Status = BookingStatus.CANCELLED;
+        booking.CancelledAt = now;
+        booking.CancelSource = CancelSourceEnum.SYSTEM;
+        booking.CancelReason = reason;
+        booking.CancelledBy = null;
+        if (booking.Invoice != null)
+            booking.Invoice.PaymentStatus = InvoicePaymentStatus.EXPIRED;
+
+        _logger.LogInformation("Booking {BookingId} đã hủy do hết hạn ({Reason}) từ {PreviousStatus}", bookingId, reason, expectedStatus);
+
+        try
+        {
+            await _notifications.NotifyExpiredAsync(booking, expectedStatus);
+        }
+        catch (Exception ex)
+        {
+            // Đơn đã hủy xong; thông báo hỏng không đổi kết quả của job
+            _logger.LogError(ex, "Thông báo hết hạn của booking {BookingId} lỗi; dữ liệu đã ghi không đổi", bookingId);
+        }
+        return true;
     }
 
     // ── Các bước chung ──────────────────────────────────────────────────────

@@ -36,6 +36,14 @@ namespace SmashCourt_BE.Repositories
             await _context.SaveChangesAsync();
         }
 
+        public async Task<InvoicePaymentStatus?> GetPaymentStatusByBookingIdAsync(Guid bookingId)
+        {
+            return await _context.Invoices
+                .Where(i => i.BookingId == bookingId)
+                .Select(i => (InvoicePaymentStatus?)i.PaymentStatus)
+                .FirstOrDefaultAsync();
+        }
+
         public async Task SetPaymentStatusAsync(Guid invoiceId, InvoicePaymentStatus status, DateTime nowUtc)
         {
             await _context.Invoices

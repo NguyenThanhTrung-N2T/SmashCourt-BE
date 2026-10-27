@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using SmashCourt_BE.Models.Enums;
 
@@ -278,5 +279,34 @@ public sealed class OnlineBookingTadssFailureTests(PostgreSqlIntegrationFixture 
         Assert.Equal(BookingStatus.CONFIRMED, booking.Status);
         Assert.Null(booking.TadssDecisionId);
         Assert.Contains(factory.Logs.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains(call.BookingId.ToString()));
+    }
+
+    // ───────────────────────── Hạn duyệt không dùng được lúc nhận (6A-5, P6-24) ─────────────────────────
+
+    [Theory]
+    [Trait("Catalog", "BE-IT-04")]
+    [InlineData("expired")]     // khách đặt sát mốc: TADSS thấy còn hạn, BE nhận lúc hạn đã qua
+    [InlineData("after-play")]  // TADSS vi phạm công thức hạn duyệt
+    public async Task NeedApprovalWithAnUnusableDeadline_IsAFullPaymentFallback_NeverQueued(string deadline)
+    {
+        var tadss = await GetTadssAsync();
+        using var _ = await UseTadssAsync();
+        // BookAsync đặt 10:00 ba ngày sau (giờ VN)
+        var playStart = new DateTimeOffset(FutureDate().ToDateTime(new TimeOnly(10, 0)), TimeSpan.FromHours(7));
+        tadss.RequireApprovalForAnyBooking(deadline == "expired" ? DateTimeOffset.UtcNow.AddSeconds(-1) : playStart.AddMinutes(1));
+        var court = await SeedCourtAsync(200_000m);
+
+        var call = await BookExpectingFullPaymentAsync(court);
+
+        var booking = await RequireBookingAsync(call.BookingId);
+        Assert.Equal(BookingStatus.PENDING, booking.Status);
+        Assert.Null(booking.ApprovalExpiresAt);
+        Assert.Equal(DepositSource.FULL_PAYMENT_FALLBACK, booking.Invoice!.DepositSource);
+        Assert.Single(await tadss.WaitForEvaluationsAsync(call.BookingId, 1));
+        Assert.False(await WithDbAsync(db => db.Bookings.AnyAsync(b =>
+            b.Status == BookingStatus.PENDING_APPROVAL && b.BookingCourts.Any(bc => bc.CourtId == court.CourtId))));
+        var factory = await GetFactoryAsync();
+        Assert.Contains(factory.Logs.Entries, e => e.Level >= LogLevel.Warning
+            && e.Message.Contains(call.BookingId.ToString()) && e.Message.Contains("hạn duyệt"));
     }
 }

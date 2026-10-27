@@ -246,8 +246,9 @@ public sealed class HttpTadssIntegrationTests(PostgreSqlIntegrationFixture datab
 
     // ───────────────────────── Đường ống quyết định cọc trên DB thật ─────────────────────────
 
+    // Giờ chơi xa trong tương lai: các ca dưới không xét hạn duyệt (P6-24)
     private Task<SmashCourt_BE.Models.Deposit.DepositDecision> DecideAsync(Guid bookingId, decimal finalTotal) =>
-        InScopeAsync(sp => sp.GetRequiredService<IBookingDepositService>().DecideAsync(bookingId, finalTotal));
+        InScopeAsync(sp => sp.GetRequiredService<IBookingDepositService>().DecideAsync(bookingId, finalTotal, DateTime.UtcNow.AddDays(30)));
 
     /// <summary>Đơn PENDING như transaction 1 để lại (khách, sân, hóa đơn, một dòng sân), commit thật trong DB của bộ HTTP.</summary>
     private Task<Guid> SeedOrderAsync(decimal finalTotal) =>
@@ -291,13 +292,15 @@ public sealed class HttpTadssIntegrationTests(PostgreSqlIntegrationFixture datab
         var tadss = await GetTadssAsync();
         using var _ = await EnableTadssAsync();
         var bookingId = await SeedOrderAsync(3_000_000m);
-        var deadline = new DateTimeOffset(2026, 11, 18, 14, 15, 0, TimeSpan.FromHours(7));
-        tadss.ReplyNeedApproval(bookingId, deadline);
+        // Hạn tương đối (trước đây cố định 18/11/2026): từ 6A-5 hạn đã qua lúc nhận thì đi dự phòng (P6-24)
+        var deadlineUtc = DateTime.UtcNow.AddMinutes(20);
+        deadlineUtc = new DateTime(deadlineUtc.Year, deadlineUtc.Month, deadlineUtc.Day, deadlineUtc.Hour, deadlineUtc.Minute, 0, DateTimeKind.Utc);
+        tadss.ReplyNeedApproval(bookingId, new DateTimeOffset(deadlineUtc).ToOffset(TimeSpan.FromHours(7)));
 
         var decision = await DecideAsync(bookingId, 3_000_000m);
 
         Assert.Equal(DepositBranch.NeedApproval, decision.Branch);
-        Assert.Equal(new DateTime(2026, 11, 18, 7, 15, 0, DateTimeKind.Utc), decision.ApprovalExpiresAtUtc);
+        Assert.Equal(deadlineUtc, decision.ApprovalExpiresAtUtc);
         Assert.Equal(DateTimeKind.Utc, decision.ApprovalExpiresAtUtc!.Value.Kind);
     }
 
