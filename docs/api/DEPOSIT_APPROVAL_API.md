@@ -2,7 +2,7 @@
 
 | | |
 | :--- | :--- |
-| **Trạng thái** | Đặc tả cho **Phase 6**. **BE đã hiện thực** Mục 3.1, 3.2 (6A-2), Mục 3.3, 4, 5, 6 phần duyệt (6A-3, 24/10/2026), Mục 3.4, 3.5, 3.6 (6A-4, 25/10/2026); phần job (hết hạn duyệt, sự kiện `EXPIRED`, email hết hạn duyệt), báo kết quả về TADSS và kiểm hạn duyệt lúc nhận (6A-5, 27/10/2026); FE chưa. Viết ngày 12/10/2026 (task T5.22 / M-08, gói 5.7 của TADSS-Runtime); **đã review 18/10/2026 (T5.29)**: đối chiếu với mã BE, sửa R-1…R-8 (Mục 10), chốt Q1…Q12 (Mục 9); **cập nhật cùng ngày theo thiết kế Phase 6** (quyết định P6-01…P6-15, Mục 11) |
+| **Trạng thái** | Đặc tả cho **Phase 6**. **BE đã hiện thực** Mục 3.1, 3.2 (6A-2), Mục 3.3, 4, 5, 6 phần duyệt (6A-3, 24/10/2026), Mục 3.4, 3.5, 3.6 (6A-4, 25/10/2026); phần job (hết hạn duyệt, sự kiện `EXPIRED`, email hết hạn duyệt), báo kết quả về TADSS và kiểm hạn duyệt lúc nhận (6A-5, 27/10/2026); thử VNPay sandbox 28/10/2026 (ghi chú FE ở Mục 3.6); FE chưa. Viết ngày 12/10/2026 (task T5.22 / M-08, gói 5.7 của TADSS-Runtime); **đã review 18/10/2026 (T5.29)**: đối chiếu với mã BE, sửa R-1…R-8 (Mục 10), chốt Q1…Q12 (Mục 9); **cập nhật cùng ngày theo thiết kế Phase 6** (quyết định P6-01…P6-15, Mục 11) |
 | **Sở hữu** | Tài liệu này là nguồn duy nhất của hợp đồng **BE ↔ FE** cho luồng cọc, chờ duyệt, duyệt/từ chối |
 | **Không sở hữu** | Hợp đồng **BE ↔ TADSS** (request/response `/api/v2/decisions`, mã lỗi TADSS, idempotency, header): [`INTEGRATION_SPEC.md`](../../../TADSS-Runtime/docs/contracts/INTEGRATION_SPEC.md) Mục 1–4. Khi hai tài liệu khác nhau về phía TADSS, INTEGRATION_SPEC đúng |
 | **Người review** | T5.29, 18/10/2026: review và chốt câu hỏi mở cùng người dùng. SV2 đọc lại khi bắt đầu Epic 6B |
@@ -336,6 +336,8 @@ Không đổi route (`GET /api/payments/vnpay/ipn`, `/callback`, `POST /confirm`
 - **Trang kết quả thanh toán của FE** khi thất bại có hai nút: "Thanh toán lại" (`retry-payment`) và "Hủy đơn" (`POST /api/me/bookings/{id}/cancel`, nhả slot ngay).
 - **Tiền về sau khi booking đã hủy** (phiên VNPay còn sống sau khi đơn hết hạn; BE không đặt được hạn phiên VNPay vì thư viện `VNPAY.NET 2.1.0` không gửi `vnp_ExpireDate`; sửa gốc ở 6A-6, P6-27): Payment `SUCCESS`, tạo Refund 100 % `PENDING`, booking `CANCELLED → CANCELLED_PENDING_REFUND` (giữ `cancelReason`), email báo khách sẽ được hoàn tiền; nhân viên xử lý ở hàng "Chờ hoàn tiền" có sẵn. Trước đây IPN bỏ qua trường hợp này: tiền bị trừ mà không có bản ghi.
 - **IPN thành công** giữ nguyên (`PENDING → PAID_ONLINE` có điều kiện); các Payment `PENDING` khác của hóa đơn chuyển `FAILED`.
+- **`POST /api/payments/vnpay/confirm` chỉ đọc và `isSuccess` là kết quả VNPay, không phải trạng thái đơn** (N-36, thấy khi thử sandbox 28/10): khoản tiền về sau khi đơn đã hủy vẫn trả `isSuccess = true` với câu "Thanh toán thành công! Vui lòng đợi hệ thống xác nhận." FE lấy `bookingId` trong response rồi gọi `GET /api/me/bookings/{bookingId}` và hiển thị theo `status` (`PAID_ONLINE`, `CANCELLED_PENDING_REFUND`, hoặc `PENDING` thì hỏi lại vài giây vì IPN có thể về sau trình duyệt). Đề xuất 6A-6: thêm trạng thái đơn vào response.
+- **Số liệu sandbox (28/10, spec Phase 6 Mục 10.1 bước 2):** IPN thành công tới BE sau 4–11 giây, thường trước khi trình duyệt quay về; khách bấm "Hủy thanh toán" ⇒ IPN mã `24`; sai OTP quá số lần ⇒ IPN mã `79` (tới sau khoảng 53 giây). Trang VNPay hiện sống khoảng 15 phút từ lúc mở, dài hơn hạn giữ chỗ 10 phút, nên khách trả được sau khi đơn đã hủy (đã tái hiện; BE ghi chờ hoàn đúng như trên). Từ 6A-6 (P6-27) link hết hạn trước `expiresAt` một khoảng đệm; quá hạn thì VNPay hiện trang lỗi riêng và **không quay về FE**, nên FE khóa nút thanh toán khi gần hết hạn.
 - **Khách trả hai link cho cùng một đơn** (chốt 24/10): khoản trả sau vẫn được ghi nhận (Payment `SUCCESS`), đơn không đổi; khoản thừa được trừ vào số thu tại quầy khi check-out (`remainingAmount` tính trên số đã thu). Vượt cả tổng đơn thì check-out thu 0 và chi nhánh hoàn tiền mặt phần thừa.
 
 ---
@@ -835,6 +837,6 @@ Sau khi lần theo luồng thực tế FE → BE trên mã hiện có, nhóm ch�
 | P6-22 | Quy tắc thời gian (rà soát 19/10/2026): BE so sánh và lưu thời điểm ở UTC, giờ chơi đổi bằng `DateTimeHelper.ToUtcFromVietnam` (sửa % hoàn, hạn link hủy online và tại quầy); request TADSS mọi trường thời gian có offset; FE lấy "hôm nay" theo giờ VN, đọc chuỗi giờ của BE bằng hàm chung, gửi ngày lên dạng `yyyy-MM-dd` | 1.3, 3.4 |
 | P6-23 | Khách không tự hủy khi đã tới giờ bắt đầu (chốt 19/10/2026) | 3.4, 5, 7 |
 | P6-24 | `NEED_APPROVAL` có hạn duyệt đã qua lúc BE ghi đơn hoặc sau giờ chơi ⇒ cọc 100 % như nhánh (d) (chốt 27/10/2026, 6A-5) | 3.1 (d) |
-| P6-27 | Link thanh toán có hạn theo hạn đơn (chốt 27/10/2026, 6A-6, cần thử sandbox VNPay) | 3.3, 3.6 |
+| P6-27 | Link thanh toán có hạn theo hạn đơn (chốt 27/10/2026, 6A-6; đã thử sandbox VNPay 28/10) | 3.3, 3.6 |
 
 Mã lỗi mới: `PAYMENT_HOLD_EXPIRED`, `BOOKING_ALREADY_STARTED` (Mục 5). Không đổi hợp đồng BE ↔ TADSS.
