@@ -1,4 +1,6 @@
 using SmashCourt_BE.Common.Constants;
+using Microsoft.Extensions.Options;
+using SmashCourt_BE.Configurations;
 using SmashCourt_BE.DTOs.SignalR;
 using SmashCourt_BE.Factories;
 using SmashCourt_BE.Helpers;
@@ -19,6 +21,7 @@ public class BookingNotificationService : IBookingNotificationService
     private readonly ISlotInterestNotificationService _slotInterestNotifier;
     private readonly IConfiguration _configuration;
     private readonly TimeProvider _timeProvider;
+    private readonly IOptionsMonitor<BookingPaymentSettings> _paymentSettings;
     private readonly ILogger<BookingNotificationService> _logger;
 
     public BookingNotificationService(
@@ -27,6 +30,7 @@ public class BookingNotificationService : IBookingNotificationService
         ISlotInterestNotificationService slotInterestNotifier,
         IConfiguration configuration,
         TimeProvider timeProvider,
+        IOptionsMonitor<BookingPaymentSettings> paymentSettings,
         ILogger<BookingNotificationService> logger)
     {
         _broadcast = broadcast;
@@ -34,8 +38,12 @@ public class BookingNotificationService : IBookingNotificationService
         _slotInterestNotifier = slotInterestNotifier;
         _configuration = configuration;
         _timeProvider = timeProvider;
+        _paymentSettings = paymentSettings;
         _logger = logger;
     }
+
+    // Khoảng đệm của link thanh toán (P6-27) để email ghi đúng mốc muộn nhất còn thanh toán được
+    private int PaymentLinkBufferMinutes => _paymentSettings.CurrentValue.PaymentLinkBufferMinutes;
 
     // ── Đặt sân online ─────────────────────────────────────────────────────
 
@@ -133,11 +141,11 @@ public class BookingNotificationService : IBookingNotificationService
     private Task SendApprovalEmailAsync(Booking booking, bool rejected, string? rawCancelToken)
     {
         if (rejected)
-            return SendIfCustomerHasEmailAsync(booking, url => _emailService.SendApprovalRejectedAsync(BookingEmailFactory.BuildApproval(booking, url)));
+            return SendIfCustomerHasEmailAsync(booking, url => _emailService.SendApprovalRejectedAsync(BookingEmailFactory.BuildApproval(booking, url, PaymentLinkBufferMinutes)));
         // Duyệt 0 %: đơn đã xác nhận nên gửi email xác nhận kèm link hủy như đơn thu tại quầy
         if (rawCancelToken != null)
             return SendConfirmationEmailAsync(booking, rawCancelToken);
-        return SendIfCustomerHasEmailAsync(booking, url => _emailService.SendDepositApprovedAsync(BookingEmailFactory.BuildApproval(booking, url)));
+        return SendIfCustomerHasEmailAsync(booking, url => _emailService.SendDepositApprovedAsync(BookingEmailFactory.BuildApproval(booking, url, PaymentLinkBufferMinutes)));
     }
 
     // ── Hủy ───────────────────────────────────────────────────────────────
@@ -182,7 +190,7 @@ public class BookingNotificationService : IBookingNotificationService
         // Hết hạn thanh toán không email khách (như Job-01 cũ): khách đã thấy hạn lúc đặt hoặc lúc được duyệt
         if (approvalExpired)
             await RunSafelyAsync("ApprovalExpiredEmail", booking.Id, () => SendIfCustomerHasEmailAsync(
-                booking, url => _emailService.SendApprovalExpiredAsync(BookingEmailFactory.BuildApproval(booking, url))));
+                booking, url => _emailService.SendApprovalExpiredAsync(BookingEmailFactory.BuildApproval(booking, url, PaymentLinkBufferMinutes))));
     }
 
     // ── Thanh toán ────────────────────────────────────────────────────────
@@ -252,7 +260,7 @@ public class BookingNotificationService : IBookingNotificationService
         SendIfCustomerHasEmailAsync(booking, url => _emailService.SendBookingConfirmationAsync(BookingEmailFactory.Build(booking, rawCancelToken, url)));
 
     private Task SendPendingApprovalEmailAsync(Booking booking) =>
-        SendIfCustomerHasEmailAsync(booking, url => _emailService.SendBookingPendingApprovalAsync(BookingEmailFactory.BuildApproval(booking, url)));
+        SendIfCustomerHasEmailAsync(booking, url => _emailService.SendBookingPendingApprovalAsync(BookingEmailFactory.BuildApproval(booking, url, PaymentLinkBufferMinutes)));
 
     private Task SendIfCustomerHasEmailAsync(Booking booking, Func<string, Task> send)
     {

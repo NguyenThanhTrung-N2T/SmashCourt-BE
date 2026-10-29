@@ -94,6 +94,17 @@ public static class PaymentHoldPolicy
         return true;
     }
 
+    // Mốc muộn nhất khách còn bắt đầu thanh toán được (TryGetPaymentLinkExpiry còn true): hạn − khoảng đệm − MinPaymentLinkLifetime.
+    // Dùng cho câu "thanh toán trước …" gửi khách để không hứa điều retry-payment từ chối
+    public static DateTime LatestPaymentStart(DateTime paymentExpiresAtUtc, int bufferMinutes)
+    {
+        EnsureUtc(paymentExpiresAtUtc, nameof(paymentExpiresAtUtc));
+        if (bufferMinutes < 0)
+            throw new ArgumentOutOfRangeException(nameof(bufferMinutes), bufferMinutes, "Khoảng đệm phải ≥ 0.");
+
+        return paymentExpiresAtUtc.AddMinutes(-bufferMinutes) - MinPaymentLinkLifetime;
+    }
+
     // Thanh toán thất bại: hạn = min(hạn hiện tại, now + ân hạn); chỉ rút ngắn, không mở lại hạn đã qua
     public static DateTime ForPaymentFailure(DateTime nowUtc, DateTime currentExpiresAtUtc, int graceMinutes)
     {

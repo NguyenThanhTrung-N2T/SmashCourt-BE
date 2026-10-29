@@ -141,6 +141,36 @@ public class PaymentHoldPolicyLinkTests
         Assert.Equal("paymentExpiresAtUtc", ex.ParamName);
     }
 
+    // ── Mốc muộn nhất còn bắt đầu thanh toán được (email "đã duyệt cọc", plan 6A-6 Task 3+4) ──
+
+    [Fact]
+    public void LatestPaymentStart_IsTheDeadlineMinusBufferMinusMinimumLifetime()
+    {
+        // Hạn 09:50 ⇒ còn bấm thanh toán được tới 09:47
+        Assert.Equal(Now.AddMinutes(7), PaymentHoldPolicy.LatestPaymentStart(Now.AddMinutes(10), Buffer));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(2)]
+    [InlineData(5)]
+    public void LatestPaymentStart_AgreesWithTryGetPaymentLinkExpiryAtTheBoundary(int buffer)
+    {
+        // Một nguồn: đúng mốc này thì còn tạo được link, trễ hơn 1 tick thì không (email không hứa điều retry-payment từ chối)
+        var deadline = Now.AddMinutes(30);
+        var latest = PaymentHoldPolicy.LatestPaymentStart(deadline, buffer);
+
+        Assert.True(Link(latest, deadline, buffer).Ok);
+        Assert.False(Link(latest.AddTicks(1), deadline, buffer).Ok);
+    }
+
+    [Fact]
+    public void LatestPaymentStart_NonUtc_Throws()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            PaymentHoldPolicy.LatestPaymentStart(DateTime.SpecifyKind(Now, DateTimeKind.Unspecified), Buffer));
+    }
+
     [Fact]
     public void NegativeBuffer_Throws()
     {

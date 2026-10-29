@@ -139,6 +139,8 @@ public class CancelEmailTests
         new Mock<ISlotInterestNotificationService>().Object,
         TestConfigurationFactory.Create(),
         TimeProvider.System,
+        Mock.Of<Microsoft.Extensions.Options.IOptionsMonitor<SmashCourt_BE.Configurations.BookingPaymentSettings>>(
+            m => m.CurrentValue == new SmashCourt_BE.Configurations.BookingPaymentSettings()),
         NullLogger<BookingNotificationService>.Instance);
 
     private static Booking OrderWith(params PaymentTxStatus[] paymentStatuses)

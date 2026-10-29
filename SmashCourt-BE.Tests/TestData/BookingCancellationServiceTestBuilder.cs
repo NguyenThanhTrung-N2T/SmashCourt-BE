@@ -1,7 +1,9 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using Moq;
+using SmashCourt_BE.Configurations;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories.IRepository;
@@ -64,12 +66,16 @@ internal sealed class BookingCancellationServiceTestBuilder
         CancelPolicyRepository.Setup(x => x.GetAllAsync()).ReturnsAsync(Policies);
     }
 
+    public BookingPaymentSettings PaymentSettings { get; } = new();
+
     public BookingCancellationService Build()
     {
+        var paymentSettings = new Mock<IOptionsMonitor<BookingPaymentSettings>>();
+        paymentSettings.Setup(x => x.CurrentValue).Returns(PaymentSettings);
         var slotInterestNotifier = new SlotInterestNotificationService(
             SlotInterestRepository.Object, Email, Configuration, Mock.Of<ILogger<SlotInterestNotificationService>>());
         var notifications = NotificationsOverride ?? new BookingNotificationService(
-            Broadcast.Object, Email, slotInterestNotifier, Configuration, Time, NotificationLogger);
+            Broadcast.Object, Email, slotInterestNotifier, Configuration, Time, paymentSettings.Object, NotificationLogger);
 
         return new BookingCancellationService(
             BookingRepository.Object,

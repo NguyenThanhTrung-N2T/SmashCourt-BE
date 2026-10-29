@@ -111,9 +111,10 @@ public static class BookingEmailFactory
 
     /// <summary>
     /// Model cho email luồng duyệt cọc (chờ duyệt, đã duyệt, bị từ chối). Booking cần nạp sẵn Customer, Branch, BookingCourts.Court, Invoice.
-    /// Giờ (hạn duyệt, hạn trả cọc) đổi từ UTC sang giờ VN; không đưa lý do của Quản lý vào email.
+    /// Giờ (hạn duyệt, hạn trả cọc) đổi từ UTC sang giờ VN; không đưa lý do của Quản lý vào email. Hạn trả cọc hiển thị là mốc muộn nhất
+    /// khách còn bấm thanh toán được (hạn − khoảng đệm link − 1', P6-27), không phải hạn của đơn.
     /// </summary>
-    public static DepositApprovalEmailModel BuildApproval(Booking booking, string frontendBaseUrl)
+    public static DepositApprovalEmailModel BuildApproval(Booking booking, string frontendBaseUrl, int paymentLinkBufferMinutes)
     {
         ArgumentNullException.ThrowIfNull(booking);
 
@@ -148,7 +149,9 @@ public static class BookingEmailFactory
             TotalAmount = FormatCurrency(invoice?.FinalTotal ?? 0),
             DepositAmount = deposit is { } d ? FormatCurrency(d) : null,
             RemainingAmount = deposit is { } paid ? FormatCurrency(Math.Max(0, (invoice?.FinalTotal ?? 0) - paid)) : null,
-            PayBefore = FormatVietnamTime(invoice?.ExpiresAt),
+            PayBefore = FormatVietnamTime(invoice?.ExpiresAt is { } expiresAt
+                ? PaymentHoldPolicy.LatestPaymentStart(expiresAt, paymentLinkBufferMinutes)
+                : null),
             ApprovalExpiresAt = FormatVietnamTime(booking.ApprovalExpiresAt),
             BookingsUrl = $"{frontendBaseUrl.TrimEnd('/')}/bookings"
         };

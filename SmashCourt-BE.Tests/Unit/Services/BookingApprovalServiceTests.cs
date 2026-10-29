@@ -503,8 +503,22 @@ public class BookingApprovalServiceTests
         Assert.Empty(scenario.BookingEvents);
         var email = Assert.Single(scenario.Builder.Email.Sent);
         Assert.Equal("khach@test.local", email.To);
-        Assert.Contains("09:45 18/11/2026", email.Body); // hạn trả cọc = 09:30 + 15'
+        // Hạn trả cọc 09:45 (= 09:30 + 15'); email ghi mốc muộn nhất còn bấm thanh toán được: 09:45 − 2' − 1' (P6-27)
+        Assert.Contains("09:42 18/11/2026", email.Body);
+        Assert.DoesNotContain("09:45 18/11/2026", email.Body);
         Assert.DoesNotContain("vnpay", email.Body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Approve_Deposit_EmailDeadlineFollowsTheConfiguredLinkBuffer()
+    {
+        // Email và retry-payment đọc cùng một cấu hình BookingPayment:PaymentLinkBufferMinutes
+        var scenario = new Scenario();
+        scenario.Builder.PaymentSettings.PaymentLinkBufferMinutes = 5;
+
+        await scenario.ApproveAsync(0.3m);
+
+        Assert.Contains("09:39 18/11/2026", Assert.Single(scenario.Builder.Email.Sent).Body); // 09:45 − 5' − 1'
     }
 
     [Fact]

@@ -16,6 +16,7 @@ namespace SmashCourt_BE.Tests.Unit.Services;
 public class DepositApprovalEmailTests
 {
     private const string FrontendBaseUrl = "https://fe.test";
+    private const int LinkBuffer = 2; // BookingPayment:PaymentLinkBufferMinutes mặc định
 
     private readonly RecordingEmailService _email = new(TestConfigurationFactory.Create());
 
@@ -47,7 +48,7 @@ public class DepositApprovalEmailTests
     [Fact]
     public void BuildApproval_FormatsMoneyAndVietnamTimes()
     {
-        var model = BookingEmailFactory.BuildApproval(ApprovedBooking(), FrontendBaseUrl);
+        var model = BookingEmailFactory.BuildApproval(ApprovedBooking(), FrontendBaseUrl, LinkBuffer);
 
         Assert.Equal("khach@test.local", model.Email);
         Assert.Equal("Nguyễn Văn An", model.Name);
@@ -59,16 +60,28 @@ public class DepositApprovalEmailTests
         Assert.Equal(228_000m.ToString("N0") + " VND", model.TotalAmount);
         Assert.Equal(68_400m.ToString("N0") + " VND", model.DepositAmount);
         Assert.Equal(159_600m.ToString("N0") + " VND", model.RemainingAmount);
-        Assert.Equal("09:50 18/11/2026", model.PayBefore);
+        // Hạn 09:50, link phải sống ≥ 1' và hết trước hạn 2' ⇒ còn bấm thanh toán được tới 09:47 (P6-27)
+        Assert.Equal("09:47 18/11/2026", model.PayBefore);
         Assert.Equal("09:45 18/11/2026", model.ApprovalExpiresAt);
         Assert.Equal("https://fe.test/bookings", model.BookingsUrl);
         Assert.Equal("0281234567", model.BranchPhone);
     }
 
+    [Theory]
+    [InlineData(0, 50, 0, "09:49 18/11/2026")]
+    [InlineData(5, 50, 0, "09:44 18/11/2026")]
+    [InlineData(2, 50, 40, "09:47 18/11/2026")] // hạn 09:50:40 ⇒ 09:47:40, hiển thị cắt về 09:47 (sớm hơn, không hứa quá)
+    public void BuildApproval_PayBeforeIsTheLatestMomentRetryPaymentStillAccepts(int buffer, int minute, int second, string expected)
+    {
+        var booking = ApprovedBooking(expiresAt: new DateTime(2026, 11, 18, 2, minute, second, DateTimeKind.Utc));
+
+        Assert.Equal(expected, BookingEmailFactory.BuildApproval(booking, FrontendBaseUrl, buffer).PayBefore);
+    }
+
     [Fact]
     public void BuildApproval_BeforeDepositIsKnown_LeavesMoneyAndDeadlineEmpty()
     {
-        var model = BookingEmailFactory.BuildApproval(WithoutPaymentDeadline(ApprovedBooking(deposit: null)), FrontendBaseUrl);
+        var model = BookingEmailFactory.BuildApproval(WithoutPaymentDeadline(ApprovedBooking(deposit: null)), FrontendBaseUrl, LinkBuffer);
 
         Assert.Null(model.DepositAmount);
         Assert.Null(model.RemainingAmount);
@@ -88,7 +101,7 @@ public class DepositApprovalEmailTests
         var booking = ApprovedBooking();
         booking.Customer!.Email = "";
 
-        Assert.Throws<InvalidOperationException>(() => BookingEmailFactory.BuildApproval(booking, FrontendBaseUrl));
+        Assert.Throws<InvalidOperationException>(() => BookingEmailFactory.BuildApproval(booking, FrontendBaseUrl, LinkBuffer));
     }
 
     // ── Đã duyệt, cần trả cọc ─────────────────────────────────────────────
@@ -96,14 +109,15 @@ public class DepositApprovalEmailTests
     [Fact]
     public async Task DepositApproved_ShowsDepositRemainingDeadlineAndHistoryLink_WithoutPaymentLink()
     {
-        await _email.SendDepositApprovedAsync(BookingEmailFactory.BuildApproval(ApprovedBooking(), FrontendBaseUrl));
+        await _email.SendDepositApprovedAsync(BookingEmailFactory.BuildApproval(ApprovedBooking(), FrontendBaseUrl, LinkBuffer));
 
         var sent = Assert.Single(_email.Sent);
         Assert.Equal("khach@test.local", sent.To);
         Assert.Contains("BK-20261118-000123", sent.Subject);
         Assert.Contains(68_400m.ToString("N0") + " VND", sent.Body);
         Assert.Contains(159_600m.ToString("N0") + " VND", sent.Body);
-        Assert.Contains("09:50 18/11/2026", sent.Body);
+        Assert.Contains("09:47 18/11/2026", sent.Body);
+        Assert.DoesNotContain("09:50 18/11/2026", sent.Body);
         Assert.Contains("https://fe.test/bookings", sent.Body);
         AssertNoPaymentLinkAndNoPlaceholder(sent.Body);
     }
@@ -117,7 +131,7 @@ public class DepositApprovalEmailTests
         booking.Status = BookingStatus.CANCELLED;
         booking.ApprovalResolutionNote = "Khách bỏ sân 3 lần, không tin tưởng";
 
-        await _email.SendApprovalRejectedAsync(BookingEmailFactory.BuildApproval(booking, FrontendBaseUrl));
+        await _email.SendApprovalRejectedAsync(BookingEmailFactory.BuildApproval(booking, FrontendBaseUrl, LinkBuffer));
 
         var sent = Assert.Single(_email.Sent);
         Assert.Contains("BK-20261118-000123", sent.Body);
@@ -140,7 +154,7 @@ public class DepositApprovalEmailTests
     [Fact]
     public async Task ApprovalExpired_ShowsBookingCourtVietnamTimeAndBranch_WithoutPaymentLink()
     {
-        await _email.SendApprovalExpiredAsync(BookingEmailFactory.BuildApproval(ApprovalExpiredBooking(), FrontendBaseUrl));
+        await _email.SendApprovalExpiredAsync(BookingEmailFactory.BuildApproval(ApprovalExpiredBooking(), FrontendBaseUrl, LinkBuffer));
 
         var sent = Assert.Single(_email.Sent);
         Assert.Equal("khach@test.local", sent.To);
@@ -166,7 +180,7 @@ public class DepositApprovalEmailTests
         var booking = ApprovalExpiredBooking();
         booking.Customer!.FullName = "<script>An</script>";
 
-        await _email.SendApprovalExpiredAsync(BookingEmailFactory.BuildApproval(booking, FrontendBaseUrl));
+        await _email.SendApprovalExpiredAsync(BookingEmailFactory.BuildApproval(booking, FrontendBaseUrl, LinkBuffer));
 
         var body = Assert.Single(_email.Sent).Body;
         Assert.DoesNotContain("<script>", body);
@@ -181,7 +195,7 @@ public class DepositApprovalEmailTests
         var booking = WithoutPaymentDeadline(ApprovedBooking(deposit: null));
         booking.Status = BookingStatus.PENDING_APPROVAL;
 
-        await _email.SendBookingPendingApprovalAsync(BookingEmailFactory.BuildApproval(booking, FrontendBaseUrl));
+        await _email.SendBookingPendingApprovalAsync(BookingEmailFactory.BuildApproval(booking, FrontendBaseUrl, LinkBuffer));
 
         var sent = Assert.Single(_email.Sent);
         Assert.Contains("BK-20261118-000123", sent.Body);

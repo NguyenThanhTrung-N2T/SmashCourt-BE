@@ -75,7 +75,7 @@ internal sealed class BookingServiceTestBuilder
         var slotInterestNotifier = new SlotInterestNotificationService(
             SlotInterestRepository.Object, Email, Configuration, Mock.Of<ILogger<SlotInterestNotificationService>>());
         var notifications = new BookingNotificationService(
-            Broadcast.Object, Email, slotInterestNotifier, Configuration, Time, NotificationLogger);
+            Broadcast.Object, Email, slotInterestNotifier, Configuration, Time, paymentSettings.Object, NotificationLogger);
 
         return new BookingService(
             BookingRepository.Object,

@@ -33,6 +33,8 @@ public class BookingNotificationServiceExpiryTests
         _slotInterest.Object,
         TestConfigurationFactory.Create(),
         new FakeTimeProvider(Now),
+        Mock.Of<Microsoft.Extensions.Options.IOptionsMonitor<SmashCourt_BE.Configurations.BookingPaymentSettings>>(
+            m => m.CurrentValue == new SmashCourt_BE.Configurations.BookingPaymentSettings()),
         NullLogger<BookingNotificationService>.Instance);
 
     private static Booking ExpiredBooking(string? email = "khach@test.local", string fullName = "Nguyễn Văn An")

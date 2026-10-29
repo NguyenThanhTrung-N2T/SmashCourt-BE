@@ -50,7 +50,8 @@ internal sealed class BookingApprovalServiceTestBuilder
             new PromotionEngineService(PromotionRepository.Object),
             UnitOfWork.Object,
             new BookingNotificationService(
-                Broadcast.Object, Email, SlotInterestNotifier.Object, TestConfigurationFactory.Create(), Time, NotificationLogger),
+                Broadcast.Object, Email, SlotInterestNotifier.Object, TestConfigurationFactory.Create(), Time, paymentSettings.Object,
+                NotificationLogger),
             tadssSettings.Object,
             paymentSettings.Object,
             Time,

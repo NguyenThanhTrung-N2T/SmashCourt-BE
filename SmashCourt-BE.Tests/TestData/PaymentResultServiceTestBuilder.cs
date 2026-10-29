@@ -55,7 +55,7 @@ internal sealed class PaymentResultServiceTestBuilder
         var slotInterestNotifier = new SlotInterestNotificationService(
             Mock.Of<ISlotInterestRepository>(), Email, Configuration, Mock.Of<ILogger<SlotInterestNotificationService>>());
         var notifications = new BookingNotificationService(
-            Broadcast.Object, Email, slotInterestNotifier, Configuration, Time, NotificationLogger);
+            Broadcast.Object, Email, slotInterestNotifier, Configuration, Time, settings.Object, NotificationLogger);
 
         return new PaymentResultService(
             Payments.Object,
