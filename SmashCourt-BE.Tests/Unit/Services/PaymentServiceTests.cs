@@ -90,6 +90,112 @@ public class PaymentServiceTests
         Assert.Contains("hủy", result.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    // ───────────── Trình duyệt quay lại: câu theo trạng thái đơn (N-36, P6-28; plan 6A-6 Task 5) ─────────────
+
+    private const string ConfirmedMessage = "Thanh toán thành công! Đặt sân của bạn đã được xác nhận.";
+    private const string ConfirmingMessage = "Đã nhận kết quả thanh toán, hệ thống đang xác nhận đơn đặt sân.";
+    private const string RefundMessage =
+        "Đã nhận thanh toán nhưng đơn đặt sân đã hết thời gian giữ chỗ trước khi tiền về. Khoản tiền này sẽ được hoàn đủ tại chi nhánh.";
+    private const string CancelledMessage =
+        "Đơn đặt sân đã bị hủy. Hệ thống đang đối soát giao dịch này, vui lòng xem chi tiết trong lịch sử đặt sân.";
+    private const string CheckHistoryMessage = "Đã nhận kết quả thanh toán, vui lòng xem trạng thái trong lịch sử đặt sân.";
+
+    // Payment của giao dịch quay về (đọc lại từ DB) kèm trạng thái đơn đọc lại từ DB
+    private static PaymentServiceTestBuilder ReturnOf(
+        BookingStatus? bookingStatus, PaymentTxStatus paymentStatus, bool gatewaySuccess = true, string code = "00")
+    {
+        var builder = new PaymentServiceTestBuilder();
+        var booking = TestDataFactory.CreateBooking(status: bookingStatus ?? BookingStatus.PENDING);
+        var invoice = TestDataFactory.CreateInvoice(booking.Id, finalTotal: 120_000m);
+        invoice.Booking = booking;
+        var payment = TestDataFactory.CreatePayment(amount: 120_000m, status: paymentStatus);
+        payment.Invoice = invoice;
+        builder.Gateway.Setup(x => x.ReadResult(It.IsAny<IQueryCollection>()))
+            .Returns(Result("TX-RETURN", true, gatewaySuccess, 120_000m, code));
+        builder.Payments.Setup(x => x.GetByTransactionRefAsync("TX-RETURN", true)).ReturnsAsync(payment);
+        builder.Bookings.Setup(x => x.GetBookingStatusAsync(booking.Id)).ReturnsAsync(bookingStatus ?? BookingStatus.PENDING);
+        return builder;
+    }
+
+    [Theory]
+    [InlineData(BookingStatus.PAID_ONLINE, PaymentTxStatus.SUCCESS, ConfirmedMessage)]
+    [InlineData(BookingStatus.CONFIRMED, PaymentTxStatus.SUCCESS, ConfirmedMessage)]
+    [InlineData(BookingStatus.IN_PROGRESS, PaymentTxStatus.SUCCESS, ConfirmedMessage)]
+    [InlineData(BookingStatus.PENDING_PAYMENT, PaymentTxStatus.SUCCESS, ConfirmedMessage)]
+    [InlineData(BookingStatus.COMPLETED, PaymentTxStatus.SUCCESS, ConfirmedMessage)]
+    [InlineData(BookingStatus.PENDING, PaymentTxStatus.PENDING, ConfirmingMessage)]       // IPN chưa về
+    [InlineData(BookingStatus.CANCELLED_PENDING_REFUND, PaymentTxStatus.SUCCESS, RefundMessage)] // P6-07 đã ghi khoản này kèm Refund
+    [InlineData(BookingStatus.CANCELLED_PENDING_REFUND, PaymentTxStatus.FAILED, CancelledMessage)] // chờ hoàn khoản khác, khoản này chưa ghi
+    [InlineData(BookingStatus.CANCELLED, PaymentTxStatus.FAILED, CancelledMessage)]        // Job-01 đã hủy, IPN của khoản này chưa về
+    [InlineData(BookingStatus.CANCELLED_REFUNDED, PaymentTxStatus.SUCCESS, CancelledMessage)] // có thể đã hoàn xong: không hứa hoàn
+    [InlineData(BookingStatus.NO_SHOW, PaymentTxStatus.SUCCESS, CheckHistoryMessage)]
+    [InlineData(BookingStatus.PENDING_APPROVAL, PaymentTxStatus.PENDING, CheckHistoryMessage)]
+    public async Task Return_GatewaySuccess_MessageFollowsTheBookingAndThisPayment(
+        BookingStatus bookingStatus, PaymentTxStatus paymentStatus, string expectedMessage)
+    {
+        var builder = ReturnOf(bookingStatus, paymentStatus);
+
+        var result = await builder.Build().HandleVnPayReturnAsync(Query());
+
+        Assert.True(result.IsSuccess); // giữ nghĩa: cổng báo giao dịch thành công
+        Assert.Equal(bookingStatus.ToString(), result.BookingStatus);
+        Assert.Equal(expectedMessage, result.Message);
+        builder.PaymentResults.Verify(x => x.ApplyAsync(It.IsAny<GatewayPaymentResult>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Return_RefundPromiseOnlyForCancelledStatusesFromTheSharedClassification()
+    {
+        // Mọi trạng thái hủy (BookingStatusTransition) đều không bao giờ nhận câu "đã xác nhận"
+        foreach (var status in SmashCourt_BE.Helpers.BookingStatusTransition.GetCancelledStatuses())
+        {
+            var result = await ReturnOf(status, PaymentTxStatus.SUCCESS).Build().HandleVnPayReturnAsync(Query());
+
+            Assert.NotEqual(ConfirmedMessage, result.Message);
+            Assert.Equal(status == BookingStatus.CANCELLED_PENDING_REFUND ? RefundMessage : CancelledMessage, result.Message);
+        }
+    }
+
+    [Fact]
+    public async Task Return_PaymentNotFound_NoBookingStatusAndAskToCheckHistory()
+    {
+        var builder = new PaymentServiceTestBuilder();
+        builder.Gateway.Setup(x => x.ReadResult(It.IsAny<IQueryCollection>())).Returns(Result("TX-UNKNOWN", true, true, 50_000m, "00"));
+
+        var result = await builder.Build().HandleVnPayReturnAsync(Query());
+
+        Assert.True(result.IsSuccess);
+        Assert.Null(result.BookingStatus);
+        Assert.Null(result.BookingId);
+        Assert.Equal(CheckHistoryMessage, result.Message);
+    }
+
+    [Theory]
+    [InlineData("24", BookingStatus.PENDING, "Khách hàng hủy giao dịch")]
+    [InlineData("15", BookingStatus.PENDING, "Giao dịch đã quá thời gian chờ thanh toán, vui lòng tạo lại link thanh toán")]
+    [InlineData("79", BookingStatus.CANCELLED, "Giao dịch vượt quá số lần nhập sai mật khẩu")]
+    public async Task Return_GatewayFailure_GatewayMessageAndStillTheBookingStatus(string code, BookingStatus status, string expected)
+    {
+        var result = await ReturnOf(status, PaymentTxStatus.FAILED, gatewaySuccess: false, code: code).Build()
+            .HandleVnPayReturnAsync(Query());
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(code, result.ResponseCode);
+        Assert.Equal(expected, result.Message);
+        Assert.Equal(status.ToString(), result.BookingStatus);
+    }
+
+    [Fact]
+    public async Task Return_InvalidSignature_HasNoBookingStatus()
+    {
+        var builder = new PaymentServiceTestBuilder();
+        builder.Gateway.Setup(x => x.ReadResult(It.IsAny<IQueryCollection>())).Returns(Result("TX-INVALID", false, true, null, "00"));
+
+        var result = await builder.Build().HandleVnPayReturnAsync(Query());
+
+        Assert.Null(result.BookingStatus);
+    }
+
     // ───────────────────────── Thanh toán lại ─────────────────────────
 
     [Fact]

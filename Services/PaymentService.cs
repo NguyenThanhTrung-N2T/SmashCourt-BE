@@ -181,17 +181,39 @@ namespace SmashCourt_BE.Services
             return new VnPayReturnResult
             {
                 IsSuccess = isSuccess,
-                Message = isSuccess
-                    ? (freshStatus == BookingStatus.PAID_ONLINE
-                        ? "Thanh toán thành công! Đặt sân của bạn đã được xác nhận."
-                        : "Thanh toán thành công! Vui lòng đợi hệ thống xác nhận.")
-                    : GetVnPayErrorMessage(responseCode),
+                Message = ReturnMessage(isSuccess, responseCode, freshStatus, payment?.Status),
                 BookingId = bookingId?.ToString(),
                 BookingCode = bookingCode,
                 TransactionRef = transactionRef,
                 Amount = amount,
-                ResponseCode = responseCode
+                ResponseCode = responseCode,
+                BookingStatus = freshStatus?.ToString()
             };
+        }
+
+        // Đơn đang hiệu lực mà khách đã trả xong phần thu online
+        private static readonly BookingStatus[] PaidStatuses =
+        [
+            BookingStatus.PAID_ONLINE, BookingStatus.CONFIRMED, BookingStatus.IN_PROGRESS,
+            BookingStatus.PENDING_PAYMENT, BookingStatus.COMPLETED
+        ];
+
+        // Câu cho trang kết quả theo kết quả cổng, trạng thái đơn và Payment của chính giao dịch (N-36, P6-28). Chỉ hứa hoàn tiền khi DB
+        // đã ghi đúng điều đó: đơn chờ hoàn và khoản này SUCCESS (P6-07 tạo Refund cùng lần xử lý IPN)
+        private static string ReturnMessage(
+            bool gatewaySuccess, string responseCode, BookingStatus? bookingStatus, PaymentTxStatus? paymentStatus)
+        {
+            if (!gatewaySuccess)
+                return GetVnPayErrorMessage(responseCode);
+            if (bookingStatus is { } paid && PaidStatuses.Contains(paid))
+                return "Thanh toán thành công! Đặt sân của bạn đã được xác nhận.";
+            if (bookingStatus == BookingStatus.PENDING)
+                return "Đã nhận kết quả thanh toán, hệ thống đang xác nhận đơn đặt sân.";
+            if (bookingStatus == BookingStatus.CANCELLED_PENDING_REFUND && paymentStatus == PaymentTxStatus.SUCCESS)
+                return "Đã nhận thanh toán nhưng đơn đặt sân đã hết thời gian giữ chỗ trước khi tiền về. Khoản tiền này sẽ được hoàn đủ tại chi nhánh.";
+            if (bookingStatus is { } cancelled && BookingStatusTransition.GetCancelledStatuses().Contains(cancelled))
+                return "Đơn đặt sân đã bị hủy. Hệ thống đang đối soát giao dịch này, vui lòng xem chi tiết trong lịch sử đặt sân.";
+            return "Đã nhận kết quả thanh toán, vui lòng xem trạng thái trong lịch sử đặt sân.";
         }
 
         private static string GetVnPayErrorMessage(string responseCode)
@@ -204,6 +226,7 @@ namespace SmashCourt_BE.Services
                 "11" => "Đã hết hạn chờ thanh toán",
                 "12" => "Thẻ bị khóa",
                 "13" => "Sai mật khẩu xác thực giao dịch (OTP)",
+                "15" => "Giao dịch đã quá thời gian chờ thanh toán, vui lòng tạo lại link thanh toán", // link quá hạn (P6-27)
                 "24" => "Khách hàng hủy giao dịch",
                 "51" => "Tài khoản không đủ số dư",
                 "65" => "Tài khoản đã vượt quá hạn mức giao dịch trong ngày",

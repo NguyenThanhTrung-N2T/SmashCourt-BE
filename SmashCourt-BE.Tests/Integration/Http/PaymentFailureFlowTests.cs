@@ -1,4 +1,6 @@
 using System.Net;
+using System.Net.Http.Json;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
 using SmashCourt_BE.Common;
 using SmashCourt_BE.Models.Enums;
@@ -150,6 +152,13 @@ public sealed class PaymentFailureFlowTests(PostgreSqlIntegrationFixture databas
 
     // ───────────────────────── BE-IT-22 ─────────────────────────
 
+    // Trình duyệt quay về từ VNPay: FE gửi nguyên tham số vnp_* lên confirm (chỉ đọc)
+    private async Task<ApiCall> ConfirmReturnAsync(string transactionRef, decimal amount)
+    {
+        var queryParams = QueryHelpers.ParseQuery(SignedIpnQuery(transactionRef, amount)).ToDictionary(kv => kv.Key, kv => kv.Value.ToString());
+        return await SendAsync((await CreateAnonymousClientAsync()).PostAsJsonAsync("/api/payments/vnpay/confirm", new { queryParams }));
+    }
+
     [Fact]
     [Trait("Catalog", "BE-IT-22")]
     public async Task MoneyArrivesAfterTheOrderExpired_RefundsAllOfItAtTheBranch()
@@ -165,7 +174,21 @@ public sealed class PaymentFailureFlowTests(PostgreSqlIntegrationFixture databas
         // C7 (6A-5): link chưa trả của đơn hết hạn thành FAILED; tiền về sau đó vẫn được nhận (FAILED ⇒ SUCCESS)
         Assert.Equal(PaymentTxStatus.FAILED, Assert.Single(cancelled.Invoice!.Payments).Status);
 
+        // N-36: trình duyệt về trước IPN ⇒ cổng báo thành công nhưng đơn đã hủy và khoản này chưa ghi ⇒ câu trung tính, không hứa hoàn
+        var beforeIpn = await ConfirmReturnAsync(order.TransactionRef, order.Amount);
+        await AssertApiStatusAsync(HttpStatusCode.OK, beforeIpn);
+        Assert.True(beforeIpn.Data.GetProperty("isSuccess").GetBoolean());
+        Assert.Equal("CANCELLED", beforeIpn.DataString("bookingStatus"));
+        Assert.DoesNotContain("thành công", beforeIpn.DataString("message"));
+        Assert.DoesNotContain("hoàn", beforeIpn.DataString("message"));
+
         Assert.Equal(HttpStatusCode.OK, await IpnAsync(order.TransactionRef, order.Amount));
+
+        // N-36: sau IPN ⇒ chờ hoàn tiền, câu hoàn tiền (không phải "thành công, đã xác nhận" như ca 4 ngày 28/10)
+        var afterIpn = await ConfirmReturnAsync(order.TransactionRef, order.Amount);
+        Assert.True(afterIpn.Data.GetProperty("isSuccess").GetBoolean());
+        Assert.Equal("CANCELLED_PENDING_REFUND", afterIpn.DataString("bookingStatus"));
+        Assert.Contains("hoàn đủ tại chi nhánh", afterIpn.DataString("message"));
 
         var booking = await RequireBookingAsync(order.BookingId);
         Assert.Equal(BookingStatus.CANCELLED_PENDING_REFUND, booking.Status);
@@ -180,6 +203,22 @@ public sealed class PaymentFailureFlowTests(PostgreSqlIntegrationFixture databas
         // IPN gửi lại: không thêm Refund
         await IpnAsync(order.TransactionRef, order.Amount);
         Assert.Single(await ReadRefundsAsync(order.BookingId));
+    }
+
+    [Fact]
+    public async Task PaidNormally_ConfirmReportsTheConfirmedBooking()
+    {
+        // N-36, hồi quy: đơn trả bình thường ⇒ confirm trả PAID_ONLINE và câu "đã được xác nhận"
+        var order = await BookPendingAsync();
+        Assert.Equal(HttpStatusCode.OK, await IpnAsync(order.TransactionRef, order.Amount));
+
+        var confirm = await ConfirmReturnAsync(order.TransactionRef, order.Amount);
+
+        await AssertApiStatusAsync(HttpStatusCode.OK, confirm);
+        Assert.True(confirm.Data.GetProperty("isSuccess").GetBoolean());
+        Assert.Equal("PAID_ONLINE", confirm.DataString("bookingStatus"));
+        Assert.Equal("Thanh toán thành công! Đặt sân của bạn đã được xác nhận.", confirm.DataString("message"));
+        Assert.Equal(order.BookingId.ToString(), confirm.DataString("bookingId"));
     }
 
     [Fact]
