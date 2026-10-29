@@ -1,5 +1,6 @@
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
+using SmashCourt_BE.Models.Payments;
 using SmashCourt_BE.Repositories.IRepository;
 using SmashCourt_BE.Services.IService;
 
@@ -20,12 +21,17 @@ public class OnlinePaymentStarter : IOnlinePaymentStarter
     }
 
     public async Task<string> StartAsync(
-        Guid invoiceId, string reference, decimal amount, string orderInfo, PaymentTxMethod method, DateTime nowUtc)
+        Guid invoiceId, string reference, decimal amount, string orderInfo, PaymentTxMethod method, DateTime nowUtc,
+        DateTime linkExpiresAtUtc)
     {
         if (amount <= 0)
             throw new ArgumentOutOfRangeException(nameof(amount), amount, "Số tiền thanh toán online phải > 0.");
+        // Caller đã tính hạn bằng PaymentHoldPolicy.TryGetPaymentLinkExpiry; hạn không sau now là lỗi lập trình
+        if (linkExpiresAtUtc <= nowUtc)
+            throw new ArgumentOutOfRangeException(nameof(linkExpiresAtUtc), linkExpiresAtUtc, "Hạn link thanh toán phải sau thời điểm tạo.");
 
-        var link = _gateways.Get(method).CreatePaymentLink(reference, amount, orderInfo);
+        var link = _gateways.Get(method).CreatePaymentLink(
+            new GatewayPaymentRequest(reference, amount, orderInfo, nowUtc, linkExpiresAtUtc));
         await _paymentRepo.CreateAsync(new Payment
         {
             InvoiceId = invoiceId,

@@ -36,7 +36,7 @@ public sealed class HttpDepositDtoJsonTests(PostgreSqlIntegrationFixture databas
             ApprovalExpiresAt = new DateTime(2026, 11, 18, 2, 45, 0, DateTimeKind.Utc)
         });
 
-        foreach (var key in new[] { "paymentUrl", "expiresAt", "depositRate", "depositAmount", "remainingAmount", "depositSource" })
+        foreach (var key in new[] { "paymentUrl", "expiresAt", "paymentLinkExpiresAt", "depositRate", "depositAmount", "remainingAmount", "depositSource" })
             Assert.Equal(JsonValueKind.Null, data.GetProperty(key).ValueKind);
         Assert.Equal("BK-20261118-000123", data.GetProperty("bookingCode").GetString());
         Assert.Equal("PENDING_APPROVAL", data.GetProperty("status").GetString());
@@ -51,7 +51,7 @@ public sealed class HttpDepositDtoJsonTests(PostgreSqlIntegrationFixture databas
         Assert.Equal(
             new[]
             {
-                "bookingId", "bookingCode", "status", "paymentUrl", "expiresAt", "finalTotal", "depositRate", "depositAmount",
+                "bookingId", "bookingCode", "status", "paymentUrl", "expiresAt", "paymentLinkExpiresAt", "finalTotal", "depositRate", "depositAmount",
                 "remainingAmount", "depositSource", "approvalExpiresAt"
             },
             data.EnumerateObject().Select(p => p.Name));

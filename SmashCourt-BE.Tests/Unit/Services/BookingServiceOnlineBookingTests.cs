@@ -140,9 +140,9 @@ public class BookingServiceOnlineBookingTests
                 .ReturnsAsync(() => Gate("gate-reject"));
             b.BookingRepository.Setup(x => x.GetBookingStatusAsync(BookingId)).ReturnsAsync(BookingStatus.CANCELLED);
 
-            b.PaymentGateway.Setup(x => x.CreatePaymentLink(BookingId.ToString(), It.IsAny<decimal>(), It.IsAny<string>()))
-                .Returns((string _, decimal amount, string _) =>
-                    new GatewayPaymentLink($"https://vnpay.test/pay?amount={amount}", "TX-ONLINE"));
+            b.PaymentGateway.Setup(x => x.CreatePaymentLink(It.Is<GatewayPaymentRequest>(r => r.Reference == BookingId.ToString())))
+                .Returns((GatewayPaymentRequest request) =>
+                    new GatewayPaymentLink($"https://vnpay.test/pay?amount={request.Amount}", "TX-ONLINE"));
             b.PaymentRepository.Setup(x => x.CreateAsync(It.IsAny<Payment>()))
                 .ReturnsAsync((Payment payment) =>
                 {
@@ -406,6 +406,7 @@ public class BookingServiceOnlineBookingTests
         Assert.Equal(NowUtc.AddMinutes(12), scenario.CreatedInvoice?.HoldDeadline);
         Assert.All(scenario.Locks, l => Assert.Equal(NowUtc.AddMinutes(7), l.ExpiresAt));
         Assert.Equal(NowUtc.AddMinutes(7), result.ExpiresAt);
+        Assert.Equal(NowUtc.AddMinutes(5), result.PaymentLinkExpiresAt); // 7' − khoảng đệm 2'
     }
 
     [Fact]
@@ -445,12 +446,15 @@ public class BookingServiceOnlineBookingTests
         var b = scenario.Builder;
         b.BookingRepository.Verify(x => x.ApplyPaymentRequiredAsync(
             scenario.BookingId, null, 1m, 200_000m, DepositSource.FULL_PAYMENT_FALLBACK, NowUtc), Times.Once);
-        b.PaymentGateway.Verify(x => x.CreatePaymentLink(scenario.BookingId.ToString(), 200_000m, "Dat san San Mot"), Times.Once);
+        // Link tạo lúc nhận quyết định, hết hạn trước hạn thanh toán 2' (P6-27)
+        b.PaymentGateway.Verify(x => x.CreatePaymentLink(new GatewayPaymentRequest(
+            scenario.BookingId.ToString(), 200_000m, "Dat san San Mot", NowUtc, NowUtc.AddMinutes(8))), Times.Once);
         b.PaymentRepository.Verify(x => x.CreateAsync(It.Is<Payment>(p =>
             p.InvoiceId == scenario.InvoiceId && p.Amount == 200_000m && p.Status == PaymentTxStatus.PENDING &&
             p.Method == PaymentTxMethod.VNPAY && p.TransactionRef == "TX-ONLINE")), Times.Once);
         Assert.Equal("https://vnpay.test/pay?amount=200000", result.PaymentUrl);
         Assert.Equal(NowUtc.AddMinutes(10), result.ExpiresAt);
+        Assert.Equal(NowUtc.AddMinutes(8), result.PaymentLinkExpiresAt);
         Assert.Equal(200_000m, result.FinalTotal);
     }
 
@@ -464,7 +468,8 @@ public class BookingServiceOnlineBookingTests
         var b = scenario.Builder;
         b.BookingRepository.Verify(x => x.ApplyPaymentRequiredAsync(
             scenario.BookingId, DecisionId, 0.5m, 100_000m, DepositSource.TADSS, NowUtc), Times.Once);
-        b.PaymentGateway.Verify(x => x.CreatePaymentLink(scenario.BookingId.ToString(), 100_000m, It.IsAny<string>()), Times.Once);
+        b.PaymentGateway.Verify(x => x.CreatePaymentLink(It.Is<GatewayPaymentRequest>(r =>
+            r.Reference == scenario.BookingId.ToString() && r.Amount == 100_000m && r.ExpiresAtUtc == NowUtc.AddMinutes(8))), Times.Once);
         b.PaymentRepository.Verify(x => x.CreateAsync(It.Is<Payment>(p => p.Amount == 100_000m)), Times.Once);
         Assert.Equal("https://vnpay.test/pay?amount=100000", result.PaymentUrl);
         Assert.Equal(200_000m, result.FinalTotal);
@@ -562,7 +567,8 @@ public class BookingServiceOnlineBookingTests
         Assert.Null(result.ExpiresAt);
         Assert.Equal(200_000m, result.FinalTotal);
         scenario.Builder.PaymentRepository.Verify(x => x.CreateAsync(It.IsAny<Payment>()), Times.Never);
-        scenario.Builder.PaymentGateway.Verify(x => x.CreatePaymentLink(It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>()), Times.Never);
+        Assert.Null(result.PaymentLinkExpiresAt);
+        scenario.Builder.PaymentGateway.Verify(x => x.CreatePaymentLink(It.IsAny<GatewayPaymentRequest>()), Times.Never);
     }
 
     [Fact]
@@ -680,6 +686,7 @@ public class BookingServiceOnlineBookingTests
             It.Is<IReadOnlyCollection<string>>(r => r.SequenceEqual(new[] { "Giá trị đơn cao", "Khách mới" })), NowUtc), Times.Once);
         Assert.Null(result.PaymentUrl);
         Assert.Null(result.ExpiresAt);
+        Assert.Null(result.PaymentLinkExpiresAt);
         scenario.Builder.PaymentRepository.Verify(x => x.CreateAsync(It.IsAny<Payment>()), Times.Never);
     }
 
@@ -833,7 +840,7 @@ public class BookingServiceOnlineBookingTests
         Assert.Equal(new[] { "booking", "invoice", "lock", "clear", "decide", gate }, scenario.Steps);
         var b = scenario.Builder;
         b.PaymentRepository.Verify(x => x.CreateAsync(It.IsAny<Payment>()), Times.Never);
-        b.PaymentGateway.Verify(x => x.CreatePaymentLink(It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>()), Times.Never);
+        b.PaymentGateway.Verify(x => x.CreatePaymentLink(It.IsAny<GatewayPaymentRequest>()), Times.Never);
         b.PromotionRepository.Verify(x => x.IncrementUsageCountAsync(It.IsAny<Guid>()), Times.Never);
         Assert.Empty(b.Broadcast.Invocations);
         Assert.Empty(b.Email.Sent);

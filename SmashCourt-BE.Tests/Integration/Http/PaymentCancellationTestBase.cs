@@ -94,8 +94,8 @@ public abstract class PaymentCancellationTestBase(PostgreSqlIntegrationFixture d
     }
 
     /// <summary>
-    /// Khách trả cả hai link (VNPAY.NET không gửi hạn phiên nên link cũ vẫn trả được sau "Thanh toán lại"): link mới về trước và xác
-    /// nhận đơn, link cũ về sau thành khoản trả thêm. Trả về số tiền mỗi lần.
+    /// Khách trả cả hai link (link cũ vẫn trả được tới hạn link của chính nó sau "Thanh toán lại", P6-27; BE không hủy link phía VNPay):
+    /// link mới về trước và xác nhận đơn, link cũ về sau thành khoản trả thêm. Trả về số tiền mỗi lần.
     /// </summary>
     protected async Task<decimal> PayBothLinksAsync(User customer, Guid bookingId)
     {

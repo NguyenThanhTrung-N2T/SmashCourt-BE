@@ -8,8 +8,9 @@ namespace SmashCourt_BE.Services.IService
     {
         PaymentTxMethod Method { get; }
 
-        // Tạo link thanh toán cho số tiền VND; orderInfo không dấu
-        GatewayPaymentLink CreatePaymentLink(string reference, decimal amount, string orderInfo);
+        // Tạo link thanh toán; link phải hết hạn đúng request.ExpiresAtUtc (P6-27). Cổng không hỗ trợ hạn link thì ném
+        // NotSupportedException, không bao giờ tạo link không hạn
+        GatewayPaymentLink CreatePaymentLink(GatewayPaymentRequest request);
 
         // Kiểm chữ ký và chuẩn hóa kết quả cổng gửi về (IPN hoặc trình duyệt quay lại)
         GatewayPaymentResult ReadResult(IQueryCollection query);

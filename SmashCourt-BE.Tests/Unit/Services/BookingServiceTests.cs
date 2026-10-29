@@ -312,8 +312,8 @@ public class BookingServiceTests
             .ReturnsAsync("BK-ONLINE");
         builder.CodeGeneratorService.Setup(x => x.GenerateInvoiceCodeAsync())
             .ReturnsAsync("INV-ONLINE");
-        builder.PaymentGateway.Setup(x => x.CreatePaymentLink(
-                bookingId.ToString(), 360_000m, It.IsAny<string>()))
+        builder.PaymentGateway.Setup(x => x.CreatePaymentLink(It.Is<GatewayPaymentRequest>(r =>
+                r.Reference == bookingId.ToString() && r.Amount == 360_000m)))
             .Returns(new GatewayPaymentLink("https://vnpay.test/pay", "TX-ONLINE"));
         // Cờ TADSS tắt (mặc định của builder) ⇒ nhánh d: cọc 100 % của tổng sau giảm giá
         builder.BookingRepository.Setup(x => x.ApplyPaymentRequiredAsync(

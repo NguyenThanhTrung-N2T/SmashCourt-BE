@@ -23,17 +23,20 @@ internal sealed class PaymentServiceTestBuilder
     public BookingPaymentSettings Settings { get; } = new();
     public FakeTimeProvider Time { get; } = new(DefaultNow);
 
+    /// <summary>Các yêu cầu tạo link cổng đã nhận, theo thứ tự.</summary>
+    public List<GatewayPaymentRequest> LinkRequests { get; } = [];
+
     /// <summary>Số tiền các link cổng đã tạo, theo thứ tự.</summary>
-    public List<decimal> LinkAmounts { get; } = [];
+    public List<decimal> LinkAmounts => LinkRequests.Select(r => r.Amount).ToList();
 
     public PaymentServiceTestBuilder()
     {
         Gateway.Setup(x => x.Method).Returns(PaymentTxMethod.VNPAY);
-        Gateway.Setup(x => x.CreatePaymentLink(It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>()))
-            .Returns((string _, decimal amount, string _) =>
+        Gateway.Setup(x => x.CreatePaymentLink(It.IsAny<GatewayPaymentRequest>()))
+            .Returns((GatewayPaymentRequest request) =>
             {
-                LinkAmounts.Add(amount);
-                return new GatewayPaymentLink("https://vnpay.test/retry", $"RETRY-{LinkAmounts.Count}");
+                LinkRequests.Add(request);
+                return new GatewayPaymentLink("https://vnpay.test/retry", $"RETRY-{LinkRequests.Count}");
             });
         // Mặc định đơn vẫn còn PENDING khi ghi
         Bookings.Setup(x => x.ExtendPaymentWindowAsync(It.IsAny<Guid>(), It.IsAny<DateTime>(), It.IsAny<DateTime>()))

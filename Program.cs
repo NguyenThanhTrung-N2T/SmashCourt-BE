@@ -27,7 +27,6 @@ using SmashCourt_BE.Services.AccessControl;
 using SmashCourt_BE.Services.IService;
 using System.IdentityModel.Tokens.Jwt;
 using System.Text;
-using VNPAY.Extensions;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -213,20 +212,6 @@ builder.Services.Configure<IpRateLimitPolicies>(builder.Configuration.GetSection
 builder.Services.AddInMemoryRateLimiting();
 builder.Services.AddSingleton<IRateLimitConfiguration, RateLimitConfiguration>();
 
-var vnPayConfig = builder.Configuration.GetSection("VnPay");
-builder.Services.AddVnpayClient(config =>
-{
-    config.TmnCode = vnPayConfig["TmnCode"]!;
-    config.HashSecret = vnPayConfig["HashSecret"]!;
-    config.CallbackUrl = vnPayConfig["CallbackUrl"]!;
-
-    if (!string.IsNullOrWhiteSpace(vnPayConfig["BaseUrl"]))
-        config.BaseUrl = vnPayConfig["BaseUrl"]!;
-    if (!string.IsNullOrWhiteSpace(vnPayConfig["Version"]))
-        config.Version = vnPayConfig["Version"]!;
-    if (!string.IsNullOrWhiteSpace(vnPayConfig["OrderType"]))
-        config.OrderType = vnPayConfig["OrderType"]!;
-});
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders =

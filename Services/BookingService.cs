@@ -499,7 +499,7 @@ namespace SmashCourt_BE.Services
 
             // 14. Transaction 2 theo nhánh; đơn đã đổi trạng thái ⇒ 409
             var applied = await ApplyDepositDecisionAsync(
-                bookingId, invoiceId, decision, courtEntities, playStartUtc, now, promotionId);
+                bookingId, invoiceId, decision, courtEntities, playStartUtc, now, hold.ExpiresAt, promotionId);
 
             // 15. Đọc lại đơn sau transaction 2 cho email và sự kiện — ngoài transaction, lỗi chỉ log, không ảnh hưởng đến booking đã ghi
             Booking? fullBooking = null;
@@ -545,6 +545,7 @@ namespace SmashCourt_BE.Services
                 PaymentUrl = applied.PaymentUrl,
                 // Nhánh a/d giữ hạn thanh toán của transaction 1; a′, b không thanh toán online nên không có hạn
                 ExpiresAt = applied.PaymentUrl != null ? hold.ExpiresAt : null,
+                PaymentLinkExpiresAt = applied.PaymentLinkExpiresAt,
                 FinalTotal = finalTotal,
                 DepositRate = deposit?.Rate,
                 DepositAmount = deposit?.Amount,
@@ -554,8 +555,8 @@ namespace SmashCourt_BE.Services
             };
         }
 
-        // Kết quả transaction 2 cần cho phần sau commit: link VNPay, hoặc token hủy dạng thô để gửi email xác nhận
-        private sealed record OnlineDecisionApplied(string? PaymentUrl, string? RawCancelToken);
+        // Kết quả transaction 2 cần cho phần sau commit: link VNPay kèm hạn của link, hoặc token hủy dạng thô để gửi email xác nhận
+        private sealed record OnlineDecisionApplied(string? PaymentUrl, DateTime? PaymentLinkExpiresAt, string? RawCancelToken);
 
         /// <summary>
         /// Transaction 2 của đặt sân online: câu cập nhật có điều kiện status = PENDING trước, lệnh phụ sau, cùng transaction.
@@ -568,6 +569,7 @@ namespace SmashCourt_BE.Services
             List<(CourtSlotDto Slot, Court Court)> courtEntities,
             DateTime playStartUtc,
             DateTime now,
+            DateTime paymentExpiresAt,
             Guid? promotionId)
         {
             // Cùng mốc đã dùng để quyết định "còn hạn duyệt" (P6-24); hạn trôi qua trong vài ms sau đó do job hết hạn duyệt dọn
@@ -575,6 +577,7 @@ namespace SmashCourt_BE.Services
             if (decidedAt.Kind != DateTimeKind.Utc)
                 throw new InvalidOperationException($"Quyết định cọc của booking {bookingId} chưa có mốc nhận (UTC).");
             string? paymentUrl = null;
+            DateTime? paymentLinkExpiresAt = null;
             string? rawCancelToken = null;
             bool won;
 
@@ -590,8 +593,11 @@ namespace SmashCourt_BE.Services
                             bookingId, decision.TadssDecisionId, decision.DepositRate, decision.DepositAmount,
                             RequireDepositSource(decision), decidedAt);
                         if (won)
+                        {
+                            paymentLinkExpiresAt = NewBookingLinkExpiry(decidedAt, paymentExpiresAt);
                             paymentUrl = await CreateDepositPaymentAsync(
-                                bookingId, invoiceId, decision.DepositAmount, courtEntities, decidedAt);
+                                bookingId, invoiceId, decision.DepositAmount, courtEntities, decidedAt, paymentLinkExpiresAt.Value);
+                        }
                         break;
 
                     // Xác nhận ngay, thu tại quầy: token hủy ghi cùng câu cập nhật, khuyến mãi tính lượt ngay vì không có IPN
@@ -652,8 +658,17 @@ namespace SmashCourt_BE.Services
                     "Đơn đặt sân vừa được nhân viên xử lý, vui lòng xem lịch sử đặt sân", ErrorCodes.Conflict);
             }
 
-            return new OnlineDecisionApplied(paymentUrl, rawCancelToken);
+            return new OnlineDecisionApplied(paymentUrl, paymentLinkExpiresAt, rawCancelToken);
         }
+
+        // Hạn link của đơn mới = hạn thanh toán − khoảng đệm (P6-27). Validator buộc InitialHoldMinutes ≥ khoảng đệm + 1' nên với cấu hình
+        // hợp lệ luôn đủ thời gian; thiếu là lỗi cấu hình ⇒ transaction 2 rollback, đơn PENDING không Payment được Job-01 dọn
+        private DateTime NewBookingLinkExpiry(DateTime now, DateTime paymentExpiresAt) =>
+            PaymentHoldPolicy.TryGetPaymentLinkExpiry(
+                now, paymentExpiresAt, _paymentSettings.CurrentValue.PaymentLinkBufferMinutes, out var linkExpiresAt)
+                ? linkExpiresAt
+                : throw new InvalidOperationException(
+                    $"Không đủ thời gian tạo link thanh toán cho đơn mới (hạn thanh toán {paymentExpiresAt:O}, lúc {now:O}); kiểm cấu hình BookingPayment.");
 
         // Nhánh a, a′, d luôn có nguồn chính sách cọc (DepositDecisionResolver); thiếu là lỗi lập trình
         private static DepositSource RequireDepositSource(DepositDecision decision) =>
@@ -666,13 +681,14 @@ namespace SmashCourt_BE.Services
             Guid invoiceId,
             decimal amount,
             List<(CourtSlotDto Slot, Court Court)> courtEntities,
-            DateTime now)
+            DateTime now,
+            DateTime linkExpiresAt)
         {
             var courtNames = string.Join(", ", courtEntities.Select(x => x.Court.Name).Distinct());
             // Đặt online hiện chỉ thanh toán qua VNPay
             return await _paymentStarter.StartAsync(
                 invoiceId, bookingId.ToString(), amount, $"Dat san {StringHelper.RemoveDiacritics(courtNames)}",
-                PaymentTxMethod.VNPAY, now);
+                PaymentTxMethod.VNPAY, now, linkExpiresAt);
         }
 
         /// <summary>

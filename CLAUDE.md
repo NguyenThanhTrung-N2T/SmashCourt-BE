@@ -4,7 +4,7 @@ ASP.NET Core 8 Web API (monolith) cho hệ thống đặt sân cầu lông Smash
 
 ## Stack
 .NET 8 · EF Core 8 + Npgsql (PostgreSQL, enum map sang PG enum) · JWT Bearer (access token FE giữ trong bộ nhớ; refresh token trong cookie HTTP-only `RefreshToken`) + Refresh Token rotation · Google OAuth ·
-Hangfire (PostgreSQL storage) · SignalR (`/hubs/notifications`) · Cloudinary · VNPay (`VNPAY.NET`, sau `IPaymentGateway`) · SMTP Gmail · AspNetCoreRateLimit · Polly ·
+Hangfire (PostgreSQL storage) · SignalR (`/hubs/notifications`) · Cloudinary · VNPay (BE tự dựng và ký URL bằng `Helpers/VnPayHelper`, sau `IPaymentGateway`; `VNPAY.NET` chỉ còn trong project test để đối chứng chữ ký) · SMTP Gmail · AspNetCoreRateLimit · Polly ·
 xUnit + Moq + Testcontainers + WireMock.Net (TADSS giả trong test HTTP). Root namespace `SmashCourt_BE`.
 
 ## Lệnh

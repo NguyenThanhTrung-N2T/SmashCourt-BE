@@ -6,19 +6,16 @@ using System.Globalization;
 using System.Net;
 using System.Text.RegularExpressions;
 using System.Text;
-using VNPAY;
-using VNPAY.Models.Enums;
 
 namespace SmashCourt_BE.Services
 {
     /// <summary>
-    /// Cổng VNPay: tạo link qua <c>VNPAY.NET</c> và kiểm chữ ký kết quả theo đúng thư viện mẫu của VNPay.
+    /// Cổng VNPay: tự dựng URL thanh toán có hạn link (P6-27) và kiểm chữ ký kết quả; cả hai chiều ký bằng <see cref="VnPayHelper"/>.
     /// </summary>
     public class VnPayService : IPaymentGateway
     {
         private readonly IConfiguration _config;
         private readonly IHttpContextAccessor _httpContextAccessor;
-        private readonly IVnpayClient _vnpayClient;
         private readonly ILogger<VnPayService> _logger;
 
         private string TmnCode => GetRequiredSetting("VnPay:TmnCode");
@@ -33,34 +30,55 @@ namespace SmashCourt_BE.Services
         public VnPayService(
             IConfiguration config,
             IHttpContextAccessor httpContextAccessor,
-            IVnpayClient vnpayClient,
             ILogger<VnPayService> logger)
         {
             _config = config;
             _httpContextAccessor = httpContextAccessor;
-            _vnpayClient = vnpayClient;
             _logger = logger;
         }
 
         public PaymentTxMethod Method => PaymentTxMethod.VNPAY;
 
-        public GatewayPaymentLink CreatePaymentLink(string reference, decimal amount, string orderInfo)
+        // BE tự dựng và ký URL (P6-27): VNPAY.NET không gửi được vnp_ExpireDate và gửi vnp_CreateDate theo UTC (T-5).
+        // Tham số đúng bằng bộ thư viện từng gửi, thêm vnp_ExpireDate; hai mốc theo GMT+7 như đặc tả VNPay
+        public GatewayPaymentLink CreatePaymentLink(GatewayPaymentRequest request)
         {
-            orderInfo = NormalizeOrderInfo(orderInfo);
-            var paymentUrlInfo = _vnpayClient.CreatePaymentUrl(
-                Convert.ToDouble(amount),
-                orderInfo,
-                BankCode.ANY);
+            ArgumentNullException.ThrowIfNull(request);
+            if (request.CreatedAtUtc.Kind != DateTimeKind.Utc)
+                throw new ArgumentException("Mốc tạo link phải có Kind = Utc.", nameof(request));
+            if (request.ExpiresAtUtc.Kind != DateTimeKind.Utc)
+                throw new ArgumentException("Hạn link phải có Kind = Utc.", nameof(request));
+            if (request.ExpiresAtUtc <= request.CreatedAtUtc)
+                throw new ArgumentOutOfRangeException(nameof(request), request.ExpiresAtUtc, "Hạn link phải sau lúc tạo link.");
+            if (request.Amount <= 0 || request.Amount != decimal.Truncate(request.Amount))
+                throw new ArgumentOutOfRangeException(nameof(request), request.Amount, "Số tiền VNPay phải là số đồng nguyên > 0.");
 
+            // vnp_TxnRef do BE sinh: duy nhất, chỉ chữ và số; IPN tìm Payment theo mã này
+            var transactionRef = Guid.NewGuid().ToString("N");
+            var parameters = new Dictionary<string, string>
+            {
+                ["vnp_Version"] = Version,
+                ["vnp_Command"] = "pay",
+                ["vnp_TmnCode"] = TmnCode,
+                ["vnp_Amount"] = ((long)(request.Amount * 100)).ToString(CultureInfo.InvariantCulture),
+                ["vnp_CreateDate"] = VnPayHelper.FormatVietnamTime(request.CreatedAtUtc),
+                ["vnp_ExpireDate"] = VnPayHelper.FormatVietnamTime(request.ExpiresAtUtc),
+                ["vnp_CurrCode"] = "VND",
+                ["vnp_IpAddr"] = ResolveClientIp(),
+                ["vnp_Locale"] = "vn",
+                ["vnp_OrderInfo"] = NormalizeOrderInfo(request.OrderInfo),
+                ["vnp_OrderType"] = OrderType,
+                ["vnp_ReturnUrl"] = CallbackUrl,
+                ["vnp_TxnRef"] = transactionRef
+            };
+            var url = VnPayHelper.BuildPaymentUrl(BaseUrl, parameters, HashSecret);
+
+            // Không log URL đầy đủ (có chữ ký)
             _logger.LogInformation(
-                "VNPay package generated URL | RequestedRef: {RequestedRef} | PaymentId: {PaymentId} | Url: {Url}",
-                reference,
-                paymentUrlInfo.PaymentId,
-                paymentUrlInfo.Url);
+                "VNPay link | RequestedRef: {RequestedRef} | TxnRef: {TxnRef} | Amount: {Amount} | CreateDate: {CreateDate} | ExpireDate: {ExpireDate}",
+                request.Reference, transactionRef, request.Amount, parameters["vnp_CreateDate"], parameters["vnp_ExpireDate"]);
 
-            return new GatewayPaymentLink(
-                paymentUrlInfo.Url,
-                paymentUrlInfo.PaymentId.ToString(CultureInfo.InvariantCulture));
+            return new GatewayPaymentLink(url, transactionRef);
         }
 
         public GatewayPaymentResult ReadResult(IQueryCollection query)
@@ -141,20 +159,6 @@ namespace SmashCourt_BE.Services
                 return "127.0.0.1";
 
             return NormalizeIpAddress(remoteIp.ToString());
-        }
-
-        private static string NormalizeTransactionRef(string transactionRef)
-        {
-            if (string.IsNullOrWhiteSpace(transactionRef))
-                throw new InvalidOperationException("VNPay transaction reference is required");
-
-            var normalized = Regex.Replace(transactionRef.Trim(), "[^A-Za-z0-9]", string.Empty);
-            if (string.IsNullOrWhiteSpace(normalized))
-                throw new InvalidOperationException("VNPay transaction reference is invalid after normalization");
-
-            return normalized.Length <= 100
-                ? normalized
-                : normalized[..100];
         }
 
         private static string NormalizeOrderInfo(string orderInfo)

@@ -9,6 +9,7 @@ namespace SmashCourt_BE.DTOs.Booking
         public string Status { get; set; } = null!; // PENDING | PENDING_APPROVAL | CONFIRMED — FE rẽ nhánh theo trường này
         public string? PaymentUrl { get; set; } // VNPay URL; null khi đơn không thanh toán online (chờ duyệt, CONFIRMED)
         public DateTime? ExpiresAt { get; set; } // Hạn thanh toán; null như PaymentUrl
+        public DateTime? PaymentLinkExpiresAt { get; set; } // Hạn của chính PaymentUrl, sớm hơn ExpiresAt một khoảng đệm (P6-27); null như PaymentUrl
         public decimal FinalTotal { get; set; }
 
         // Trường cọc (2.2); null khi PENDING_APPROVAL

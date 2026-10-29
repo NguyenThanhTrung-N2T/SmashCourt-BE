@@ -86,6 +86,10 @@ namespace SmashCourt_BE.Services
                 throw new AppException(400, "Đã hết thời gian giữ chỗ, vui lòng đặt lại", ErrorCodes.PaymentHoldExpired);
             var newExpiresAt = window.ExpiresAt;
 
+            // Link phải hết hạn trước hạn thanh toán một khoảng đệm và còn sống tối thiểu 1' (P6-27); không đủ thì không gia hạn, không tạo link
+            if (!PaymentHoldPolicy.TryGetPaymentLinkExpiry(now, newExpiresAt, settings.PaymentLinkBufferMinutes, out var linkExpiresAt))
+                throw new AppException(400, "Không còn đủ thời gian thanh toán, vui lòng đặt lại", ErrorCodes.PaymentHoldExpired);
+
             // Thu online đúng tiền cọc đã chốt; đơn cũ chưa có cọc thì thu toàn bộ
             var amount = invoice.DepositAmount ?? invoice.FinalTotal;
             var courtNames = string.Join(", ",
@@ -108,7 +112,8 @@ namespace SmashCourt_BE.Services
 
                 await _paymentRepo.FailPendingByInvoiceAsync(invoice.Id, exceptPaymentId: null, now);
                 paymentUrl = await _paymentStarter.StartAsync(
-                    invoice.Id, booking.Id.ToString(), amount, $"Thanh toan lai {StringHelper.RemoveDiacritics(courtNames)}", method, now);
+                    invoice.Id, booking.Id.ToString(), amount, $"Thanh toan lai {StringHelper.RemoveDiacritics(courtNames)}", method, now,
+                    linkExpiresAt);
                 transaction.Complete();
             }
 
@@ -125,6 +130,7 @@ namespace SmashCourt_BE.Services
                 Status = booking.Status.ToString(),
                 PaymentUrl = paymentUrl,
                 ExpiresAt = newExpiresAt,
+                PaymentLinkExpiresAt = linkExpiresAt,
                 FinalTotal = invoice.FinalTotal,
                 DepositRate = deposit?.Rate,
                 DepositAmount = deposit?.Amount,
