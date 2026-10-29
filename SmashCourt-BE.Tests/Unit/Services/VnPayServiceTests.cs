@@ -103,6 +103,40 @@ public class VnPayServiceTests
     }
 
     [Fact]
+    public void ReadResult_SignedWithSharedHelperInUppercase_IsValid()
+    {
+        // Chiều IPN và chiều tạo link ký bằng cùng VnPayHelper; VNPay so chữ ký không phân biệt hoa thường nên hex hoa cũng đúng
+        var values = Values();
+        var query = values.ToDictionary(kv => kv.Key, kv => new StringValues(kv.Value));
+        query["vnp_SecureHash"] = SmashCourt_BE.Helpers.VnPayHelper.Sign(SmashCourt_BE.Helpers.VnPayHelper.BuildSignData(values), Secret);
+
+        Assert.True(CreateService().ReadResult(new QueryCollection(query)).IsSignatureValid);
+    }
+
+    [Fact]
+    public void ReadResult_SecureHashTypeAndNonVnpKeysAreNotSigned()
+    {
+        // vnp_SecureHashType và tham số lạ (không tiền tố vnp_) không nằm trong chuỗi ký, như VnPayLibrary
+        var signed = new Dictionary<string, StringValues>(Signed(Values()))
+        {
+            ["vnp_SecureHashType"] = "HmacSHA512",
+            ["utm_source"] = "mail"
+        };
+
+        Assert.True(CreateService().ReadResult(new QueryCollection(signed)).IsSignatureValid);
+    }
+
+    [Fact]
+    public void ReadResult_EmptyValueIsNotSigned()
+    {
+        // VNPay gửi vnp_BankTranNo rỗng khi khách hủy: giá trị rỗng không nằm trong chuỗi ký
+        var values = Values();
+        var signed = new Dictionary<string, StringValues>(Signed(values)) { ["vnp_BankTranNo"] = "" };
+
+        Assert.True(CreateService().ReadResult(new QueryCollection(signed)).IsSignatureValid);
+    }
+
+    [Fact]
     public void ReadResult_MissingAmount_IsNull()
     {
         var result = CreateService().ReadResult(Signed(Values(amount: null)));

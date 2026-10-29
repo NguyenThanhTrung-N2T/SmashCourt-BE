@@ -4,7 +4,6 @@ using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Models.Payments;
 using System.Globalization;
 using System.Net;
-using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using System.Text;
 using VNPAY;
@@ -12,23 +11,6 @@ using VNPAY.Models.Enums;
 
 namespace SmashCourt_BE.Services
 {
-    // ===== Copy CHÍNH XÁC từ VnPayLibrary.cs chính thức của VNPay =====
-
-    /// <summary>
-    /// Comparer giống hệt VnPayCompare trong demo chính thức — ordinal en-US
-    /// </summary>
-    internal class VnPayCompare : IComparer<string>
-    {
-        public int Compare(string? x, string? y)
-        {
-            if (x == y) return 0;
-            if (x == null) return -1;
-            if (y == null) return 1;
-            var vnpCompare = CompareInfo.GetCompareInfo("en-US");
-            return vnpCompare.Compare(x, y, CompareOptions.Ordinal);
-        }
-    }
-
     /// <summary>
     /// Cổng VNPay: tạo link qua <c>VNPAY.NET</c> và kiểm chữ ký kết quả theo đúng thư viện mẫu của VNPay.
     /// </summary>
@@ -102,51 +84,19 @@ namespace SmashCourt_BE.Services
         {
             var vnpSecureHash = query["vnp_SecureHash"].ToString();
 
-            // === ValidateSignature — copy y chang GetResponseData() trong VnPayLibrary.cs ===
-            var responseData = new SortedList<string, string>(new VnPayCompare());
-            foreach (var (key, value) in query)
-            {
-                if (key.StartsWith("vnp_")
-                    && key != "vnp_SecureHash"
-                    && key != "vnp_SecureHashType"
-                    && !string.IsNullOrEmpty(value))
-                    responseData[key] = value.ToString();
-            }
-
-            var sb = new StringBuilder();
-            foreach (var kv in responseData)
-            {
-                if (!string.IsNullOrEmpty(kv.Value))
-                {
-                    sb.Append(kv.Key)
-                        .Append('=')
-                        .Append(WebUtility.UrlEncode(kv.Value))
-                        .Append('&');
-                }
-            }
-            if (sb.Length > 0) sb.Remove(sb.Length - 1, 1);
-
-            string hashStr     = sb.ToString();
-            string computedHash = HmacSha512(HashSecret, hashStr);
-            bool match = computedHash.Equals(vnpSecureHash, StringComparison.OrdinalIgnoreCase);
+            // Như GetResponseData() của VnPayLibrary: mọi tham số vnp_ trừ chính chữ ký; ký bằng cùng helper với chiều tạo link
+            var signData = VnPayHelper.BuildSignData(query
+                .Where(q => q.Key.StartsWith("vnp_", StringComparison.Ordinal)
+                            && q.Key != "vnp_SecureHash"
+                            && q.Key != "vnp_SecureHashType")
+                .Select(q => new KeyValuePair<string, string>(q.Key, q.Value.ToString())));
+            var computedHash = VnPayHelper.Sign(signData, HashSecret);
+            var match = computedHash.Equals(vnpSecureHash, StringComparison.OrdinalIgnoreCase);
 
             _logger.LogInformation("VNPay signature — ResponseCode: {C} | HashStr: {H} | Match: {M}",
-                responseCode, hashStr, match);
+                responseCode, signData, match);
 
             return match;
-        }
-
-        // Giống hệt Utils.HmacSHA512 trong VnPayLibrary.cs
-        private static string HmacSha512(string key, string data)
-        {
-            var hash = new StringBuilder();
-            byte[] keyBytes  = Encoding.UTF8.GetBytes(key);
-            byte[] dataBytes = Encoding.UTF8.GetBytes(data);
-            using var hmac = new HMACSHA512(keyBytes);
-            byte[] hashValue = hmac.ComputeHash(dataBytes);
-            foreach (var b in hashValue)
-                hash.Append(b.ToString("x2"));
-            return hash.ToString();
         }
 
         private string GetRequiredSetting(string key)
