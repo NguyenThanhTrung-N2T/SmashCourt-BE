@@ -71,6 +71,29 @@ public static class PaymentHoldPolicy
         return true;
     }
 
+    // Link cổng thanh toán phải còn ít nhất bấy nhiêu để khách kịp trả (P6-27)
+    public static readonly TimeSpan MinPaymentLinkLifetime = TimeSpan.FromMinutes(1);
+
+    // Hạn link = hạn thanh toán − khoảng đệm. False khi link sống dưới MinPaymentLinkLifetime (caller trả PAYMENT_HOLD_EXPIRED)
+    public static bool TryGetPaymentLinkExpiry(
+        DateTime nowUtc, DateTime paymentExpiresAtUtc, int bufferMinutes, out DateTime linkExpiresAtUtc)
+    {
+        EnsureUtc(nowUtc, nameof(nowUtc));
+        EnsureUtc(paymentExpiresAtUtc, nameof(paymentExpiresAtUtc));
+        if (bufferMinutes < 0)
+            throw new ArgumentOutOfRangeException(nameof(bufferMinutes), bufferMinutes, "Khoảng đệm phải ≥ 0.");
+
+        var linkExpiresAt = paymentExpiresAtUtc.AddMinutes(-bufferMinutes);
+        if (linkExpiresAt - nowUtc < MinPaymentLinkLifetime)
+        {
+            linkExpiresAtUtc = default;
+            return false;
+        }
+
+        linkExpiresAtUtc = linkExpiresAt;
+        return true;
+    }
+
     // Thanh toán thất bại: hạn = min(hạn hiện tại, now + ân hạn); chỉ rút ngắn, không mở lại hạn đã qua
     public static DateTime ForPaymentFailure(DateTime nowUtc, DateTime currentExpiresAtUtc, int graceMinutes)
     {

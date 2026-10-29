@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Options;
+using SmashCourt_BE.Services.Deposit;
 
 namespace SmashCourt_BE.Configurations;
 
@@ -29,6 +30,19 @@ public class BookingPaymentSettingsValidator : IValidateOptions<BookingPaymentSe
 
         if (options.PaymentFailureGraceMinutes > options.PaymentHoldMaxMinutes)
             errors.Add($"{section}:PaymentFailureGraceMinutes ({options.PaymentFailureGraceMinutes}) phải ≤ PaymentHoldMaxMinutes ({options.PaymentHoldMaxMinutes}).");
+
+        // P6-27: đơn mới và lần thanh toán lại đầu tiên phải luôn tạo được link sống tối thiểu MinPaymentLinkLifetime
+        if (options.PaymentLinkBufferMinutes < 0)
+            errors.Add($"{section}:PaymentLinkBufferMinutes phải ≥ 0 (hiện {options.PaymentLinkBufferMinutes}).");
+        else
+        {
+            var minLinkMinutes = (int)Math.Ceiling(PaymentHoldPolicy.MinPaymentLinkLifetime.TotalMinutes);
+            var required = options.PaymentLinkBufferMinutes + minLinkMinutes;
+            if (options.InitialHoldMinutes < required)
+                errors.Add($"{section}:InitialHoldMinutes ({options.InitialHoldMinutes}) phải ≥ PaymentLinkBufferMinutes + {minLinkMinutes} ({required}).");
+            if (options.RetryExtendMinutes < required)
+                errors.Add($"{section}:RetryExtendMinutes ({options.RetryExtendMinutes}) phải ≥ PaymentLinkBufferMinutes + {minLinkMinutes} ({required}).");
+        }
 
         return errors.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(errors);
     }

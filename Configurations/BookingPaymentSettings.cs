@@ -17,4 +17,6 @@ public class BookingPaymentSettings
     public int PaymentHoldMaxMinutes { get; set; } = 15;
     /// <summary>Số tiền tối thiểu một giao dịch VNPay (VND); cọc thấp hơn thì đơn được xác nhận ngay.</summary>
     public decimal MinOnlinePaymentAmount { get; set; } = 5000m;
+    /// <summary>Link thanh toán hết hạn trước hạn thanh toán của đơn bấy nhiêu phút, bù độ trễ IPN (P6-27).</summary>
+    public int PaymentLinkBufferMinutes { get; set; } = 2;
 }
