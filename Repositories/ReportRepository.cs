@@ -1959,7 +1959,8 @@ public class ReportRepository : IReportRepository
             StartTime = minStart?.ToString("yyyy-MM-ddTHH:mm:ss"),
             EndTime = maxEnd?.ToString("yyyy-MM-ddTHH:mm:ss"),
             Amount = CalculateActionAmount(booking),
-            CreatedAt = booking.CreatedAt.ToString("yyyy-MM-ddTHH:mm:ss")
+            // Giờ tường VN như StartTime/EndTime (chuỗi không offset, FE đọc theo giờ máy); CreatedAt lưu UTC (T-15)
+            CreatedAt = DateTimeHelper.ToVietnamTime(booking.CreatedAt).ToString("yyyy-MM-ddTHH:mm:ss")
         };
     }
 
