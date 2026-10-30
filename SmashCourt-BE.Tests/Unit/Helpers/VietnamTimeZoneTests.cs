@@ -48,4 +48,44 @@ public class VietnamTimeZoneTests
         Assert.False(DateTimeHelper.VNTimezone.IsAmbiguousTime(wall));
         Assert.Equal(wall.AddHours(-7), DateTimeHelper.ToUtcFromVietnam(DateOnly.Parse(date), TimeOnly.Parse(time)));
     }
+
+    // ── Biên ngày VN để lọc cột timestamptz (T-9, T-11): [StartOfVietnamDayUtc(from); EndOfVietnamDayUtcExclusive(to)) ──
+
+    [Theory]
+    [InlineData("2026-11-20", "2026-11-19T17:00:00", "2026-11-20T17:00:00")]
+    [InlineData("2026-12-31", "2026-12-30T17:00:00", "2026-12-31T17:00:00")] // qua năm
+    [InlineData("2028-02-29", "2028-02-28T17:00:00", "2028-02-29T17:00:00")] // năm nhuận
+    public void VietnamDayBounds_AreTheTwoMidnightsInUtc(string date, string startUtc, string endUtc)
+    {
+        var day = DateOnly.Parse(date);
+
+        var start = DateTimeHelper.StartOfVietnamDayUtc(day);
+        var end = DateTimeHelper.EndOfVietnamDayUtcExclusive(day);
+
+        Assert.Equal(DateTime.SpecifyKind(DateTime.Parse(startUtc), DateTimeKind.Utc), start);
+        Assert.Equal(DateTime.SpecifyKind(DateTime.Parse(endUtc), DateTimeKind.Utc), end);
+        Assert.Equal(DateTimeKind.Utc, start.Kind);
+        Assert.Equal(DateTimeKind.Utc, end.Kind);
+        Assert.Equal(TimeSpan.FromDays(1), end - start);
+        Assert.Equal(DateTimeHelper.StartOfVietnamDayUtc(day.AddDays(1)), end); // liền nhau, không hở không chồng
+    }
+
+    [Fact]
+    public void EndOfVietnamDay_LastDayOfTheCalendar_DoesNotOverflow()
+    {
+        var end = DateTimeHelper.EndOfVietnamDayUtcExclusive(DateOnly.MaxValue);
+
+        Assert.Equal(DateTime.MaxValue, end);
+        Assert.Equal(DateTimeKind.Utc, end.Kind);
+    }
+
+    [Fact]
+    public void StartOfVietnamDay_FirstDayOfTheCalendar_DoesNotThrow()
+    {
+        // 00:00 VN ngày 01/01/0001 là trước DateTime.MinValue theo UTC: TimeZoneInfo kẹp về MinValue
+        var start = DateTimeHelper.StartOfVietnamDayUtc(DateOnly.MinValue);
+
+        Assert.Equal(DateTime.MinValue, start);
+        Assert.Equal(DateTimeKind.Utc, start.Kind);
+    }
 }

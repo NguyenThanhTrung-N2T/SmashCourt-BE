@@ -66,6 +66,20 @@ namespace SmashCourt_BE.Helpers
         }
 
         /// <summary>
+        /// Mốc UTC của 00:00 giờ VN ngày <paramref name="date"/>: cận dưới (>=) khi lọc cột timestamptz theo ngày VN
+        /// </summary>
+        public static DateTime StartOfVietnamDayUtc(DateOnly date) => ToUtcFromVietnam(date, TimeOnly.MinValue);
+
+        /// <summary>
+        /// Mốc UTC của 00:00 giờ VN ngày sau <paramref name="date"/>: cận trên loại trừ (<) khi lọc "tới hết ngày" theo ngày VN.
+        /// Ngày cuối của lịch không có ngày sau ⇒ <see cref="DateTime.MaxValue"/> (UTC), không tràn
+        /// </summary>
+        public static DateTime EndOfVietnamDayUtcExclusive(DateOnly date) =>
+            date == DateOnly.MaxValue
+                ? DateTime.SpecifyKind(DateTime.MaxValue, DateTimeKind.Utc)
+                : StartOfVietnamDayUtc(date.AddDays(1));
+
+        /// <summary>
         /// Thử parse chuỗi thời gian hỗ trợ cả định dạng HH:mm:ss và HH:mm
         /// </summary>
         public static bool TryParseTimeOnly(string value, out TimeOnly time)

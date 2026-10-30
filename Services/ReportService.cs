@@ -42,7 +42,7 @@ public class ReportService : IReportService
     /// </summary>
     private (DateOnly fromDate, DateOnly toDate) ValidateDateRange(ReportFilterDto filter)
     {
-        var toDate = filter.ToDate ?? DateOnly.FromDateTime(DateTime.UtcNow);
+        var toDate = filter.ToDate ?? DateTimeHelper.GetTodayInVietnam();
         var fromDate = filter.FromDate ?? toDate.AddDays(-30);
 
         // Validate FromDate <= ToDate

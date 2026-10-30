@@ -260,15 +260,17 @@ public class CustomerManagementRepository : ICustomerManagementRepository
             .AsNoTracking()
             .Where(lt => lt.UserId == customerId);
 
-        // Filter theo thời gian
+        // Filter theo ngày giờ VN: chỉ dùng phần ngày; [00:00 VN FromDate; 00:00 VN ngày sau ToDate) đổi sang UTC (T-11)
         if (query.FromDate.HasValue)
         {
-            transactionsQuery = transactionsQuery.Where(lt => lt.CreatedAt >= query.FromDate.Value);
+            var fromUtc = DateTimeHelper.StartOfVietnamDayUtc(DateOnly.FromDateTime(query.FromDate.Value));
+            transactionsQuery = transactionsQuery.Where(lt => lt.CreatedAt >= fromUtc);
         }
 
         if (query.ToDate.HasValue)
         {
-            transactionsQuery = transactionsQuery.Where(lt => lt.CreatedAt <= query.ToDate.Value);
+            var toUtcExclusive = DateTimeHelper.EndOfVietnamDayUtcExclusive(DateOnly.FromDateTime(query.ToDate.Value));
+            transactionsQuery = transactionsQuery.Where(lt => lt.CreatedAt < toUtcExclusive);
         }
 
         // Lấy tổng số record
