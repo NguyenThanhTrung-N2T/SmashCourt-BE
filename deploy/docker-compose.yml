@@ -14,6 +14,8 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      # Bắt buộc: thiếu dòng này image tự tạo database trùng tên user (smashcourt) và init-db.sql lỗi giữa chừng
+      POSTGRES_DB: postgres
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
