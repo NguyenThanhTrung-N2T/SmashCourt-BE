@@ -45,6 +45,7 @@ namespace SmashCourt_BE.Repositories
                 .AsNoTracking()
                 .Include(b => b.Branch)
                 .Include(b => b.Customer)
+                .Include(b => b.CancelledByUser) // tên nhân viên đã hủy / từ chối (P6-31)
                 .Include(b => b.BookingCourts)
                     .ThenInclude(bc => bc.Court)
                 .Include(b => b.Invoice)
@@ -571,6 +572,7 @@ namespace SmashCourt_BE.Repositories
             return await _context.Bookings
                 .Include(b => b.Branch)
                 .Include(b => b.Customer)
+                .Include(b => b.CancelledByUser) // tên nhân viên đã hủy / từ chối (P6-31)
                 .Include(b => b.BookingCourts)
                     .ThenInclude(bc => bc.Court)
                 .Include(b => b.BookingCourts)

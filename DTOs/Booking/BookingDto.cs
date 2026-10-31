@@ -39,6 +39,10 @@ namespace SmashCourt_BE.DTOs.Booking
         public string? ApprovalReasonCode { get; set; }
         public List<string>? ApprovalReasons { get; set; }
         public string? CancelReason { get; set; }
+        // Ai hủy: CUSTOMER (trong app), LINK (link email), STAFF (nhân viên hủy hoặc Manager từ chối), SYSTEM (job, TADSS từ chối); null khi chưa hủy
+        public string? CancelSource { get; set; }
+        // Tên nhân viên đã hủy hoặc từ chối (cột cancelled_by): chỉ endpoint của nhân viên; khách, link, job không ghi người hủy nên luôn null
+        public string? CancelledByName { get; set; }
 
         // Courts
         public List<BookingCourtDto> Courts { get; set; } = [];

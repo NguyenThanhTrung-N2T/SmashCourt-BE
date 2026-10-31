@@ -1,8 +1,10 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using SmashCourt_BE.Common;
 using SmashCourt_BE.Helpers;
+using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 
 namespace SmashCourt_BE.Tests.Integration.Http;
@@ -72,6 +74,120 @@ public sealed class CancellationFlowTests(PostgreSqlIntegrationFixture database,
         var queue = await QueueAsync(await CreateClientForAsync(await SeedManagerAsync(pending.Court.BranchId)),
             $"?branchId={pending.Court.BranchId}");
         Assert.DoesNotContain(pending.BookingId.ToString(), queue.Raw);
+    }
+
+    // ───────────────────────── P6-31: ai hủy — nguồn hủy cho mọi người, tên nhân viên chỉ cho nhân viên ─────────────────────────
+
+    /// <summary>Ba cách nhân viên xem một đơn (chi tiết theo id, chi tiết đầy đủ, dòng trong danh sách) — đều phải nạp người hủy.</summary>
+    private async Task<List<JsonElement>> StaffViewsAsync(HttpClient staffClient, Guid bookingId)
+    {
+        var byId = await SendAsync(staffClient.GetAsync($"/api/bookings/{bookingId}"));
+        await AssertApiStatusAsync(HttpStatusCode.OK, byId);
+        var details = await SendAsync(staffClient.GetAsync($"/api/bookings/details/{bookingId}"));
+        await AssertApiStatusAsync(HttpStatusCode.OK, details);
+        var list = await SendAsync(staffClient.GetAsync($"/api/bookings?bookingCode={byId.DataString("bookingCode")}&pageSize=50"));
+        await AssertApiStatusAsync(HttpStatusCode.OK, list);
+        var row = list.Data.GetProperty("items").EnumerateArray().Single(i => i.GetProperty("id").GetGuid() == bookingId);
+        return [byId.Data, details.Data, row];
+    }
+
+    /// <summary>Hai cách khách xem đơn của mình: chi tiết và lịch sử.</summary>
+    private async Task<List<JsonElement>> CustomerViewsAsync(User customer, Guid bookingId)
+    {
+        var client = await CustomerClientAsync(customer);
+        var detail = await SendAsync(client.GetAsync($"/api/me/bookings/{bookingId}"));
+        await AssertApiStatusAsync(HttpStatusCode.OK, detail);
+        var history = await SendAsync(client.GetAsync("/api/me/bookings?pageSize=50"));
+        await AssertApiStatusAsync(HttpStatusCode.OK, history);
+        var row = history.Data.GetProperty("items").EnumerateArray().Single(i => i.GetProperty("id").GetGuid() == bookingId);
+        return [detail.Data, row];
+    }
+
+    [Fact]
+    [Trait("Catalog", "BE-IT-23")]
+    public async Task StaffCancel_StaffSeeWhoCancelled_CustomerSeesOnlyThatTheBranchCancelled()
+    {
+        var order = await BookPendingAsync();
+        var staff = await SeedStaffAsync(order.Court.BranchId);
+        await AssertApiStatusAsync(HttpStatusCode.OK, await StaffCancelAsync(staff, order.BookingId));
+
+        // Người xem là nhân viên khác cùng chi nhánh: tên phải là của người đã hủy, không phải người đang xem
+        var viewer = await SeedStaffAsync(order.Court.BranchId);
+        await WithDbAsync(db => db.Users.Where(u => u.Id == viewer.Id).ExecuteUpdateAsync(s => s.SetProperty(u => u.FullName, "Người Xem")));
+        foreach (var view in await StaffViewsAsync(await CreateClientForAsync(viewer), order.BookingId))
+        {
+            Assert.Equal("STAFF", view.GetProperty("cancelSource").GetString());
+            Assert.Equal(staff.FullName, view.GetProperty("cancelledByName").GetString());
+            Assert.Equal("STAFF_CANCELLED", view.GetProperty("cancelReason").GetString());
+        }
+
+        foreach (var view in await CustomerViewsAsync(order.Customer, order.BookingId))
+        {
+            Assert.Equal("STAFF", view.GetProperty("cancelSource").GetString());
+            Assert.Equal(JsonValueKind.Null, view.GetProperty("cancelledByName").ValueKind);
+        }
+    }
+
+    [Fact]
+    [Trait("Catalog", "BE-IT-23")]
+    public async Task ManagerRejects_StaffEndpointsShowTheManagerName_CustomerDoesNot()
+    {
+        var tadss = await GetTadssAsync();
+        using var _ = await UseTadssAsync();
+        var pending = await CreatePendingApprovalAsync(tadss);
+        var manager = await SeedManagerAsync(pending.Court.BranchId);
+        await WithDbAsync(db => db.Users.Where(u => u.Id == manager.Id).ExecuteUpdateAsync(s => s.SetProperty(u => u.FullName, "Trần Thị Quản Lý")));
+        tadss.ReplyOverride(pending.DecisionId, "REJECT", manager.Id.ToString(), Reason);
+        var managerClient = await CreateClientForAsync(manager);
+
+        await AssertApiStatusAsync(HttpStatusCode.OK, await RejectAsync(managerClient, pending.BookingId));
+
+        foreach (var view in await StaffViewsAsync(managerClient, pending.BookingId))
+        {
+            Assert.Equal("STAFF", view.GetProperty("cancelSource").GetString());
+            Assert.Equal("Trần Thị Quản Lý", view.GetProperty("cancelledByName").GetString());
+            Assert.Equal("APPROVAL_REJECTED", view.GetProperty("cancelReason").GetString());
+        }
+        foreach (var view in await CustomerViewsAsync(pending.Customer, pending.BookingId))
+            Assert.Equal(JsonValueKind.Null, view.GetProperty("cancelledByName").ValueKind);
+    }
+
+    [Theory]
+    [Trait("Catalog", "BE-IT-23")]
+    [InlineData(false, "CUSTOMER")]
+    [InlineData(true, "LINK")]
+    public async Task CustomerOrLinkCancel_ShowsTheSourceAndNoStaffName(bool byLink, string expectedSource)
+    {
+        await EnsureCancelPoliciesAsync();
+        var order = await BookDepositPaidAsync();
+        var call = byLink
+            ? await LinkCancelAsync(await GiveCancelLinkAsync(order.BookingId))
+            : await CustomerCancelAsync(order.Customer, order.BookingId);
+        await AssertApiStatusAsync(HttpStatusCode.OK, call);
+
+        var staff = await SeedStaffAsync(order.Court.BranchId);
+        foreach (var view in (await StaffViewsAsync(await CreateClientForAsync(staff), order.BookingId))
+                 .Concat(await CustomerViewsAsync(order.Customer, order.BookingId)))
+        {
+            Assert.Equal(expectedSource, view.GetProperty("cancelSource").GetString());
+            Assert.Equal(JsonValueKind.Null, view.GetProperty("cancelledByName").ValueKind);
+            Assert.Equal("CUSTOMER_CANCELLED", view.GetProperty("cancelReason").GetString());
+        }
+    }
+
+    [Fact]
+    [Trait("Catalog", "BE-IT-23")]
+    public async Task ActiveBooking_HasNullCancelSourceAndCanceller()
+    {
+        var order = await BookPendingAsync();
+        var staff = await SeedStaffAsync(order.Court.BranchId);
+
+        foreach (var view in (await StaffViewsAsync(await CreateClientForAsync(staff), order.BookingId))
+                 .Concat(await CustomerViewsAsync(order.Customer, order.BookingId)))
+        {
+            Assert.Equal(JsonValueKind.Null, view.GetProperty("cancelSource").ValueKind);
+            Assert.Equal(JsonValueKind.Null, view.GetProperty("cancelledByName").ValueKind);
+        }
     }
 
     // ───────────────────────── BE-IT-10: hoàn tiền theo chính sách ─────────────────────────

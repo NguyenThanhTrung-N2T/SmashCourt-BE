@@ -149,6 +149,141 @@ public class BookingServiceDepositDtoTests
         Assert.Equal(reason.ToString(), dto.CancelReason);
     }
 
+    // ───────────────────────── Ai hủy (P6-31): nguồn hủy cho mọi người, tên người hủy chỉ cho nhân viên ─────────────────────────
+
+    private static Booking CancelledBy(CancelSourceEnum source, BookingCancelReason? reason, User? cancelledBy = null, Guid? customerId = null)
+    {
+        var booking = Booking(BookingStatus.CANCELLED, cancelReason: reason, customerId: customerId);
+        booking.CancelSource = source;
+        booking.CancelledBy = cancelledBy?.Id;
+        booking.CancelledByUser = cancelledBy;
+        return booking;
+    }
+
+    [Theory]
+    [InlineData(CancelSourceEnum.CUSTOMER, BookingCancelReason.CUSTOMER_CANCELLED)]
+    [InlineData(CancelSourceEnum.LINK, BookingCancelReason.CUSTOMER_CANCELLED)]
+    [InlineData(CancelSourceEnum.STAFF, BookingCancelReason.STAFF_CANCELLED)]
+    [InlineData(CancelSourceEnum.STAFF, BookingCancelReason.APPROVAL_REJECTED)]
+    [InlineData(CancelSourceEnum.SYSTEM, BookingCancelReason.PAYMENT_EXPIRED)]
+    [InlineData(CancelSourceEnum.SYSTEM, BookingCancelReason.APPROVAL_EXPIRED)]
+    [InlineData(CancelSourceEnum.SYSTEM, BookingCancelReason.POLICY_REJECTED)]
+    [InlineData(CancelSourceEnum.SYSTEM, BookingCancelReason.SYSTEM_CLEANUP)]
+    public async Task CancelledBooking_ShowsItsCancelSource(CancelSourceEnum source, BookingCancelReason reason)
+    {
+        var dto = await StaffGetByIdAsync(CancelledBy(source, reason));
+
+        Assert.Equal(source.ToString(), dto.CancelSource);
+        Assert.Equal(reason.ToString(), dto.CancelReason);
+    }
+
+    [Fact]
+    public async Task CancelledBeforePhase6_HasCancelSourceWithoutCancelReason()
+    {
+        // Cột cancel_reason mới có từ Phase 6; đơn hủy cũ chỉ có cancel_source, FE vẫn biết ai hủy
+        var dto = await StaffGetByIdAsync(CancelledBy(CancelSourceEnum.LINK, reason: null));
+
+        Assert.Equal("LINK", dto.CancelSource);
+        Assert.Null(dto.CancelReason);
+    }
+
+    [Fact]
+    public async Task ActiveBooking_HasNoCancelSourceAndNoCanceller()
+    {
+        var dto = await StaffGetByIdAsync(Booking(BookingStatus.PAID_ONLINE, rate: 0.3m, amount: 68_400m, source: DepositSource.TADSS));
+
+        Assert.Null(dto.CancelSource);
+        Assert.Null(dto.CancelledByName);
+    }
+
+    [Theory]
+    [InlineData(BookingCancelReason.STAFF_CANCELLED)]
+    [InlineData(BookingCancelReason.APPROVAL_REJECTED)]
+    public async Task StaffDetails_ShowTheNameOfTheStaffWhoCancelled(BookingCancelReason reason)
+    {
+        var staff = TestDataFactory.CreateUser(fullName: "Trần Thị Quản Lý", role: UserRole.BRANCH_MANAGER);
+        var booking = CancelledBy(CancelSourceEnum.STAFF, reason, staff);
+        var builder = new BookingServiceTestBuilder();
+        builder.BookingRepository.Setup(x => x.GetByIdWithDetailsAsync(booking.Id)).ReturnsAsync(booking);
+        builder.UserBranchRepository.Setup(x => x.IsUserInBranchAsync(It.IsAny<Guid>(), booking.BranchId)).ReturnsAsync(true);
+
+        var dto = await builder.Build().GetDetailsByIdAsync(booking.Id, Guid.NewGuid(), UserRole.STAFF.ToString());
+
+        Assert.Equal("Trần Thị Quản Lý", dto.CancelledByName);
+        Assert.Equal("STAFF", dto.CancelSource);
+    }
+
+    [Fact]
+    public async Task StaffList_ShowsTheNameOfTheStaffWhoCancelled()
+    {
+        var staff = TestDataFactory.CreateUser(fullName: "Nguyễn Văn Nhân Viên", role: UserRole.STAFF);
+        var booking = CancelledBy(CancelSourceEnum.STAFF, BookingCancelReason.STAFF_CANCELLED, staff);
+        var builder = new BookingServiceTestBuilder();
+        builder.BookingRepository.Setup(x => x.GetAllAsync(It.IsAny<BookingListQuery>(), It.IsAny<string>(), It.IsAny<Guid>()))
+            .ReturnsAsync(new PagedResult<Booking> { Items = [booking], Page = 1, PageSize = 10, TotalItems = 1 });
+
+        var page = await builder.Build().GetAllAsync(new BookingListQuery(), Guid.NewGuid(), UserRole.OWNER.ToString());
+
+        Assert.Equal("Nguyễn Văn Nhân Viên", Assert.Single(page.Items).CancelledByName);
+    }
+
+    [Theory]
+    [InlineData(CancelSourceEnum.CUSTOMER)]
+    [InlineData(CancelSourceEnum.LINK)]
+    [InlineData(CancelSourceEnum.SYSTEM)]
+    public async Task NotCancelledByStaff_HasNoCancellerName(CancelSourceEnum source)
+    {
+        // Khách, link và job không ghi cancelled_by: nguồn hủy đã đủ nói ai hủy
+        var dto = await StaffGetByIdAsync(CancelledBy(source, BookingCancelReason.CUSTOMER_CANCELLED));
+
+        Assert.Null(dto.CancelledByName);
+    }
+
+    [Fact]
+    public async Task CustomerDetails_ShowCancelSource_ButHideTheStaffName()
+    {
+        var customerId = Guid.NewGuid();
+        var staff = TestDataFactory.CreateUser(fullName: "Trần Thị Quản Lý", role: UserRole.BRANCH_MANAGER);
+        var booking = CancelledBy(CancelSourceEnum.STAFF, BookingCancelReason.APPROVAL_REJECTED, staff, customerId);
+        var builder = new BookingServiceTestBuilder();
+        builder.BookingRepository.Setup(x => x.GetByIdWithDetailsAsync(booking.Id)).ReturnsAsync(booking);
+
+        var dto = await builder.Build().GetDetailsByIdAsync(booking.Id, customerId, UserRole.CUSTOMER.ToString());
+
+        Assert.Equal("STAFF", dto.CancelSource);
+        Assert.Null(dto.CancelledByName);
+    }
+
+    [Fact]
+    public async Task CustomerHistory_ShowsCancelSource_ButHidesTheStaffName()
+    {
+        var customerId = Guid.NewGuid();
+        var staff = TestDataFactory.CreateUser(fullName: "Nguyễn Văn Nhân Viên", role: UserRole.STAFF);
+        var booking = CancelledBy(CancelSourceEnum.STAFF, BookingCancelReason.STAFF_CANCELLED, staff, customerId);
+        var builder = new BookingServiceTestBuilder();
+        builder.BookingRepository.Setup(x => x.GetByCustomerIdAsync(customerId, It.IsAny<BookingListQuery>()))
+            .ReturnsAsync(new PagedResult<Booking> { Items = [booking], Page = 1, PageSize = 10, TotalItems = 1 });
+
+        var dto = Assert.Single((await builder.Build().GetMyBookingsAsync(customerId, new BookingListQuery())).Items);
+
+        Assert.Equal("STAFF", dto.CancelSource);
+        Assert.Null(dto.CancelledByName);
+    }
+
+    [Fact]
+    public async Task GetById_WithCustomerRole_HidesTheStaffName()
+    {
+        var customerId = Guid.NewGuid();
+        var staff = TestDataFactory.CreateUser(fullName: "Nguyễn Văn Nhân Viên", role: UserRole.STAFF);
+        var booking = CancelledBy(CancelSourceEnum.STAFF, BookingCancelReason.STAFF_CANCELLED, staff, customerId);
+        var builder = new BookingServiceTestBuilder();
+        builder.BookingRepository.Setup(x => x.GetByIdWithDetailsAsync(booking.Id)).ReturnsAsync(booking);
+
+        var dto = await builder.Build().GetByIdAsync(booking.Id, customerId, UserRole.CUSTOMER.ToString());
+
+        Assert.Null(dto.CancelledByName);
+    }
+
     [Fact]
     public async Task RejectedByPolicy_KeepsNoDepositFields()
     {

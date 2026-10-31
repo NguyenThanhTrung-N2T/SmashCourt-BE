@@ -224,7 +224,7 @@ namespace SmashCourt_BE.Services
 
             return new PagedResult<BookingDto>
             {
-                Items = pagedResult.Items.Select(b => MapToDto(b, includeApprovalReasons: false)),
+                Items = pagedResult.Items.Select(b => MapToDto(b, includeStaffOnlyFields: false)),
                 TotalItems = pagedResult.TotalItems,
                 Page = pagedResult.Page,
                 PageSize = pagedResult.PageSize
@@ -249,7 +249,7 @@ namespace SmashCourt_BE.Services
                     throw new AppException(403,
                         "Bạn không có quyền xem đơn này", ErrorCodes.Forbidden);
 
-                return MapToDetailDto(booking, includeApprovalReasons: false);
+                return MapToDetailDto(booking, includeStaffOnlyFields: false);
             }
 
             // MANAGER/STAFF chỉ xem chi nhánh mình
@@ -263,7 +263,7 @@ namespace SmashCourt_BE.Services
                         "Bạn không có quyền xem đơn này", ErrorCodes.Forbidden);
             }
 
-            return MapToDetailDto(booking, includeApprovalReasons: true);
+            return MapToDetailDto(booking, includeStaffOnlyFields: true);
         }
         // ────────────────────────────────────────────────────────────────────────────
         // 1. CreateOnlineAsync
@@ -966,7 +966,7 @@ namespace SmashCourt_BE.Services
                         "Failed to send SignalR notification for walk-in booking {BookingId}", result.Id);
             }
 
-            return MapToDto(result!, includeApprovalReasons: true);
+            return MapToDto(result!, includeStaffOnlyFields: true);
         }
         // Thu tiền cho booking đang chờ (PENDING_PAYMENT) và hoàn tất đơn
         public async Task CollectPaymentAsync(Guid id, Guid currentUserId, string currentUserRole)
@@ -1333,7 +1333,7 @@ namespace SmashCourt_BE.Services
                 _logger.LogError(ex, "Failed to send SignalR notification for service addition to booking {BookingId}", booking.Id);
             }
 
-            return MapToDto(result!, includeApprovalReasons: true);
+            return MapToDto(result!, includeStaffOnlyFields: true);
         }
 
         // Xóa dịch vụ khỏi booking, chỉ cho phép xóa khi booking đang active và invoice chưa thanh toán đủ
@@ -1375,7 +1375,7 @@ namespace SmashCourt_BE.Services
 
                 // Query lại booking và return (operation đã thành công trước đó)
                 var currentBooking = await _bookingRepo.GetByIdWithDetailsAsync(id);
-                return MapToDto(currentBooking!, includeApprovalReasons: true);
+                return MapToDto(currentBooking!, includeStaffOnlyFields: true);
             }
 
             using (var transaction = TransactionScopeHelper.ReadCommitted())
@@ -1461,7 +1461,7 @@ namespace SmashCourt_BE.Services
                 _logger.LogError(ex, "Failed to send SignalR notification for service removal from booking {BookingId}", booking.Id);
             }
 
-            return MapToDto(result!, includeApprovalReasons: true);
+            return MapToDto(result!, includeStaffOnlyFields: true);
         }
 
         /// <summary>
@@ -1962,11 +1962,11 @@ namespace SmashCourt_BE.Services
             }
         }
 
-        // Lý do cần duyệt chỉ hiện cho nhân viên; khách luôn nhận null
+        // Lý do cần duyệt và tên người hủy chỉ hiện cho nhân viên; khách luôn nhận null
         private static bool IsStaffView(string userRole) => userRole != UserRole.CUSTOMER.ToString();
 
-        // Trường cọc, hạn duyệt, lý do cần duyệt, lý do hủy dùng chung cho hai hàm map
-        private static BookingDto WithDepositFields(BookingDto dto, Booking b, bool includeApprovalReasons)
+        // Trường cọc, hạn duyệt, lý do cần duyệt, lý do / nguồn / người hủy dùng chung cho hai hàm map
+        private static BookingDto WithDepositFields(BookingDto dto, Booking b, bool includeStaffOnlyFields)
         {
             var deposit = DepositFieldsMapper.FromInvoice(b.Status, b.Invoice);
             dto.DepositRate = deposit?.Rate;
@@ -1974,14 +1974,16 @@ namespace SmashCourt_BE.Services
             dto.RemainingAmount = deposit?.RemainingAmount;
             dto.DepositSource = deposit?.Source.ToString();
             dto.ApprovalExpiresAt = b.ApprovalExpiresAt;
-            dto.ApprovalReasonCode = includeApprovalReasons ? b.ApprovalReasonCode : null;
-            dto.ApprovalReasons = includeApprovalReasons ? b.ApprovalReasons?.ToList() : null;
+            dto.ApprovalReasonCode = includeStaffOnlyFields ? b.ApprovalReasonCode : null;
+            dto.ApprovalReasons = includeStaffOnlyFields ? b.ApprovalReasons?.ToList() : null;
             dto.CancelReason = b.CancelReason?.ToString();
+            dto.CancelSource = b.CancelSource?.ToString();
+            dto.CancelledByName = includeStaffOnlyFields ? b.CancelledByUser?.FullName : null;
             return dto;
         }
 
         // map data từ entity Booking sang DTO BookingDto, bao gồm courts, price items và services
-        private static BookingDto MapToDto(Booking b, bool includeApprovalReasons) => WithDepositFields(new BookingDto
+        private static BookingDto MapToDto(Booking b, bool includeStaffOnlyFields) => WithDepositFields(new BookingDto
         {
             Id = b.Id,
             BookingCode = b.BookingCode,
@@ -2027,8 +2029,8 @@ namespace SmashCourt_BE.Services
                 Quantity = bs.Quantity,
                 Total = bs.UnitPrice * bs.Quantity
             }).ToList() ?? []
-        }, b, includeApprovalReasons);
-        private static BookingDto MapToDetailDto(Booking b, bool includeApprovalReasons) => WithDepositFields(new BookingDto
+        }, b, includeStaffOnlyFields);
+        private static BookingDto MapToDetailDto(Booking b, bool includeStaffOnlyFields) => WithDepositFields(new BookingDto
         {
             Id = b.Id,
             BookingCode = b.BookingCode,
@@ -2093,7 +2095,7 @@ namespace SmashCourt_BE.Services
                 Quantity = bs.Quantity,
                 Total = bs.UnitPrice * bs.Quantity
             }).ToList() ?? []
-        }, b, includeApprovalReasons);
+        }, b, includeStaffOnlyFields);
 
         // Bỏ dấu tiếng Việt để dùng trong vnp_OrderInfo (VNPay không chấp nhận Unicode)
         // RemoveDiacritics moved to StringHelper

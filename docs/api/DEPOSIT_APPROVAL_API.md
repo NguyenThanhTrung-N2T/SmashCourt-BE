@@ -117,6 +117,8 @@ Thêm vào `BookingDto` (mọi endpoint đang trả `BookingDto`) và `OnlineBoo
 | `approvalExpiresAt` | string \| null | Booking từng ở `PENDING_APPROVAL` | Hạn Manager duyệt (giờ VN, `dd/MM/yyyy HH:mm:ss`), lấy từ `approvalExpiresAt` của TADSS. Giữ lại sau khi duyệt/hủy để tra cứu |
 | `approvalReasonCode`, `approvalReasons` | string \| null, string[] \| null | Chỉ endpoint của **nhân viên** và hàng chờ, booking từng ở `PENDING_APPROVAL` | `reasonCode`/`reasons` của TADSS vì sao cần duyệt (Q6). Endpoint của khách luôn trả `null` |
 | `cancelReason` | string \| null | Booking đã hủy | `PAYMENT_EXPIRED` \| `APPROVAL_EXPIRED` \| `APPROVAL_REJECTED` \| `POLICY_REJECTED` \| `CUSTOMER_CANCELLED` \| `STAFF_CANCELLED` \| `SYSTEM_CLEANUP` (P6-04). FE hiển thị lý do hủy theo giá trị này |
+| `cancelSource` | string \| null | Booking đã hủy | Ai hủy (P6-31): `CUSTOMER` (khách hủy trong app) \| `LINK` (link hủy trong email) \| `STAFF` (nhân viên hủy hoặc Manager từ chối) \| `SYSTEM` (job hết hạn, dọn đơn dở dang, TADSS từ chối lúc đặt). Có cả ở đơn hủy trước Phase 6 (khi đó `cancelReason` là `null`). FE hiển thị "ai hủy" theo trường này, không tự suy từ `cancelReason` |
+| `cancelledByName` | string \| null | Đơn do nhân viên hủy hoặc Manager từ chối, **chỉ endpoint nhân viên** | Họ tên người đã hủy / từ chối (cột `cancelled_by`), để tra cứu khi cần (P6-31). Endpoint của khách luôn `null`; đơn do khách, link hay job hủy luôn `null` (không ghi người hủy) |
 
 Quy tắc chung:
 
@@ -155,7 +157,9 @@ Ví dụ `BookingDto` (chỉ trích các trường liên quan; các trường kh
     "approvalExpiresAt": "18/11/2026 09:45:00",
     "approvalReasonCode": "NO_SHOW_HISTORY_REVIEW",
     "approvalReasons": ["Khách có 3 lần không đến (ngưỡng 2)."],
-    "cancelReason": null
+    "cancelReason": null,
+    "cancelSource": null,
+    "cancelledByName": null
   },
   "errors": null
 }
@@ -301,8 +305,8 @@ Không đổi route, request, policy; `BookingDto` thêm các trường ở 2.2.
 
 | Endpoint | Ai | Thay đổi |
 | :--- | :--- | :--- |
-| `GET /api/me/bookings`, `GET /api/me/bookings/{id}` | Khách | Thêm trường cọc và `cancelReason`; `approvalReasonCode`/`approvalReasons` luôn `null`. Trang chờ duyệt của khách tải lại endpoint này khi nhận `BookingApprovalResolved` |
-| `GET /api/bookings`, `GET /api/bookings/{bookingId}`, `GET /api/bookings/details/{id}` | Nhân viên | Thêm trường cọc, lý do cần duyệt và `cancelReason`; lọc được `status=PENDING_APPROVAL` |
+| `GET /api/me/bookings`, `GET /api/me/bookings/{id}` | Khách | Thêm trường cọc, `cancelReason` và `cancelSource`; `approvalReasonCode`/`approvalReasons`/`cancelledByName` luôn `null`. Trang chờ duyệt của khách tải lại endpoint này khi nhận `BookingApprovalResolved` |
+| `GET /api/bookings`, `GET /api/bookings/{bookingId}`, `GET /api/bookings/details/{id}` | Nhân viên | Thêm trường cọc, lý do cần duyệt, `cancelReason`, `cancelSource` và `cancelledByName`; lọc được `status=PENDING_APPROVAL` |
 | `POST /api/bookings/walk-in` | Nhân viên | Response `BookingDto` có trường cọc `null` (không gọi TADSS) |
 
 ### 3.3. `POST /api/me/bookings/{id}/retry-payment`
@@ -349,7 +353,7 @@ Không đổi route (`GET /api/payments/vnpay/ipn`, `/callback`, `POST /confirm`
   | `true` | trạng thái hủy khác (`CANCELLED` khi IPN chưa về, `CANCELLED_REFUNDED`, hoặc khoản này chưa ghi) | "Đơn đặt sân đã bị hủy. Hệ thống đang đối soát giao dịch này, vui lòng xem chi tiết trong lịch sử đặt sân." (không hứa hoàn) |
   | `true` | khác hoặc `null` | "Đã nhận kết quả thanh toán, vui lòng xem trạng thái trong lịch sử đặt sân." |
 
-  FE rẽ nhánh theo `bookingStatus` (spec Phase 6 Mục 8.2); `PENDING` thì hỏi lại `GET /api/me/bookings/{bookingId}` mỗi 2–3 giây tới 60 giây. Trường cũ giữ nguyên nghĩa (thêm trường, không phá hợp đồng).
+  Response đầy đủ (`VnPayReturnResult`): `isSuccess`, `message`, `bookingId`, `bookingCode`, `transactionRef`, `amount`, `responseCode` (mã VNPay dạng chuỗi, `"00"` là thành công; có từ trước Phase 6 nhưng type FE `PaymentConfirmationDto` chưa khai báo), `bookingStatus` (P6-28). Màn thất bại chọn câu và nút theo `responseCode` (`"24"` khách hủy, `"79"`/`"13"` sai OTP, `"15"` link quá hạn ⇒ nút "Thanh toán lại"). FE rẽ nhánh theo `bookingStatus` (spec Phase 6 Mục 8.2); `PENDING` thì hỏi lại `GET /api/me/bookings/{bookingId}` mỗi 2–3 giây tới 60 giây. Trường cũ giữ nguyên nghĩa (thêm trường, không phá hợp đồng).
 - **Số liệu sandbox (28/10, spec Phase 6 Mục 10.1 bước 2):** IPN thành công tới BE sau 4–11 giây, thường trước khi trình duyệt quay về; khách bấm "Hủy thanh toán" ⇒ IPN mã `24`; sai OTP quá số lần ⇒ IPN mã `79` (tới sau khoảng 53 giây). Trang VNPay hiện sống khoảng 15 phút từ lúc mở, dài hơn hạn giữ chỗ 10 phút, nên khách trả được sau khi đơn đã hủy (đã tái hiện; BE ghi chờ hoàn đúng như trên). Từ 6A-6 (P6-27) link hết hạn trước `expiresAt` một khoảng đệm; quá hạn thì VNPay hiện trang lỗi riêng và **không quay về FE**, nên FE khóa nút thanh toán khi gần hết hạn.
 - **Khách trả hai link cho cùng một đơn** (chốt 24/10): khoản trả sau vẫn được ghi nhận (Payment `SUCCESS`), đơn không đổi; khoản thừa được trừ vào số thu tại quầy khi check-out (`remainingAmount` tính trên số đã thu). Vượt cả tổng đơn thì check-out thu 0 và chi nhánh hoàn tiền mặt phần thừa.
 
@@ -851,5 +855,7 @@ Sau khi lần theo luồng thực tế FE → BE trên mã hiện có, nhóm ch�
 | P6-23 | Khách không tự hủy khi đã tới giờ bắt đầu (chốt 19/10/2026) | 3.4, 5, 7 |
 | P6-24 | `NEED_APPROVAL` có hạn duyệt đã qua lúc BE ghi đơn hoặc sau giờ chơi ⇒ cọc 100 % như nhánh (d) (chốt 27/10/2026, 6A-5) | 3.1 (d) |
 | P6-27 | Link thanh toán có hạn theo hạn đơn (chốt 27/10/2026, 6A-6; đã thử sandbox VNPay 28/10) | 3.3, 3.6 |
+| P6-28 | `POST /api/payments/vnpay/confirm` trả thêm `bookingStatus`; FE rẽ nhánh theo trạng thái đơn, không theo `isSuccess` (chốt 29/10/2026, 6A-6) | 3.6 |
+| P6-31 | `BookingDto` thêm `cancelSource` (ai hủy, mọi endpoint) và `cancelledByName` (tên nhân viên hủy / Manager từ chối, chỉ endpoint nhân viên) để hiển thị và tra cứu rõ ràng (chốt 31/10/2026) | 2.2, 3.2 |
 
 Mã lỗi mới: `PAYMENT_HOLD_EXPIRED`, `BOOKING_ALREADY_STARTED` (Mục 5). Không đổi hợp đồng BE ↔ TADSS.

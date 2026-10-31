@@ -65,7 +65,7 @@ public sealed class HttpDepositDtoJsonTests(PostgreSqlIntegrationFixture databas
         foreach (var key in new[]
                  {
                      "depositRate", "depositAmount", "remainingAmount", "depositSource", "approvalExpiresAt", "approvalReasonCode",
-                     "approvalReasons", "cancelReason"
+                     "approvalReasons", "cancelReason", "cancelSource", "cancelledByName"
                  })
             Assert.Equal(JsonValueKind.Null, data.GetProperty(key).ValueKind);
     }
@@ -78,7 +78,7 @@ public sealed class HttpDepositDtoJsonTests(PostgreSqlIntegrationFixture databas
             BookingCode = "BK", BranchName = "CN", Status = "PAID_ONLINE", Source = "ONLINE", PaymentStatus = "PARTIALLY_PAID",
             DepositRate = 0.3m, DepositAmount = 68_400m, RemainingAmount = 159_600m, DepositSource = "MANAGER",
             ApprovalReasonCode = "NO_SHOW_HISTORY_REVIEW", ApprovalReasons = ["Khách có 3 lần không đến (ngưỡng 2)."],
-            CancelReason = null
+            CancelReason = "APPROVAL_REJECTED", CancelSource = "STAFF", CancelledByName = "Trần Thị Quản Lý"
         });
 
         Assert.Equal(0.3m, data.GetProperty("depositRate").GetDecimal());
@@ -87,5 +87,8 @@ public sealed class HttpDepositDtoJsonTests(PostgreSqlIntegrationFixture databas
         Assert.Equal("MANAGER", data.GetProperty("depositSource").GetString());
         Assert.Equal(JsonValueKind.Array, data.GetProperty("approvalReasons").ValueKind);
         Assert.Equal("Khách có 3 lần không đến (ngưỡng 2).", data.GetProperty("approvalReasons")[0].GetString());
+        Assert.Equal("APPROVAL_REJECTED", data.GetProperty("cancelReason").GetString());
+        Assert.Equal("STAFF", data.GetProperty("cancelSource").GetString());
+        Assert.Equal("Trần Thị Quản Lý", data.GetProperty("cancelledByName").GetString());
     }
 }

@@ -133,6 +133,28 @@ public sealed class ExpiryJobFlowTests(PostgreSqlIntegrationFixture database, Ht
 
     [Fact]
     [Trait("Catalog", "BE-IT-21")]
+    public async Task PaymentExpiry_ApiShowsTheSystemCancelledWithNoStaffName()
+    {
+        // P6-31: job không ghi cancelled_by; nhân viên và khách đều thấy nguồn SYSTEM, không có tên người hủy
+        var order = await BookPendingAsync();
+        await ExpirePaymentWindowAsync(order.BookingId);
+        await RunPaymentExpiryJobAsync();
+        var staff = await SeedStaffAsync(order.Court.BranchId);
+
+        var staffView = await SendAsync((await CreateClientForAsync(staff)).GetAsync($"/api/bookings/details/{order.BookingId}"));
+        var customerView = await SendAsync((await CustomerClientAsync(order.Customer)).GetAsync($"/api/me/bookings/{order.BookingId}"));
+
+        foreach (var view in new[] { staffView, customerView })
+        {
+            await AssertApiStatusAsync(HttpStatusCode.OK, view);
+            Assert.Equal("SYSTEM", view.DataString("cancelSource"));
+            Assert.Equal("PAYMENT_EXPIRED", view.DataString("cancelReason"));
+            Assert.Null(view.DataString("cancelledByName"));
+        }
+    }
+
+    [Fact]
+    [Trait("Catalog", "BE-IT-21")]
     public async Task PaymentExpiry_PendingLinkOrder_ExpiresEverythingAndSendsNoCustomerEmail()
     {
         var order = await BookPendingAsync();
