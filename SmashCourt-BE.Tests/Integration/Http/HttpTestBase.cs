@@ -1,20 +1,73 @@
 using System.Net.Http.Headers;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using SmashCourt_BE.Data;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Services.IService;
+using SmashCourt_BE.Tests.Integration.Invariants;
 
 namespace SmashCourt_BE.Tests.Integration.Http;
 
 /// <summary>
 /// Nền cho test HTTP: gọi endpoint thật của BE trên database riêng. Dữ liệu commit thật (không rollback) nên mỗi test seed định danh
 /// mới (GUID), không đếm cả bảng và không phụ thuộc thứ tự test (B5).
+/// Sau mỗi test tự chạy bộ kiểm SC6 (BE-IT-20, plan 6A-6 Task 10) trên các đơn test sinh ra hoặc sửa: mọi luồng HTTP (đặt, duyệt, hủy,
+/// IPN, job, check-out) tự được kiểm mà không phụ thuộc thứ tự test. Phạm vi so với ảnh chụp (id, updated_at) lúc test bắt đầu, không so
+/// theo đồng hồ, nên đơn test trước vừa sửa không lọt sang test sau.
 /// </summary>
 [Collection(IntegrationTestCollection.Name)]
-public abstract class HttpTestBase(PostgreSqlIntegrationFixture database, HttpTestHostFixture host)
+public abstract class HttpTestBase(PostgreSqlIntegrationFixture database, HttpTestHostFixture host) : IAsyncLifetime
 {
+    private Dictionary<Guid, DateTime> _bookingsAtStart = [];
+
     protected HttpTestHostFixture Host { get; } = host;
+
+    /// <summary>
+    /// Chỉ override khi test <b>cố ý</b> để lại dữ liệu vi phạm SC6 trong DB, kèm lý do; test kiểm DB từ chối một thao tác thì không cần
+    /// (thao tác thất bại không để lại dữ liệu). Mọi test bỏ qua được liệt kê ở kết quả Task 10 của plan 6A-6.
+    /// </summary>
+    protected virtual string? SkipInvariantCheckReason => null;
+
+    /// <summary>Chụp (id, updated_at) của mọi đơn; lớp con override phải gọi base.</summary>
+    public virtual async Task InitializeAsync() => _bookingsAtStart = await ReadBookingVersionsAsync();
+
+    /// <summary>Chụp lại mốc giữa chừng: đơn đã dựng trước lời gọi này được coi là "đơn có sẵn" (chỉ dùng để test chính bộ tự kiểm).</summary>
+    protected async Task RestartInvariantScopeAsync() => _bookingsAtStart = await ReadBookingVersionsAsync();
+
+    /// <summary>Tự kiểm SC6 trên đơn test sinh ra hoặc sửa; có vi phạm thì test fail kèm danh sách. Lớp con override phải gọi base.</summary>
+    public virtual async Task DisposeAsync()
+    {
+        if (SkipInvariantCheckReason != null)
+            return;
+
+        var violations = await CheckTouchedBookingsAsync();
+        if (violations.Count > 0)
+            throw new InvariantViolationException(violations);
+    }
+
+    /// <summary>
+    /// Đơn mới sinh trong test ∪ đơn có sẵn mà <c>updated_at</c> đã đổi (bị test hủy, duyệt, check-out…). Đường ghi đổi trạng thái
+    /// hoặc dữ liệu giữ sân mà không ghi <c>updated_at</c> sẽ lọt khỏi phạm vi: rà ở R30 (plan 6A-6 Task 10).
+    /// </summary>
+    protected async Task<IReadOnlyCollection<Guid>> TouchedBookingIdsAsync()
+    {
+        var now = await ReadBookingVersionsAsync();
+        return now
+            .Where(b => !_bookingsAtStart.TryGetValue(b.Key, out var updatedAt) || updatedAt != b.Value)
+            .Select(b => b.Key)
+            .ToHashSet();
+    }
+
+    /// <summary>Bộ kiểm SC6 trên phạm vi tự kiểm, "now" là đồng hồ hệ thống như host.</summary>
+    protected async Task<IReadOnlyList<InvariantViolation>> CheckTouchedBookingsAsync()
+    {
+        var scope = await TouchedBookingIdsAsync();
+        return await WithDbAsync(db => BookingInvariantChecker.CheckAsync(db, BookingScope.Of(scope), DateTime.UtcNow));
+    }
+
+    private Task<Dictionary<Guid, DateTime>> ReadBookingVersionsAsync() =>
+        WithDbAsync(db => db.Bookings.AsNoTracking().Select(b => new { b.Id, b.UpdatedAt }).ToDictionaryAsync(b => b.Id, b => b.UpdatedAt));
 
     protected Task<SmashCourtWebApplicationFactory> GetFactoryAsync() => Host.GetAsync(database);
 

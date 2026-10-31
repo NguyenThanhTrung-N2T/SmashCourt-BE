@@ -260,7 +260,10 @@ public sealed class HttpTadssIntegrationTests(PostgreSqlIntegrationFixture datab
             var createdAt = DateTime.UtcNow;
             var booking = SmashCourt_BE.Tests.Integration.TestDataSeeder.NewBooking(seed.Branch.Id, customer.Id, BookingStatus.PENDING, createdAt);
             db.Bookings.Add(booking);
-            db.Invoices.Add(SmashCourt_BE.Tests.Integration.TestDataSeeder.NewInvoice(booking, finalTotal));
+            var invoice = SmashCourt_BE.Tests.Integration.TestDataSeeder.NewInvoice(booking, finalTotal);
+            invoice.ExpiresAt = createdAt.AddMinutes(10);
+            invoice.HoldDeadline = createdAt.AddMinutes(15); // transaction 1 luôn ghi (SC6 Phụ-2)
+            db.Invoices.Add(invoice);
             db.BookingCourts.Add(SmashCourt_BE.Tests.Integration.TestDataSeeder.NewBookingCourt(
                 booking.Id, seed.Court.Id, DateOnly.FromDateTime(createdAt.AddDays(3)), new TimeOnly(18, 0), new TimeOnly(19, 0)));
             await db.SaveChangesAsync();

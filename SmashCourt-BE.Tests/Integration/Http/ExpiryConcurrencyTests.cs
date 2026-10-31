@@ -38,6 +38,13 @@ public sealed class ExpiryConcurrencyTests(PostgreSqlIntegrationFixture database
 
         public Task CommitAsync() => transaction.CommitAsync();
 
+        // Phần còn lại của lõi hủy như BookingCancellationService (sau câu điều kiện): nhả sân và slot lock (SC6-3)
+        public async Task ReleaseCourtsLikeTheCancellationServiceAsync(Guid bookingId)
+        {
+            await Bookings.UpdateCourtActiveStatusAsync(bookingId, false);
+            await new SlotLockRepository(db).DeleteByBookingIdAsync(bookingId);
+        }
+
         public async ValueTask DisposeAsync()
         {
             await transaction.DisposeAsync();
@@ -280,6 +287,7 @@ public sealed class ExpiryConcurrencyTests(PostgreSqlIntegrationFixture database
             var now = DateTime.UtcNow;
             Assert.Equal(1, await a.Bookings.CancelWithStatusCheckAsync(order.BookingId, [BookingStatus.PAID_ONLINE],
                 BookingStatus.CANCELLED_PENDING_REFUND, CancelSourceEnum.STAFF, BookingCancelReason.STAFF_CANCELLED, staff.Id, now));
+            await a.ReleaseCourtsLikeTheCancellationServiceAsync(order.BookingId);
             a.Db.Refunds.Add(new Refund
             {
                 Id = Guid.NewGuid(), PaymentId = payment.Id, Amount = payment.Amount, RefundPercent = 100m, Status = RefundStatus.PENDING,
@@ -429,6 +437,7 @@ public sealed class ExpiryConcurrencyTests(PostgreSqlIntegrationFixture database
             // Như lõi hủy của nhân viên: câu cập nhật có điều kiện trên booking chạy đầu tiên
             Assert.Equal(1, await a.Bookings.CancelWithStatusCheckAsync(pending.BookingId, [BookingStatus.PENDING_APPROVAL],
                 BookingStatus.CANCELLED, CancelSourceEnum.STAFF, BookingCancelReason.STAFF_CANCELLED, staff.Id, cancelledAt));
+            await a.ReleaseCourtsLikeTheCancellationServiceAsync(pending.BookingId);
             var b = await StartAsync(sp => sp.GetRequiredService<IBookingCancellationService>().ExpireApprovalAsync(pending.BookingId));
             await AssertBlockedAsync(b);
 

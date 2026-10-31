@@ -2,6 +2,7 @@ using System.Net;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using SmashCourt_BE.Models.Enums;
+using SmashCourt_BE.Repositories;
 
 namespace SmashCourt_BE.Tests.Integration.Http;
 
@@ -170,6 +171,16 @@ public sealed class ApprovalConcurrencyTests(PostgreSqlIntegrationFixture databa
                 .SetProperty(b => b.ApprovalResult, ApprovalResult.APPROVED)
                 .SetProperty(b => b.ApprovalResolvedAt, DateTime.UtcNow))
         });
+        if (change == "cancelled")
+        {
+            // Phần còn lại của lệnh hủy thật: nhả sân và slot lock (SC6-3)
+            await WithDbAsync(async db =>
+            {
+                await new BookingRepository(db).UpdateCourtActiveStatusAsync(pending.BookingId, false);
+                await new SlotLockRepository(db).DeleteByBookingIdAsync(pending.BookingId);
+                return true;
+            });
+        }
         var call = await approving;
 
         await AssertApiStatusAsync(HttpStatusCode.Conflict, call);

@@ -34,6 +34,9 @@ public sealed class PaymentLockOrderTests(PostgreSqlIntegrationFixture database,
         Assert.Equal(1, await new BookingRepository(cancelDb).CancelWithStatusCheckAsync(
             order.BookingId, [BookingStatus.PENDING], BookingStatus.CANCELLED, CancelSourceEnum.STAFF,
             BookingCancelReason.STAFF_CANCELLED, null, now));
+        // Như BookingCancellationService: nhả sân và slot lock trong cùng transaction (SC6-3)
+        await new BookingRepository(cancelDb).UpdateCourtActiveStatusAsync(order.BookingId, false);
+        await new SlotLockRepository(cancelDb).DeleteByBookingIdAsync(order.BookingId);
 
         // Kết quả thanh toán đến đúng lúc đó
         var ipn = Task.Run(async () =>
