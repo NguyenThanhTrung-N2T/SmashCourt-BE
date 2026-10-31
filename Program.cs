@@ -30,6 +30,9 @@ using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Cấu hình cốt lõi (DB, JWT, OTP) phải có trước khi đăng ký service: thiếu thì dừng ngay, thông báo chỉ nêu tên khóa (Epic 6C, OPS-03)
+RequiredConfiguration.EnsureBlockingKeys(builder.Configuration);
+
 // TẮT EnableLegacyTimestampBehavior để làm việc với UTC thuần
 // Npgsql sẽ đọc timestamptz ra DateTime với Kind=Utc (không convert sang Local)
 // Điều này đảm bảo timestamp luôn nhất quán, không phụ thuộc vào timezone của container
@@ -185,6 +188,8 @@ builder.Services.AddSingleton<IValidateOptions<BookingPaymentSettings>, BookingP
 // Mã mới lấy "bây giờ" qua TimeProvider để test được bằng FakeTimeProvider
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddTadssIntegration(builder.Configuration);
+// /health/live, /health/ready, /health/dependencies cho Docker healthcheck và CD (Epic 6C, OPS-04)
+builder.Services.AddSmashCourtHealthChecks();
 builder.Services.AddScoped<IBookingDepositService, BookingDepositService>();
 builder.Services.AddScoped<ISlotInterestNotificationService, SlotInterestNotificationService>();
 builder.Services.AddScoped<IBookingApprovalService, BookingApprovalService>();
@@ -390,6 +395,13 @@ builder.Services.AddAuthorization(AuthorizationPolicies.Register);
 
 var app = builder.Build();
 
+// Khóa của tính năng phụ còn thiếu: chỉ cảnh báo, tính năng đó sẽ lỗi lúc dùng (Epic 6C, OPS-03)
+var missingOptionalKeys = RequiredConfiguration.MissingOptionalKeys(app.Configuration);
+if (missingOptionalKeys.Count > 0)
+{
+    app.Logger.LogWarning("Thiếu cấu hình của tính năng phụ (tính năng đó sẽ lỗi khi dùng): {Keys}", string.Join(", ", missingOptionalKeys));
+}
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -420,6 +432,7 @@ app.UseAuthorization();
 app.UseHangfireServices(app.Configuration);
 
 app.MapControllers();
+app.MapSmashCourtHealthEndpoints();
 
 // SignalR Hub endpoint
 app.MapHub<SmashCourt_BE.Hubs.NotificationHub>("/hubs/notifications");

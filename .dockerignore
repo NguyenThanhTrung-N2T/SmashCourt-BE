@@ -1,6 +1,9 @@
 **/.classpath
 **/.dockerignore
 **/.env
+# Bí mật không vào image (Epic 6C, P6-33): cấu hình riêng của máy dev truyền lúc chạy (mount chỉ đọc khi chạy local, biến môi trường khi triển khai)
+**/appsettings.Development.json
+**/appsettings.*.local.json
 **/.git
 **/.gitignore
 **/.project

@@ -84,6 +84,15 @@ public sealed class TadssStub(WireMockServer server)
 
     public Guid ReplyFallback(Guid reservationId) => ReplyWithSample("decision-result.approved-fallback.json", reservationId);
 
+    /// <summary>Giả lập <c>GET /health/live</c> của TADSS (dùng cho <c>/health/dependencies</c> của BE); <paramref name="delay"/> để thử timeout.</summary>
+    public void ReplyHealthLive(int status, TimeSpan? delay = null)
+    {
+        var response = Response.Create().WithStatusCode(status).WithBody(status == 200 ? "Healthy" : "Unhealthy");
+        if (delay != null)
+            response = response.WithDelay(delay.Value);
+        server.Given(Request.Create().WithPath("/health/live").UsingGet()).RespondWith(response);
+    }
+
     /// <summary>Trả một response tùy ý (lỗi 4xx/5xx, body hỏng...); <paramref name="retryAfter"/> là giá trị header Retry-After.</summary>
     public void Reply(int status, string? body, string contentType = "application/problem+json", string? retryAfter = null, TimeSpan? delay = null) =>
         server.Given(Request.Create().WithPath(DecisionsPath).UsingPost())
