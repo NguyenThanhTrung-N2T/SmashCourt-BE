@@ -28,6 +28,10 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore
 
+      # SEC-BE-7: package có lỗ hổng mức High/Critical (kể cả bắc cầu) hoặc không quét được ⇒ job đỏ
+      - name: Check Vulnerable Packages
+        run: bash tools/ci/check-vulnerable-packages.sh
+
       - name: Build
         run: dotnet build --no-restore --configuration Release
 
@@ -60,10 +64,30 @@ jobs:
           name: be-test-results
           path: ./TestResults
 
-      # Chỉ build Docker image khi toàn bộ tests PASS
-      - name: Build Docker image
-        uses: docker/build-push-action@v5
+  # Epic 6C (6C-2a): build image MỘT lần ⇒ kiểm (không file bí mật, non-root, nhãn revision = sha) ⇒ đẩy đúng image đó lên GHCR.
+  # Pull request: chỉ build + kiểm. Push master/develop: đẩy tag sha-<7> (bất biến, CD triển khai theo tag này) và tag nhánh.
+  image:
+    name: Docker Image (build, check, push GHCR)
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
         with:
-          context: .
-          push: false
-          tags: smashcourt-be:ci
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build, check and push image
+        env:
+          GIT_SHA: ${{ github.sha }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: bash tools/ci/build-image.sh ghcr.io/nguyenthanhtrung-n2t/smashcourt-be ${{ github.event_name == 'push' && '--push' || '' }}
