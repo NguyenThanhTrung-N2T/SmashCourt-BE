@@ -19,6 +19,8 @@ namespace SmashCourt_BE.Tests.Unit.Services;
 /// <c>REMOVED</c>/<c>EXPIRED</c>. Mỗi bước tự bắt lỗi: một bước hỏng không chặn bước sau.
 /// </summary>
 [Trait("Category", TestCategories.Email)]
+[Trait("Catalog", "BE-IT-08")]
+[Trait("Catalog", "BE-IT-21")]
 public class BookingNotificationServiceExpiryTests
 {
     private static readonly DateTimeOffset Now = new(2026, 11, 18, 3, 0, 0, TimeSpan.Zero);

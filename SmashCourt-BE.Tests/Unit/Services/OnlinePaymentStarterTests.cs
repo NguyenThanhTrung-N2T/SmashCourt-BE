@@ -14,6 +14,7 @@ namespace SmashCourt_BE.Tests.Unit.Services;
 /// Cổng nhận hạn link (P6-27); cổng không hỗ trợ hạn link thì lỗi lan ra, không có Payment (R27, plan 6A-6 Task 3).
 /// </summary>
 [Trait("Category", TestCategories.Payment)]
+[Trait("Catalog", "BE-UT-08")]
 public class OnlinePaymentStarterTests
 {
     private static readonly DateTime Now = new(2026, 11, 20, 2, 0, 0, DateTimeKind.Utc);

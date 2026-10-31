@@ -10,6 +10,7 @@ namespace SmashCourt_BE.Tests.Integration.Http;
 /// </summary>
 [Trait("Category", "Integration")]
 [Trait("Category", "Http")]
+[Trait("Catalog", "BE-IT-25")]
 public sealed class DashboardComparisonHttpTests(PostgreSqlIntegrationFixture database, HttpTestHostFixture host)
     : HttpTestBase(database, host)
 {

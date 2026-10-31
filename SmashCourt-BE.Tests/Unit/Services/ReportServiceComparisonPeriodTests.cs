@@ -13,6 +13,7 @@ namespace SmashCourt_BE.Tests.Unit.Services;
 /// khoảng đã chuẩn hóa. Mã cũ tính số ngày từ <c>ToDate 23:59:59.9999999</c> nên kỳ trước dài hơn một ngày, và đọc thẳng
 /// <c>filter.FromDate!.Value</c>/<c>ToDate!.Value</c> nên thiếu một trong hai ngày là 500. Kiểm qua khoảng mà service truyền xuống repository.
 /// </summary>
+[Trait("Catalog", "BE-IT-25")]
 public class ReportServiceComparisonPeriodTests
 {
     private static readonly Guid BranchId = Guid.NewGuid();

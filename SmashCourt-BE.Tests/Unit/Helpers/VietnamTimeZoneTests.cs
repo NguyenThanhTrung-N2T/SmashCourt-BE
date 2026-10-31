@@ -9,6 +9,7 @@ namespace SmashCourt_BE.Tests.Unit.Helpers;
 /// BE chạy trong Docker Linux.
 /// </summary>
 [TestCategory(TestCategories.Helper)]
+[Trait("Catalog", "BE-UT-12")]
 public class VietnamTimeZoneTests
 {
     [Fact]

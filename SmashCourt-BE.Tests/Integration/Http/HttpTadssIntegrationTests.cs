@@ -19,6 +19,9 @@ namespace SmashCourt_BE.Tests.Integration.Http;
 [Trait("Category", "Integration")]
 [Trait("Category", "Http")]
 [Trait("Category", "Tadss")]
+[Trait("Catalog", "BE-UT-01")]
+[Trait("Catalog", "BE-IT-04")]
+[Trait("Catalog", "BE-IT-19")]
 public sealed class HttpTadssIntegrationTests(PostgreSqlIntegrationFixture database, HttpTestHostFixture host) : HttpTestBase(database, host)
 {
     private const string EnableKey = "TadssConfig:EnableTadssDecision";

@@ -118,6 +118,7 @@ public class PaymentServiceTests
     }
 
     [Theory]
+    [Trait("Catalog", "BE-UT-13")]
     [InlineData(BookingStatus.PAID_ONLINE, PaymentTxStatus.SUCCESS, ConfirmedMessage)]
     [InlineData(BookingStatus.CONFIRMED, PaymentTxStatus.SUCCESS, ConfirmedMessage)]
     [InlineData(BookingStatus.IN_PROGRESS, PaymentTxStatus.SUCCESS, ConfirmedMessage)]
@@ -144,6 +145,7 @@ public class PaymentServiceTests
     }
 
     [Fact]
+    [Trait("Catalog", "BE-UT-13")]
     public async Task Return_RefundPromiseOnlyForCancelledStatusesFromTheSharedClassification()
     {
         // Mọi trạng thái hủy (BookingStatusTransition) đều không bao giờ nhận câu "đã xác nhận"
@@ -157,6 +159,7 @@ public class PaymentServiceTests
     }
 
     [Fact]
+    [Trait("Catalog", "BE-UT-13")]
     public async Task Return_PaymentNotFound_NoBookingStatusAndAskToCheckHistory()
     {
         var builder = new PaymentServiceTestBuilder();
@@ -171,6 +174,7 @@ public class PaymentServiceTests
     }
 
     [Theory]
+    [Trait("Catalog", "BE-UT-13")]
     [InlineData("24", BookingStatus.PENDING, "Khách hàng hủy giao dịch")]
     [InlineData("15", BookingStatus.PENDING, "Giao dịch đã quá thời gian chờ thanh toán, vui lòng tạo lại link thanh toán")]
     [InlineData("79", BookingStatus.CANCELLED, "Giao dịch vượt quá số lần nhập sai mật khẩu")]
@@ -186,6 +190,7 @@ public class PaymentServiceTests
     }
 
     [Fact]
+    [Trait("Catalog", "BE-UT-13")]
     public async Task Return_InvalidSignature_HasNoBookingStatus()
     {
         var builder = new PaymentServiceTestBuilder();

@@ -16,6 +16,7 @@ namespace SmashCourt_BE.Tests.Integration.Http;
 [Trait("Category", "Integration")]
 [Trait("Category", "Http")]
 [Trait("Category", "Payment")]
+[Trait("Catalog", "BE-IT-22")]
 public sealed class PaymentLockOrderTests(PostgreSqlIntegrationFixture database, HttpTestHostFixture host)
     : PaymentCancellationTestBase(database, host)
 {
