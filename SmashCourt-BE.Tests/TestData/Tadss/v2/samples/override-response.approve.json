@@ -1,0 +1,8 @@
+{
+  "decisionId": "0f9c7e5a-0000-4000-8000-00000000d003",
+  "action": "APPROVE",
+  "deposit": { "rate": 0.3, "amount": 68400, "currency": "VND" },
+  "actorId": "7c1d9e42-0000-4000-8000-00000000a001",
+  "reason": "Khách quen, chi nhánh bảo lãnh",
+  "overriddenAt": "2026-11-18T03:00:00.120+00:00"
+}

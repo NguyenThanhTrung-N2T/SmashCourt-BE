@@ -2,18 +2,37 @@ version: "3.9"
 
 services:
   smashcourt-be:
+    # Cùng tên image với CI (GHCR); `up --build` build tại chỗ thành tag `local`, `IMAGE_TAG=sha-xxxxxxx docker compose up` chạy đúng bản CI đã đẩy (Epic 6C, P6-33)
+    image: ghcr.io/nguyenthanhtrung-n2t/smashcourt-be:${IMAGE_TAG:-local}
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-}
     container_name: smashcourt-be
+    # Image không chứa bí mật: cấu hình riêng của máy dev mount chỉ đọc vào lúc chạy (gói 6C-1, K1)
+    volumes:
+      - ./appsettings.Development.json:/app/appsettings.Development.json:ro
     ports:
       - "8080:8080"
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
+      # Mạng Docker không có IPv6 (chỉ ::1) mà smtp.gmail.com có AAAA: thử IPv6 ra "Network unreachable" (6A-6 Task 13)
+      - DOTNET_SYSTEM_NET_DISABLEIPV6=1
       - VnPay__TmnCode=${VNPAY_TMN_CODE}
       - VnPay__HashSecret=${VNPAY_HASH_SECRET}
       - VnPay__CallbackUrl=${VNPAY_CALLBACK_URL}
       - VnPay__IpnUrl=${VNPAY_IPN_URL}
+      # TADSS: URL công khai (ngrok) của TADSS và khóa client smashcourt-be, đặt trong .env; chỉ bắt buộc khi bật TadssConfig:EnableTadssDecision
+      - TadssConfig__BaseUrl=${TADSS_BASE_URL}
+      - TadssConfig__ApiKey=${TADSS_API_KEY}
+    # Sẵn sàng = kết nối được PostgreSQL (/health/ready, Epic 6C OPS-04); CD dùng `up --wait` dựa trên trạng thái này
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
     networks:
       - smashcourt-network
     restart: unless-stopped

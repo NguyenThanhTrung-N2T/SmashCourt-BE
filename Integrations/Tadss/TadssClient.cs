@@ -1,0 +1,330 @@
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
+using Microsoft.Extensions.Options;
+using SmashCourt_BE.Configurations;
+using SmashCourt_BE.Integrations.Tadss.DTOs;
+
+namespace SmashCourt_BE.Integrations.Tadss;
+
+/// <summary>
+/// HTTP client gọi TADSS Decision Runtime v2. Không dùng Polly: chỉ <see cref="EvaluateAsync"/> thử lại đúng một lần
+/// bằng vòng lặp tường minh để bảo đảm cùng idempotency key và không thử lại lỗi 4xx.
+/// Cấu hình (BaseUrl, ApiKey, TimeoutMs) đọc từ <see cref="IOptionsMonitor{TOptions}"/> ở mỗi lần gọi; riêng lệnh gửi outcome
+/// dùng timeout cố định <see cref="OutcomeTimeout"/> (P6-26).
+/// Không bao giờ ghi khóa API hay body request vào log.
+/// </summary>
+public class TadssClient : ITadssClient
+{
+    private const int LogBodySnippetLength = 200;
+    private const string DecisionsPath = "api/v2/decisions";
+
+    /// <summary>
+    /// Timeout của lệnh gửi outcome (P6-26, chốt 27/10). Job chạy nền, không ai chờ; DB Neon của TADSS tự tạm dừng khi vắng và mất 1–3 giây
+    /// để thức, trong khi healthcheck chỉ gọi /health/live. Với TimeoutMs (800 ms) lần gửi đầu mỗi chu kỳ có thể timeout lặp lại.
+    /// Giá trị khởi đầu, xem lại sau khi chạy thật.
+    /// </summary>
+    private static readonly TimeSpan OutcomeTimeout = TimeSpan.FromSeconds(5);
+
+    private readonly HttpClient _httpClient;
+    private readonly IOptionsMonitor<TadssSettings> _settings;
+    private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly TimeProvider _timeProvider;
+    private readonly ILogger<TadssClient> _logger;
+
+    public TadssClient(
+        HttpClient httpClient,
+        IOptionsMonitor<TadssSettings> settings,
+        IHttpContextAccessor httpContextAccessor,
+        TimeProvider timeProvider,
+        ILogger<TadssClient> logger)
+    {
+        _httpClient = httpClient;
+        _settings = settings;
+        _httpContextAccessor = httpContextAccessor;
+        _timeProvider = timeProvider;
+        _logger = logger;
+    }
+
+    public Task<TadssCallResult<TadssDecisionResultDto>> EvaluateAsync(
+        TadssDecisionRequestDto request, Guid bookingId, CancellationToken cancellationToken = default)
+    {
+        var call = new TadssCall("Evaluate", HttpMethod.Post, DecisionsPath, request, bookingId.ToString(), null);
+        return SendAsync<TadssDecisionResultDto>(
+            call, allowRetry: true, result => CheckDecisionResult(result, request.ReservationId), cancellationToken);
+    }
+
+    public Task<TadssCallResult<TadssOverrideResponseDto>> OverrideAsync(
+        Guid decisionId, TadssOverrideRequestDto request, string actorId, CancellationToken cancellationToken = default)
+    {
+        var call = new TadssCall("Override", HttpMethod.Post, $"{DecisionsPath}/{decisionId}/override", request,
+            $"{decisionId}:{request.Action}", actorId);
+        return SendAsync<TadssOverrideResponseDto>(
+            call, allowRetry: false, result => CheckOverrideResult(result, decisionId, request.Action), cancellationToken);
+    }
+
+    public Task<TadssCallResult<TadssDecisionDetailDto>> GetDecisionAsync(
+        Guid decisionId, CancellationToken cancellationToken = default)
+    {
+        var call = new TadssCall("GetDecision", HttpMethod.Get, $"{DecisionsPath}/{decisionId}", null, null, null);
+        return SendAsync<TadssDecisionDetailDto>(
+            call, allowRetry: false, detail => CheckDecisionDetail(detail, decisionId), cancellationToken);
+    }
+
+    public Task<TadssCallResult<TadssOutcomeResponseDto>> ReportOutcomeAsync(
+        Guid decisionId, TadssOutcomeRequestDto request, CancellationToken cancellationToken = default)
+    {
+        var call = new TadssCall("ReportOutcome", HttpMethod.Post, $"{DecisionsPath}/{decisionId}/outcome", request,
+            $"{decisionId}:OUTCOME", null, OutcomeTimeout);
+        return SendAsync<TadssOutcomeResponseDto>(
+            call, allowRetry: false, result => CheckOutcomeResult(result, decisionId, request), cancellationToken);
+    }
+
+    // Kết quả phải là của chính booking đã gửi và đúng contract: APPROVED có deposit, NEED_APPROVAL có hạn duyệt, deposit trong phạm vi
+    // của schema. Lệch thì không dùng được: đơn đi phương án dự phòng như mọi sự cố TADSS.
+    private static string? CheckDecisionResult(TadssDecisionResultDto result, Guid expectedReservationId) => result.Status switch
+    {
+        _ when result.ReservationId != expectedReservationId =>
+            $"reservationId {result.ReservationId} khác booking đã gửi {expectedReservationId}",
+        TadssDecisionStatus.APPROVED when result.Deposit is null => "status APPROVED nhưng thiếu deposit",
+        TadssDecisionStatus.NEED_APPROVAL when result.ApprovalExpiresAt is null => "status NEED_APPROVAL nhưng thiếu approvalExpiresAt",
+        _ when result.Deposit is { Rate: < 0m or > 1m } => "deposit.rate ngoài [0, 1]",
+        _ when result.Deposit is { Amount: < 0m } => "deposit.amount âm",
+        _ => null
+    };
+
+    // Ghi đè phải là của đúng quyết định và đúng hành động đã gửi; APPROVE có deposit trong phạm vi của schema, REJECT không có.
+    // Lệch thì không áp vào đơn để không ghi nhầm mức cọc.
+    private static string? CheckOverrideResult(TadssOverrideResponseDto result, Guid decisionId, TadssOverrideAction action) => result switch
+    {
+        _ when result.DecisionId != decisionId => $"decisionId {result.DecisionId} khác quyết định đã gửi {decisionId}",
+        _ when result.Action != action => $"action {result.Action} khác action đã gửi {action}",
+        { Action: TadssOverrideAction.APPROVE, Deposit: null } => "APPROVE nhưng thiếu deposit",
+        { Action: TadssOverrideAction.REJECT, Deposit: not null } => "REJECT nhưng có deposit",
+        { Deposit.Rate: < 0m or > 1m } => "deposit.rate ngoài [0, 1]",
+        { Deposit.Amount: < 0m } => "deposit.amount âm",
+        _ => null
+    };
+
+    // Outcome là nhãn đánh giá: nhận 200 thì BE đánh dấu đã báo và không gửi lại, nên response phải đúng quyết định và đúng nội dung đã gửi.
+    // occurredAt so sau khi cắt về µs như TADSS (timestamptz), cùng thời điểm khác offset vẫn là một
+    private static string? CheckOutcomeResult(TadssOutcomeResponseDto result, Guid decisionId, TadssOutcomeRequestDto sent) => result switch
+    {
+        _ when result.DecisionId != decisionId => $"decisionId {result.DecisionId} khác quyết định đã gửi {decisionId}",
+        _ when result.Outcome != sent.Outcome => $"outcome {result.Outcome} khác outcome đã gửi {sent.Outcome}",
+        _ when TruncateToMicroseconds(result.OccurredAt) != TruncateToMicroseconds(sent.OccurredAt) =>
+            $"occurredAt {result.OccurredAt:O} khác occurredAt đã gửi {sent.OccurredAt:O}",
+        _ => null
+    };
+
+    private static long TruncateToMicroseconds(DateTimeOffset value) => value.UtcTicks - value.UtcTicks % 10;
+
+    // Chi tiết quyết định dùng để đồng bộ ghi đè đã lưu: phải là đúng quyết định đã hỏi
+    private static string? CheckDecisionDetail(TadssDecisionDetailDto detail, Guid decisionId) =>
+        detail.DecisionId != decisionId ? $"decisionId {detail.DecisionId} khác quyết định đã hỏi {decisionId}" : null;
+
+    private async Task<TadssCallResult<T>> SendAsync<T>(
+        TadssCall call, bool allowRetry, Func<T, string?>? check, CancellationToken cancellationToken)
+    {
+        var settings = _settings.CurrentValue;
+        var correlationId = ResolveCorrelationId();
+
+        if (!TryBuildUri(settings.BaseUrl, call.Path, out var uri))
+        {
+            _logger.LogError("TADSS {Operation}: BaseUrl không hợp lệ. CorrelationId={CorrelationId}", call.Operation, correlationId);
+            return TadssCallResult<T>.Failure(TadssFailureKind.Network, correlationId);
+        }
+
+        var maxAttempts = allowRetry ? 2 : 1;
+        for (var attempt = 1; ; attempt++)
+        {
+            var result = await SendOnceAsync(call, uri, settings, correlationId, check, cancellationToken);
+            if (result.IsSuccess || attempt >= maxAttempts || !IsRetryable(result))
+                return result;
+
+            _logger.LogWarning(
+                "TADSS {Operation} lỗi tạm thời ({Kind}, HTTP {Status}), thử lại một lần với cùng idempotency key. CorrelationId={CorrelationId}",
+                call.Operation, result.FailureKind, result.HttpStatus, correlationId);
+        }
+    }
+
+    private async Task<TadssCallResult<T>> SendOnceAsync<T>(
+        TadssCall call, Uri uri, TadssSettings settings, string correlationId, Func<T, string?>? check,
+        CancellationToken cancellationToken)
+    {
+        var started = _timeProvider.GetTimestamp();
+        var timeout = call.Timeout ?? TimeSpan.FromMilliseconds(settings.TimeoutMs);
+        // Timeout tính riêng cho từng lần gọi; token của caller hủy thì phân biệt được với timeout
+        using var timeoutSource = new CancellationTokenSource(timeout, _timeProvider);
+        using var linkedSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutSource.Token);
+
+        try
+        {
+            using var request = BuildRequest(call, uri, settings.ApiKey, correlationId);
+            using var response = await _httpClient.SendAsync(request, linkedSource.Token);
+            var body = await response.Content.ReadAsStringAsync(linkedSource.Token);
+            var elapsedMs = (long)_timeProvider.GetElapsedTime(started).TotalMilliseconds;
+
+            return response.IsSuccessStatusCode
+                ? ReadSuccess(call, response, body, elapsedMs, correlationId, check)
+                : ReadFailure<T>(call, response, body, elapsedMs, correlationId);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning(
+                "TADSS {Operation} quá thời gian chờ {TimeoutMs} ms. CorrelationId={CorrelationId}",
+                call.Operation, (long)timeout.TotalMilliseconds, correlationId);
+            return TadssCallResult<T>.Failure(TadssFailureKind.Timeout, correlationId);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException)
+        {
+            _logger.LogWarning(ex, "TADSS {Operation} lỗi mạng. CorrelationId={CorrelationId}", call.Operation, correlationId);
+            return TadssCallResult<T>.Failure(TadssFailureKind.Network, correlationId);
+        }
+    }
+
+    private TadssCallResult<T> ReadSuccess<T>(
+        TadssCall call, HttpResponseMessage response, string body, long elapsedMs, string correlationId, Func<T, string?>? check)
+    {
+        var status = (int)response.StatusCode;
+        string? problem = null;
+        T? value = default;
+        try
+        {
+            value = JsonSerializer.Deserialize<T>(body, TadssJson.Options);
+            if (value is null)
+                problem = "body rỗng hoặc null";
+            else
+                problem = check?.Invoke(value);
+        }
+        catch (JsonException ex)
+        {
+            problem = $"JSON không đọc được ({ex.GetType().Name})";
+        }
+
+        if (problem != null || value is null)
+        {
+            LogInvalidResponse(call, response, body, problem, correlationId);
+            return TadssCallResult<T>.Failure(TadssFailureKind.InvalidResponse, correlationId, status);
+        }
+
+        _logger.LogInformation(
+            "TADSS {Operation} thành công HTTP {Status} trong {ElapsedMs} ms. CorrelationId={CorrelationId}",
+            call.Operation, status, elapsedMs, correlationId);
+        return TadssCallResult<T>.Success(value, status, correlationId);
+    }
+
+    private TadssCallResult<T> ReadFailure<T>(
+        TadssCall call, HttpResponseMessage response, string body, long elapsedMs, string correlationId)
+    {
+        var status = (int)response.StatusCode;
+        var problem = TryReadProblem(body);
+        var retryAfter = ReadRetryAfter(response.Headers.RetryAfter, problem);
+
+        _logger.LogWarning(
+            "TADSS {Operation} trả HTTP {Status} code={Code} sau {ElapsedMs} ms. CorrelationId={CorrelationId}",
+            call.Operation, status, problem?.Code, elapsedMs, correlationId);
+        return TadssCallResult<T>.Failure(
+            TadssFailureKind.Http, correlationId, status, problem?.Code, retryAfter, problem?.Errors?.Keys.ToList());
+    }
+
+    private void LogInvalidResponse(TadssCall call, HttpResponseMessage response, string body, string? problem, string correlationId)
+    {
+        var snippet = body.Length <= LogBodySnippetLength ? body : body[..LogBodySnippetLength];
+        snippet = snippet.Replace('\r', ' ').Replace('\n', ' ');
+
+        _logger.LogError(
+            "TADSS {Operation} trả 2xx nhưng phản hồi không dùng được ({Problem}). CorrelationId={CorrelationId}, IdempotencyKey={IdempotencyKey}, " +
+            "HttpStatus={Status}, ContentType={ContentType}, BodyLength={BodyLength}, BodyStart={BodyStart}",
+            call.Operation, problem, correlationId, call.IdempotencyKey ?? "-", (int)response.StatusCode,
+            response.Content.Headers.ContentType?.ToString() ?? "-", body.Length, snippet);
+    }
+
+    private static HttpRequestMessage BuildRequest(TadssCall call, Uri uri, string apiKey, string correlationId)
+    {
+        var request = new HttpRequestMessage(call.Method, uri);
+        request.Headers.TryAddWithoutValidation("X-Api-Key", apiKey);
+        request.Headers.TryAddWithoutValidation("X-Correlation-ID", correlationId);
+        // Bỏ qua trang cảnh báo của ngrok (giống FastApiClient)
+        request.Headers.TryAddWithoutValidation("ngrok-skip-browser-warning", "true");
+        if (call.IdempotencyKey != null)
+            request.Headers.TryAddWithoutValidation("X-Idempotency-Key", call.IdempotencyKey);
+        if (call.ActorId != null)
+            request.Headers.TryAddWithoutValidation("X-Actor-Id", call.ActorId);
+
+        if (call.Body != null)
+        {
+            var json = JsonSerializer.Serialize(call.Body, call.Body.GetType(), TadssJson.Options);
+            request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+        }
+
+        return request;
+    }
+
+    // Chỉ thử lại lỗi tạm thời: timeout, lỗi mạng, 5xx. Không thử lại 4xx (kể cả 413, 429) và response hỏng
+    private static bool IsRetryable<T>(TadssCallResult<T> result) => result.FailureKind switch
+    {
+        TadssFailureKind.Timeout or TadssFailureKind.Network => true,
+        TadssFailureKind.Http => result.HttpStatus >= 500,
+        _ => false
+    };
+
+    private TadssProblemDto? TryReadProblem(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+            return null;
+        try
+        {
+            return JsonSerializer.Deserialize<TadssProblemDto>(body, TadssJson.Options);
+        }
+        catch (JsonException)
+        {
+            return null; // Không phải problem+json (proxy, ngrok...): phân loại theo status
+        }
+    }
+
+    private TimeSpan? ReadRetryAfter(RetryConditionHeaderValue? header, TadssProblemDto? problem)
+    {
+        if (header?.Delta is { } delta)
+            return delta;
+        if (header?.Date is { } date)
+        {
+            var wait = date - _timeProvider.GetUtcNow();
+            return wait > TimeSpan.Zero ? wait : TimeSpan.Zero;
+        }
+
+        return problem?.RetryAfterSeconds is { } seconds ? TimeSpan.FromSeconds(seconds) : null;
+    }
+
+    // Dùng lại id của request đang xử lý để log BE và TADSS khớp nhau; ngoài request (job) thì sinh mới
+    private string ResolveCorrelationId()
+    {
+        var context = _httpContextAccessor.HttpContext;
+        if (context != null)
+        {
+            var incoming = context.Request.Headers["X-Correlation-ID"].ToString();
+            if (IsUsableCorrelationId(incoming))
+                return incoming;
+            if (IsUsableCorrelationId(context.TraceIdentifier))
+                return context.TraceIdentifier;
+        }
+
+        return Guid.NewGuid().ToString("N");
+    }
+
+    // Giá trị do FE gửi lên nên không tin: ký tự ngoài ASCII hiển thị làm HttpClient từ chối cả request (thành lỗi mạng giả)
+    private static bool IsUsableCorrelationId(string? value) =>
+        !string.IsNullOrEmpty(value) && value.Length <= 128 && value.All(c => c is > ' ' and <= '~');
+
+    private static bool TryBuildUri(string baseUrl, string path, out Uri uri)
+    {
+        uri = null!;
+        if (!Uri.TryCreate(baseUrl.TrimEnd('/') + "/", UriKind.Absolute, out var baseUri))
+            return false;
+        return Uri.TryCreate(baseUri, path, out uri!);
+    }
+
+    // Timeout null: dùng TimeoutMs của cấu hình
+    private sealed record TadssCall(
+        string Operation, HttpMethod Method, string Path, object? Body, string? IdempotencyKey, string? ActorId, TimeSpan? Timeout = null);
+}

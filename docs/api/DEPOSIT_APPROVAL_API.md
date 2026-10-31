@@ -2,7 +2,7 @@
 
 | | |
 | :--- | :--- |
-| **Trạng thái** | Đặc tả cho **Phase 6**, **chưa hiện thực** trong mã BE/FE. Viết ngày 12/10/2026 (task T5.22 / M-08, gói 5.7 của TADSS-Runtime); **đã review 18/10/2026 (T5.29)**: đối chiếu với mã BE, sửa R-1…R-8 (Mục 10), chốt Q1…Q12 (Mục 9); **cập nhật cùng ngày theo thiết kế Phase 6** (quyết định P6-01…P6-15, Mục 11) |
+| **Trạng thái** | Đặc tả cho **Phase 6**. **BE đã hiện thực** Mục 3.1, 3.2 (6A-2), Mục 3.3, 4, 5, 6 phần duyệt (6A-3, 24/10/2026), Mục 3.4, 3.5, 3.6 (6A-4, 25/10/2026); phần job (hết hạn duyệt, sự kiện `EXPIRED`, email hết hạn duyệt), báo kết quả về TADSS và kiểm hạn duyệt lúc nhận (6A-5, 27/10/2026); thử VNPay sandbox 28/10/2026 (ghi chú FE ở Mục 3.6); FE chưa. Viết ngày 12/10/2026 (task T5.22 / M-08, gói 5.7 của TADSS-Runtime); **đã review 18/10/2026 (T5.29)**: đối chiếu với mã BE, sửa R-1…R-8 (Mục 10), chốt Q1…Q12 (Mục 9); **cập nhật cùng ngày theo thiết kế Phase 6** (quyết định P6-01…P6-15, Mục 11) |
 | **Sở hữu** | Tài liệu này là nguồn duy nhất của hợp đồng **BE ↔ FE** cho luồng cọc, chờ duyệt, duyệt/từ chối |
 | **Không sở hữu** | Hợp đồng **BE ↔ TADSS** (request/response `/api/v2/decisions`, mã lỗi TADSS, idempotency, header): [`INTEGRATION_SPEC.md`](../../../TADSS-Runtime/docs/contracts/INTEGRATION_SPEC.md) Mục 1–4. Khi hai tài liệu khác nhau về phía TADSS, INTEGRATION_SPEC đúng |
 | **Người review** | T5.29, 18/10/2026: review và chốt câu hỏi mở cùng người dùng. SV2 đọc lại khi bắt đầu Epic 6B |
@@ -77,7 +77,11 @@ Thêm giá trị `PENDING_APPROVAL` vào enum `BookingStatus` (C#) và `booking_
 | `PENDING_APPROVAL` | `UNPAID` | **Mới.** Chờ Manager duyệt mức cọc; slot vẫn được giữ | `approvalExpiresAt` | "Chờ duyệt cọc" |
 | `CONFIRMED` | `UNPAID` | Cọc bằng 0 hoặc dưới `MinOnlinePaymentAmount` (nhánh a′, Mục 3.1), hoặc Manager duyệt 0 % (Q4): không thanh toán online, thu toàn bộ tại quầy | — | "Đã xác nhận, thanh toán tại quầy" |
 | `PAID_ONLINE` | `PARTIALLY_PAID` | Đã thanh toán cọc (giữ nguyên hành vi IPN hiện tại: thanh toán online luôn để hóa đơn `PARTIALLY_PAID`) | — | "Đã cọc" |
-| `CANCELLED` | `UNPAID` | Bị từ chối, hết hạn duyệt, hết hạn thanh toán hoặc bị hủy; lý do ở `cancelReason` (Mục 2.2) | — | "Đã hủy" (kèm lý do) |
+| `CANCELLED` | `EXPIRED` | Hết hạn thanh toán, hết hạn duyệt, Manager từ chối hoặc TADSS từ chối; lý do ở `cancelReason` (Mục 2.2) | — | "Đã hủy" (kèm lý do) |
+| `CANCELLED` | `UNPAID` | Khách, nhân viên hoặc link hủy đơn chưa trả tiền (`PENDING`, `PENDING_APPROVAL`, `CONFIRMED`) | — | "Đã hủy" (kèm lý do) |
+| `CANCELLED` | `PARTIALLY_PAID` | Hủy đơn đã cọc theo chính sách hoàn 0 % | — | "Đã hủy, không hoàn tiền" |
+| `CANCELLED_PENDING_REFUND` | `PARTIALLY_PAID`; hoặc giữ trạng thái lúc tiền về (`EXPIRED`, `UNPAID`, `REFUNDED`) | Hủy đơn đã cọc có hoàn tiền; hoặc tiền về sau khi đơn đã hủy (hoàn 100 %, P6-07). Hoàn tiền mặt tại chi nhánh đặt sân | — | "Chờ nhận tiền hoàn tại chi nhánh" |
+| `CANCELLED_REFUNDED` | `REFUNDED` | Nhân viên đã xác nhận trả tiền mặt | — | "Đã hoàn tiền" |
 
 Chuyển trạng thái mới (bổ sung vào `Helpers/BookingStatusTransition.cs`):
 
@@ -109,10 +113,13 @@ Thêm vào `BookingDto` (mọi endpoint đang trả `BookingDto`) và `OnlineBoo
 | `depositRate` | number \| null | Đã có mức cọc (`TADSS`, `MANAGER` hoặc `FULL_PAYMENT_FALLBACK`) | Tỷ lệ cọc 0…1. Cọc 100 % ⇒ `1` |
 | `depositAmount` | number \| null | Như trên | Số tiền cọc phải/đã thanh toán qua VNPay. Do TADSS quy đổi tại một nơi duy nhất (INTEGRATION_SPEC §3.6): `amount = round(totalPrice × rate)` theo số chữ số thập phân của tiền tệ, làm tròn nửa xa số 0 (`MidpointRounding.AwayFromZero`); VND có 0 chữ số thập phân. `totalPrice` là giá đã gửi TADSS lúc đặt. Trừ nhánh `FULL_PAYMENT_FALLBACK` (= `finalTotal` lúc đặt) |
 | `remainingAmount` | number \| null | Như trên | `finalTotal − depositAmount`, tính trên `finalTotal` **hiện tại** của hóa đơn (gồm dịch vụ thêm sau). Số thu tại quầy khi checkout; số đã thu thực tế đọc từ `paymentStatus` |
-| `depositSource` | string \| null | Như trên | `TADSS` \| `MANAGER` \| `FULL_PAYMENT_FALLBACK`. Quyết định fallback của runtime TADSS (`APPROVED` 100 %, `fallbackUsed = true`) và `APPROVAL_WINDOW_UNAVAILABLE` đều là `TADSS` (INTEGRATION_SPEC §4.3) |
+| `depositSource` | string \| null | Như trên | `TADSS` \| `MANAGER` \| `FULL_PAYMENT_FALLBACK`. Quyết định fallback của runtime TADSS (`APPROVED` 100 %, `fallbackUsed = true`) và `APPROVAL_WINDOW_UNAVAILABLE` đều là `TADSS` (INTEGRATION_SPEC §4.3). Nghĩa: **ai quyết định chính sách cọc** (TADSS, Manager, hay BE dùng dự phòng 100 % khi không có quyết định TADSS); **không** cho biết tiền đã thu hay cách thu: trạng thái tiền đọc từ `paymentStatus` và `remainingAmount`. Khi số tiền cần thu online dưới mức tối thiểu (a′, Mục 3.1): `depositRate = 0`, `depositAmount = 0`, `remainingAmount = finalTotal`, bất kể nguồn |
 | `approvalExpiresAt` | string \| null | Booking từng ở `PENDING_APPROVAL` | Hạn Manager duyệt (giờ VN, `dd/MM/yyyy HH:mm:ss`), lấy từ `approvalExpiresAt` của TADSS. Giữ lại sau khi duyệt/hủy để tra cứu |
 | `approvalReasonCode`, `approvalReasons` | string \| null, string[] \| null | Chỉ endpoint của **nhân viên** và hàng chờ, booking từng ở `PENDING_APPROVAL` | `reasonCode`/`reasons` của TADSS vì sao cần duyệt (Q6). Endpoint của khách luôn trả `null` |
 | `cancelReason` | string \| null | Booking đã hủy | `PAYMENT_EXPIRED` \| `APPROVAL_EXPIRED` \| `APPROVAL_REJECTED` \| `POLICY_REJECTED` \| `CUSTOMER_CANCELLED` \| `STAFF_CANCELLED` \| `SYSTEM_CLEANUP` (P6-04). FE hiển thị lý do hủy theo giá trị này |
+| `cancelSource` | string \| null | Booking đã hủy | Ai hủy (P6-31): `CUSTOMER` (khách hủy trong app) \| `LINK` (link hủy trong email) \| `STAFF` (nhân viên hủy hoặc Manager từ chối) \| `SYSTEM` (job hết hạn, dọn đơn dở dang, TADSS từ chối lúc đặt). Có cả ở đơn hủy trước Phase 6 (khi đó `cancelReason` là `null`). FE hiển thị "ai hủy" theo trường này, không tự suy từ `cancelReason` |
+| `cancelledByName` | string \| null | Đơn do nhân viên hủy hoặc Manager từ chối, **chỉ endpoint nhân viên** | Họ tên người đã hủy / từ chối (cột `cancelled_by`), để tra cứu khi cần (P6-31). Endpoint của khách luôn `null`; đơn do khách, link hay job hủy luôn `null` (không ghi người hủy) |
+| `cancelledAt` | string \| null | Booking đã hủy | Thời điểm hủy (cột `cancelled_at`), giờ VN `dd/MM/yyyy HH:mm:ss` như mọi trường giờ của DTO (P6-31). Khách và nhân viên đều thấy. `null` khi chưa hủy hoặc đơn hủy rất cũ không ghi mốc |
 
 Quy tắc chung:
 
@@ -151,7 +158,10 @@ Ví dụ `BookingDto` (chỉ trích các trường liên quan; các trường kh
     "approvalExpiresAt": "18/11/2026 09:45:00",
     "approvalReasonCode": "NO_SHOW_HISTORY_REVIEW",
     "approvalReasons": ["Khách có 3 lần không đến (ngưỡng 2)."],
-    "cancelReason": null
+    "cancelReason": null,
+    "cancelSource": null,
+    "cancelledByName": null,
+    "cancelledAt": null
   },
   "errors": null
 }
@@ -178,6 +188,7 @@ Request **không đổi** (`CreateOnlineBookingDto`); khách không bao giờ t�
 | `status` | string | **Mới**: `PENDING` (thanh toán ngay) \| `PENDING_APPROVAL` (chờ duyệt) \| `CONFIRMED` (nhánh a′: không thanh toán online). FE rẽ nhánh theo trường này |
 | `paymentUrl` | string \| null | **Đổi thành nullable**: có khi `status = PENDING`, `null` khi `PENDING_APPROVAL` hoặc `CONFIRMED` |
 | `expiresAt` | string \| null | Hạn thanh toán; **đổi thành nullable** (`null` khi `PENDING_APPROVAL` hoặc `CONFIRMED`) |
+| `paymentLinkExpiresAt` | string \| null | **Mới (6A-6, P6-27)**: hạn của chính `paymentUrl`, sớm hơn `expiresAt` 2 phút (`BookingPayment:PaymentLinkBufferMinutes`); `null` như `paymentUrl`. Quá mốc này VNPay từ chối link (trang lỗi mã 15, không quay về FE): FE không mở lại link cũ mà gọi `retry-payment` (3.3). Cùng định dạng thời gian với `expiresAt` |
 | `finalTotal` | number | Như hiện tại |
 | `depositRate`, `depositAmount`, `remainingAmount`, `depositSource` | xem 2.2 | `null` khi `PENDING_APPROVAL` |
 | `approvalExpiresAt` | string \| null | Có khi `PENDING_APPROVAL` |
@@ -260,7 +271,7 @@ Content-Type: application/json
 }
 ```
 
-**(d) Mọi sự cố TADSS — cọc 100 %** (HTTP 201). Áp dụng khi `EnableTadssDecision = false`, TADSS timeout / lỗi mạng / 5xx / 401 / 413 / 429, và cả 400 / 409 bất thường từ TADSS (request do BE dựng sai, ví dụ thời lượng sân ngoài giới hạn của TADSS: lỗi lập trình của BE, ghi log mức Error kèm correlation id) (INTEGRATION_SPEC §1, §4.3; R-4). Khách **không** thấy lỗi; response giống nhánh (a) với cọc 100 %.
+**(d) Mọi sự cố TADSS — cọc 100 %** (HTTP 201). Áp dụng khi `EnableTadssDecision = false`, TADSS timeout / lỗi mạng / 5xx / 401 / 413 / 429, và cả 400 / 409 bất thường từ TADSS (request do BE dựng sai, ví dụ thời lượng sân ngoài giới hạn của TADSS: lỗi lập trình của BE, ghi log mức Error kèm correlation id) (INTEGRATION_SPEC §1, §4.3; R-4). Từ gói 6A-5 (P6-24, chốt 27/10) nhánh này gồm cả `NEED_APPROVAL` có hạn duyệt đã qua lúc BE ghi đơn hoặc sau giờ chơi: FE nhận `status = PENDING`, `depositSource = FULL_PAYMENT_FALLBACK` thay vì `PENDING_APPROVAL`, không phải xử lý gì thêm. Khách **không** thấy lỗi; response giống nhánh (a) với cọc 100 %.
 
 ```json
 {
@@ -286,9 +297,9 @@ Content-Type: application/json
 
 Quyết định fallback **của runtime TADSS** (strategy lỗi, circuit mở, không kịp duyệt) cũng cọc 100 % nhưng `depositSource = "TADSS"` (INTEGRATION_SPEC §4.3); FE xử lý y như nhánh (a).
 
-**(a′) Cọc bằng 0 hoặc dưới mức tối thiểu** (P6-06; HTTP 201). TADSS `APPROVED` với `deposit.amount < BookingPayment:MinOnlinePaymentAmount` (mặc định 5.000 đ, gồm 0), hoặc `finalTotal = 0`: không tạo VNPay, booking `CONFIRMED`, thu toàn bộ tại quầy. Response: `status = "CONFIRMED"`, `paymentUrl = null`, `expiresAt = null`, `depositRate = 0`, `depositAmount = 0`, `remainingAmount = finalTotal`, `depositSource = "TADSS"` (cờ tắt: `"FULL_PAYMENT_FALLBACK"`). Số TADSS quyết định vẫn nằm trong audit TADSS; BE ghi log Warning. Khoản cọc vài nghìn đồng không có tác dụng răn đe và VNPay không nhận số tiền dưới mức tối thiểu.
+**(a′) Số tiền cần thu online dưới mức tối thiểu** (P6-06; HTTP 201). Số tiền cần thu online là `deposit.amount` khi TADSS `APPROVED`, hoặc `finalTotal` khi cờ tắt / TADSS lỗi; nhỏ hơn `BookingPayment:MinOnlinePaymentAmount` (mặc định 5.000 đ, gồm 0) thì không tạo VNPay. Chỉ xét **sau khi** TADSS không trả `REJECTED`/`NEED_APPROVAL`: đơn 0 đ vẫn có thể bị từ chối hoặc chờ duyệt. Đơn a′ không miễn phí: booking `CONFIRMED`, thu toàn bộ tại quầy. Response: `status = "CONFIRMED"`, `paymentUrl = null`, `expiresAt = null`, `depositRate = 0`, `depositAmount = 0`, `remainingAmount = finalTotal`, `depositSource = "TADSS"` (cờ tắt hoặc TADSS lỗi: `"FULL_PAYMENT_FALLBACK"`; TADSS lỗi với đơn nhỏ là ngoại lệ có chủ đích: đơn được nhận chưa qua đánh giá, khách không thấy lỗi). Số TADSS quyết định vẫn nằm trong audit TADSS; BE ghi log Warning. Hóa đơn chuyển `POSTPAID` (thu tại quầy) và khuyến mãi của đơn (nếu có) được tính một lượt ngay lúc này, như đơn tại quầy trả sau. Khoản cọc vài nghìn đồng không có tác dụng răn đe và VNPay không nhận số tiền dưới mức tối thiểu. `message` của response: "Đặt sân thành công, vui lòng thanh toán tại quầy" (chốt 23/10, 6A-2c Task 2); khách nhận thêm email xác nhận kèm link hủy (D8).
 
-Lỗi khác của endpoint này giữ nguyên như hiện tại (`VALIDATION_ERROR`, `BAD_REQUEST`, `NOT_FOUND`, `SLOT_UNAVAILABLE`, `SLOT_UNAVAILABLE_NOTIFY_REGISTERED`; 429 của rate limiter `booking` trả `OTP_LIMIT_EXCEEDED`), thêm 401/403 do P6-01. Lỗi của TADSS **không bao giờ** lộ ra endpoint này.
+Lỗi khác của endpoint này giữ nguyên như hiện tại (`VALIDATION_ERROR`, `BAD_REQUEST`, `NOT_FOUND`, `SLOT_UNAVAILABLE`, `SLOT_UNAVAILABLE_NOTIFY_REGISTERED`; 429 của rate limiter `booking` trả `OTP_LIMIT_EXCEEDED`), thêm 401/403 do P6-01, 400 `BAD_REQUEST` khi khung giờ đã bắt đầu (dòng 2b, Mục 5), 400 `BOOKING_REJECTED` (nhánh c) và 409 `CONFLICT` khi nhân viên vừa hủy đơn trong lúc BE chờ quyết định cọc (dòng 2a, Mục 5). Hai khách đặt cùng slot cùng lúc: một người 201, người kia 400 `SLOT_UNAVAILABLE*` (không bao giờ 500, N-29). Đăng ký báo slot trống khi đặt thất bại dùng email **tài khoản** (P6-01), không dùng `guestEmail`. Lỗi của TADSS **không bao giờ** lộ ra endpoint này.
 
 ### 3.2. Chi tiết và danh sách booking
 
@@ -296,17 +307,19 @@ Không đổi route, request, policy; `BookingDto` thêm các trường ở 2.2.
 
 | Endpoint | Ai | Thay đổi |
 | :--- | :--- | :--- |
-| `GET /api/me/bookings`, `GET /api/me/bookings/{id}` | Khách | Thêm trường cọc và `cancelReason`; `approvalReasonCode`/`approvalReasons` luôn `null`. Trang chờ duyệt của khách tải lại endpoint này khi nhận `BookingApprovalResolved` |
-| `GET /api/bookings`, `GET /api/bookings/{bookingId}`, `GET /api/bookings/details/{id}` | Nhân viên | Thêm trường cọc, lý do cần duyệt và `cancelReason`; lọc được `status=PENDING_APPROVAL` |
+| `GET /api/me/bookings`, `GET /api/me/bookings/{id}` | Khách | Thêm trường cọc, `cancelReason`, `cancelSource` và `cancelledAt`; `approvalReasonCode`/`approvalReasons`/`cancelledByName` luôn `null`. Trang chờ duyệt của khách tải lại endpoint này khi nhận `BookingApprovalResolved` |
+| `GET /api/bookings`, `GET /api/bookings/{bookingId}`, `GET /api/bookings/details/{id}` | Nhân viên | Thêm trường cọc, lý do cần duyệt, `cancelReason`, `cancelSource`, `cancelledByName` và `cancelledAt`; lọc được `status=PENDING_APPROVAL` |
 | `POST /api/bookings/walk-in` | Nhân viên | Response `BookingDto` có trường cọc `null` (không gọi TADSS) |
 
 ### 3.3. `POST /api/me/bookings/{id}/retry-payment`
 
-Không đổi route, policy, điều kiện (`status = PENDING`, chưa quá `expiresAt`). Thay đổi:
+Không đổi route, policy, điều kiện (`status = PENDING`, chưa quá `expiresAt`). Đã hiện thực ở 6A-3 (24/10, kéo từ 6A-4 để luồng duyệt ⇒ trả cọc chạy trọn). Thay đổi:
 
 - Số tiền VNPay là **`depositAmount`** (booking tạo trước Phase 6: `finalTotal`); response dùng `OnlineBookingResponse` mới ở 3.1 (luôn `status = PENDING`).
-- **Hạn mới** = `min(hạn giữ chỗ tuyệt đối, max(expiresAt hiện tại, now + 10 phút))` (P6-02). Trước đây luôn là `now + 10 phút`, nên bấm liên tục giữ được slot vô hạn, và sau khi duyệt có thể **rút ngắn** hạn. Đã tới hạn giữ chỗ tuyệt đối ⇒ 400 `PAYMENT_HOLD_EXPIRED` (mới, Mục 5).
+- **Hạn link (6A-6, P6-27):** link mới hết hạn trước hạn mới 2 phút (`paymentLinkExpiresAt` trong response) và phải còn sống ít nhất 1 phút; đơn còn dưới 3 phút tới hạn mới (thanh toán lại sát hạn giữ chỗ, đơn duyệt sát giờ chơi) ⇒ 400 `PAYMENT_HOLD_EXPIRED` "Không còn đủ thời gian thanh toán, vui lòng đặt lại", không gia hạn, không hủy link cũ, không tạo Payment. FE không cần biết khoảng đệm, chỉ xử lý mã lỗi này.
+- **Hạn mới** = `min(hạn giữ chỗ tuyệt đối, max(expiresAt hiện tại, now + 10 phút))` (P6-02). Trước đây luôn là `now + 10 phút`, nên bấm liên tục giữ được slot vô hạn, và sau khi duyệt có thể **rút ngắn** hạn. Đã tới hạn giữ chỗ tuyệt đối ⇒ 400 `PAYMENT_HOLD_EXPIRED` (mới, Mục 5). BE kiểm hạn giữ chỗ **trước** hạn thanh toán; còn trong hạn giữ chỗ mà quá `expiresAt` thì vẫn là lỗi cũ 400 `BAD_REQUEST` "Đơn đặt sân đã hết hạn thanh toán". Đơn tạo trước Phase 6 (không có hạn giữ chỗ) coi hạn giữ chỗ là giờ tạo + 15 phút.
 - **Đây là cách duy nhất lấy link thanh toán sau khi được duyệt** (P6-10): duyệt không tạo Payment/URL; khách bấm "Thanh toán cọc" ở lịch sử đặt sân (email và SignalR dẫn tới đó). Booking `PENDING_APPROVAL` gọi endpoint này nhận lỗi hiện có 400 `BAD_REQUEST` "Chỉ có thể thanh toán lại cho đơn đang chờ thanh toán".
+- **Tải lại trang và link thanh toán (ghi chú 27/10, plan 6A-5 Task 1):** BE **không lưu** URL thanh toán. Mỗi lần gọi endpoint này tạo một Payment và link mới, đánh Payment chờ trước đó `FAILED`, ghi hạn mới vào hóa đơn và slot lock trong cùng transaction. Khách tải lại trang thì `GET /api/me/bookings/{id}` trả `expiresAt` mới nhất; muốn trả tiền thì gọi lại endpoint này để lấy link mới. Khách vẫn trả bằng link cũ thì tiền vẫn được ghi nhận (đơn còn `PENDING` ⇒ `PAID_ONLINE`; đơn đã trả bằng link khác ⇒ ghi nhận, không đổi đơn). Trả lại đúng link cũ khi tải trang là tính năng mới (phải lưu URL), không làm; từ 6A-6 mỗi link có hạn riêng (`paymentLinkExpiresAt`).
 
 ### 3.4. Hủy booking: đơn chờ duyệt và đơn đã cọc (R-1, R-2)
 
@@ -314,9 +327,10 @@ Không đổi route, policy, request của `POST /api/me/bookings/{id}/cancel` (
 
 - **Hủy đơn chưa thanh toán (Q8, R-2, P6-09).** Hiện `CancelByCustomerAsync` chỉ nhận `CONFIRMED`/`PAID_ONLINE` và `CancelByStaffAsync` chỉ nhận `PENDING`/`CONFIRMED`/`PAID_ONLINE`. Khách thêm `PENDING` và `PENDING_APPROVAL`; nhân viên thêm `PENDING_APPROVAL`. Chuyển sang `CANCELLED` bằng cập nhật có điều kiện trạng thái ghi đủ `status`, `cancelledAt`, `CancelSource` (`CUSTOMER`/`STAFF`), `cancelReason` (`CUSTOMER_CANCELLED`/`STAFF_CANCELLED`) trong một câu lệnh; xóa slot lock; Payment `PENDING` ⇒ `FAILED`; báo người đăng ký chờ slot; **không** hoàn tiền, **không** giảm lượt dùng khuyến mãi (online chỉ tăng lượt khi thanh toán thành công); phát `BookingCancelled` (đơn chờ duyệt thêm `PendingApprovalQueueChanged` `REMOVED`/`CANCELLED`). Khách hủy đơn chưa thanh toán được tính là "khách hủy", không phải "hết hạn thanh toán" trong lịch sử gửi TADSS.
 - **Giới hạn khuyến mãi mỗi khách (`UsagePerUserLimit`).** Hiện BE đếm mọi booking có khuyến mãi của khách, kể cả đơn đã hủy, nên khách mất lượt khi đơn hết hạn hoặc bị từ chối. Quy tắc mới: chỉ đếm booking không ở trạng thái hủy (`CANCELLED`, `CANCELLED_PENDING_REFUND`, `CANCELLED_REFUNDED`), nhất quán với việc giảm `UsedCount` khi hủy đơn đã thanh toán. Quản lý vừa duyệt/từ chối chen vào trước ⇒ cập nhật có điều kiện thất bại, trả lỗi hiện có của endpoint hủy và FE tải lại.
-- **Số tiền hoàn khi hủy booking đã cọc (Q12, R-1).** Hiện BE tính `refundAmount = FinalTotal × % hoàn`; khi khách chỉ cọc một phần, cách này **hoàn vượt số đã trả** (cọc 30 %, hủy sớm hoàn 100 % ⇒ hoàn 100 % tổng tiền). Quy tắc mới: `refundAmount = round(tổng các Payment SUCCESS của hóa đơn × % hoàn)`, VND không có số lẻ; % hoàn theo chính sách hủy hiện có (không đổi). Không bao giờ hoàn vượt số đã thanh toán. Booking online tạo trước Phase 6 (đã trả 100 %) cho cùng kết quả như cách tính cũ. Áp dụng cho cả ba đường hủy (khách, link hủy, nhân viên) và phần xem trước của link hủy (`GET /api/bookings/cancel/{token}`).
+- **Số tiền hoàn khi hủy booking đã cọc (Q12, R-1).** Hiện BE tính `refundAmount = FinalTotal × % hoàn`; khi khách chỉ cọc một phần, cách này **hoàn vượt số đã trả** (cọc 30 %, hủy sớm hoàn 100 % ⇒ hoàn 100 % tổng tiền). Quy tắc mới: `refundAmount = round(tổng các Payment SUCCESS của hóa đơn × % hoàn)`, VND không có số lẻ; % hoàn theo chính sách hủy hiện có (không đổi). Không bao giờ hoàn vượt số đã thanh toán. Booking online tạo trước Phase 6 (đã trả 100 %) cho cùng kết quả như cách tính cũ. Áp dụng cho cả ba đường hủy (khách, link hủy, nhân viên) và phần xem trước của link hủy (`GET /api/bookings/cancel/{token}`). **Hoàn tiền luôn bằng tiền mặt tại chi nhánh đặt sân** (chốt 24/10): nhân viên chi nhánh trả cho khách rồi bấm "Xác nhận hoàn tiền" (`POST /api/bookings/{id}/confirm-refund`); BE không hoàn qua cổng thanh toán. Đơn có nhiều khoản đã thu (VD trả hai link) có một khoản hoàn cho mỗi khoản thu; xác nhận một lần cho cả đơn, email ghi tổng tiền.
 - **Giờ tính % hoàn (P6-08).** Số giờ còn lại tới giờ chơi tính bằng giờ chơi đã quy đổi từ giờ Việt Nam sang UTC; mã hiện tại trừ giờ Việt Nam cho giờ UTC nên **dư 7 giờ** (khách hủy trước 18 giờ được tính như 25 giờ). Sau khi sửa, một số ca hủy sát mốc chính sách được hoàn ít hơn trước, đúng chính sách đã công bố. Hạn link hủy trong email sửa cùng cách.
 - **Khách không tự hủy sau giờ bắt đầu (P6-23).** Hiện khách hủy được đơn `CONFIRMED`/`PAID_ONLINE` cả sau giờ bắt đầu, trong khoảng chờ job đánh `NO_SHOW` (giờ bắt đầu + 15 phút, job chạy 5 phút/lần), nên đơn khách không đến bị ghi thành "khách hủy muộn" thay vì `NO_SHOW` và lịch sử gửi TADSS sai. Quy tắc mới: đường hủy của khách (`POST /api/me/bookings/{id}/cancel` và link hủy `POST /api/bookings/cancel/{token}`) trả 400 `BOOKING_ALREADY_STARTED` khi thời điểm hiện tại ≥ giờ bắt đầu sớm nhất của đơn (giờ Việt Nam quy đổi UTC); kiểm trước mọi thay đổi dữ liệu. Nhân viên vẫn hủy được. Hạn link hủy vốn đã không vượt giờ bắt đầu nên link hủy sau giờ bắt đầu trả lỗi hết hạn hiện có.
+- **Thứ tự lỗi của link hủy** (`POST /api/bookings/cancel/{token}`, từ 6A-4): token không tồn tại 404 ⇒ tài khoản bị khóa 403 ⇒ đơn đã hủy (200, không làm gì) ⇒ link đã dùng 400 ⇒ link hết hạn 400 ⇒ đã tới giờ bắt đầu 400 `BOOKING_ALREADY_STARTED` ⇒ trạng thái không hủy được 400. Link chỉ bị đánh "đã dùng" khi lệnh hủy thành công; lỗi ở bước nào thì link vẫn dùng được.
 
 ### 3.5. Check-out: thu phần còn lại (R-3)
 
@@ -328,8 +342,22 @@ Không đổi route (`GET /api/payments/vnpay/ipn`, `/callback`, `POST /confirm`
 
 - **IPN thất bại** (thẻ lỗi, khách bấm "Hủy giao dịch" trên VNPay…): hiện BE hủy booking ngay. Mới: chỉ Payment đang `PENDING` chuyển `FAILED`; booking giữ `PENDING`; hạn rút về `min(expiresAt, now + 5 phút)` (cả slot lock), để khách thanh toán lại hoặc hủy. Không thanh toán trong ân hạn ⇒ job hủy với `cancelReason = PAYMENT_EXPIRED`. IPN thất bại của một link cũ (Payment không còn `PENDING`) không làm gì booking. Phát `PaymentFailed` kèm cập nhật time grid để người khác thấy số phút còn lại.
 - **Trang kết quả thanh toán của FE** khi thất bại có hai nút: "Thanh toán lại" (`retry-payment`) và "Hủy đơn" (`POST /api/me/bookings/{id}/cancel`, nhả slot ngay).
-- **Tiền về sau khi booking đã hủy** (phiên VNPay còn sống sau khi đơn hết hạn; BE không đặt được hạn phiên VNPay vì thư viện `VNPAY.NET 2.1.0` không gửi `vnp_ExpireDate`): Payment `SUCCESS`, tạo Refund 100 % `PENDING`, booking `CANCELLED → CANCELLED_PENDING_REFUND` (giữ `cancelReason`), email báo khách sẽ được hoàn tiền; nhân viên xử lý ở hàng "Chờ hoàn tiền" có sẵn. Trước đây IPN bỏ qua trường hợp này: tiền bị trừ mà không có bản ghi.
+- **Tiền về sau khi booking đã hủy** (phiên VNPay còn sống sau khi đơn hết hạn; trước 6A-6 BE không đặt được hạn phiên VNPay vì thư viện `VNPAY.NET 2.1.0` không gửi `vnp_ExpireDate`; từ 6A-6 link có hạn sớm hơn hạn đơn 2 phút, P6-27, nên chỉ còn rủi ro IPN trễ hơn khoảng đệm): Payment `SUCCESS`, tạo Refund 100 % `PENDING`, booking `CANCELLED → CANCELLED_PENDING_REFUND` (giữ `cancelReason`), email báo khách sẽ được hoàn tiền; nhân viên xử lý ở hàng "Chờ hoàn tiền" có sẵn. Trước đây IPN bỏ qua trường hợp này: tiền bị trừ mà không có bản ghi.
 - **IPN thành công** giữ nguyên (`PENDING → PAID_ONLINE` có điều kiện); các Payment `PENDING` khác của hóa đơn chuyển `FAILED`.
+- **`POST /api/payments/vnpay/confirm` chỉ đọc; `isSuccess` là kết quả VNPay, không phải trạng thái đơn** (N-36, thấy khi thử sandbox 28/10). **Từ 6A-6 (P6-28)** response có thêm `bookingStatus` (trạng thái đơn đọc từ DB lúc gọi, cùng tên enum với chi tiết đơn; `null` khi chữ ký sai hoặc không tìm thấy giao dịch) và `message` chọn theo kết quả cổng, trạng thái đơn và Payment của chính giao dịch:
+
+  | `isSuccess` | `bookingStatus` | `message` |
+  | :---: | :--- | :--- |
+  | `false` | bất kỳ | Theo mã VNPay (`24` khách hủy, `79`/`13` sai OTP, `15` "Giao dịch đã quá thời gian chờ thanh toán, vui lòng tạo lại link thanh toán" khi link quá hạn, P6-27…) |
+  | `true` | `PAID_ONLINE`, `CONFIRMED`, `IN_PROGRESS`, `PENDING_PAYMENT`, `COMPLETED` | "Thanh toán thành công! Đặt sân của bạn đã được xác nhận." |
+  | `true` | `PENDING` (IPN chưa về) | "Đã nhận kết quả thanh toán, hệ thống đang xác nhận đơn đặt sân." |
+  | `true` | `CANCELLED_PENDING_REFUND` và khoản này đã ghi nhận | "Đã nhận thanh toán nhưng đơn đặt sân đã hết thời gian giữ chỗ trước khi tiền về. Khoản tiền này sẽ được hoàn đủ tại chi nhánh." |
+  | `true` | trạng thái hủy khác (`CANCELLED` khi IPN chưa về, `CANCELLED_REFUNDED`, hoặc khoản này chưa ghi) | "Đơn đặt sân đã bị hủy. Hệ thống đang đối soát giao dịch này, vui lòng xem chi tiết trong lịch sử đặt sân." (không hứa hoàn) |
+  | `true` | khác hoặc `null` | "Đã nhận kết quả thanh toán, vui lòng xem trạng thái trong lịch sử đặt sân." |
+
+  Response đầy đủ (`VnPayReturnResult`): `isSuccess`, `message`, `bookingId`, `bookingCode`, `transactionRef`, `amount`, `responseCode` (mã VNPay dạng chuỗi, `"00"` là thành công; có từ trước Phase 6 nhưng type FE `PaymentConfirmationDto` chưa khai báo), `bookingStatus` (P6-28). Màn thất bại chọn câu và nút theo `responseCode` (`"24"` khách hủy, `"79"`/`"13"` sai OTP, `"15"` link quá hạn ⇒ nút "Thanh toán lại"). FE rẽ nhánh theo `bookingStatus` (spec Phase 6 Mục 8.2); `PENDING` thì hỏi lại `GET /api/me/bookings/{bookingId}` mỗi 2–3 giây tới 60 giây. Trường cũ giữ nguyên nghĩa (thêm trường, không phá hợp đồng).
+- **Số liệu sandbox (28/10, spec Phase 6 Mục 10.1 bước 2):** IPN thành công tới BE sau 4–11 giây, thường trước khi trình duyệt quay về; khách bấm "Hủy thanh toán" ⇒ IPN mã `24`; sai OTP quá số lần ⇒ IPN mã `79` (tới sau khoảng 53 giây). Trang VNPay hiện sống khoảng 15 phút từ lúc mở, dài hơn hạn giữ chỗ 10 phút, nên khách trả được sau khi đơn đã hủy (đã tái hiện; BE ghi chờ hoàn đúng như trên). Từ 6A-6 (P6-27) link hết hạn trước `expiresAt` một khoảng đệm; quá hạn thì VNPay hiện trang lỗi riêng và **không quay về FE**, nên FE khóa nút thanh toán khi gần hết hạn.
+- **Khách trả hai link cho cùng một đơn** (chốt 24/10): khoản trả sau vẫn được ghi nhận (Payment `SUCCESS`), đơn không đổi; khoản thừa được trừ vào số thu tại quầy khi check-out (`remainingAmount` tính trên số đã thu). Vượt cả tổng đơn thì check-out thu 0 và chi nhánh hoàn tiền mặt phần thừa.
 
 ---
 
@@ -430,7 +458,7 @@ Response lỗi — Manager truyền `branchId` của chi nhánh khác (HTTP 403,
 }
 ```
 
-Mã lỗi: 400 `VALIDATION_ERROR` (`page`/`pageSize` ngoài miền); 400 `BAD_REQUEST` (chi nhánh của Manager không hoạt động); 403 `FORBIDDEN` (chi nhánh khác, Manager chưa được gán chi nhánh); 401/403 không envelope (chưa đăng nhập, `STAFF`/`CUSTOMER`).
+Mã lỗi: 400 `VALIDATION_ERROR` (`page`/`pageSize` ngoài miền); 400 `BAD_REQUEST` (chi nhánh của Manager đang tạm ngưng, `SUSPENDED`; chi nhánh đã xóa mềm `INACTIVE` thì `IBranchScopeResolver` trả 404 `NOT_FOUND` vì repository ẩn chi nhánh đó); 403 `FORBIDDEN` (chi nhánh khác, Manager chưa được gán chi nhánh); 401/403 không envelope (chưa đăng nhập, `STAFF`/`CUSTOMER`).
 
 ### 4.2. `POST /api/bookings/{bookingId}/approve`
 
@@ -462,7 +490,7 @@ Thứ tự xử lý của BE (dừng ở bước đầu tiên không đạt):
 
 4b. **Chỉ với duyệt:** BE tính trước `số tiền = round(finalTotal × depositRate)` (làm tròn xa số 0, VND không số lẻ, cùng công thức TADSS); `0 < số tiền < BookingPayment:MinOnlinePaymentAmount` (mặc định 5.000 đ) ⇒ 400 `VALIDATION_ERROR`, `errors.DepositRate` = "Số tiền cọc tối thiểu 5.000 đ, hoặc chọn 0 %" (P6-06). Không gọi TADSS.
 5. Gọi `POST /api/v2/decisions/{decisionId}/override` với `{ "action": "APPROVE", "deposit": { "rate": <depositRate> }, "reason": <reason> }`, `X-Actor-Id` = `userId` từ JWT, `X-Idempotency-Key = {decisionId}:APPROVE` (ổn định cho thao tác duyệt của booking đó, INTEGRATION_SPEC §3.2). Lỗi TADSS ánh xạ theo Mục 5; **không** có đường lùi 100 %.
-6. TADSS 200 ⇒ cập nhật booking bằng câu lệnh có điều kiện trạng thái: `PENDING_APPROVAL → PENDING`, lưu `depositRate`/`depositAmount` **do TADSS trả về**, `depositSource = MANAGER`, `approvalResult = APPROVED`, `resolvedBy`/`resolvedAt`, lý do của Manager; đặt hạn thanh toán `expiresAt = min(thời điểm duyệt + TadssConfig:ApprovedPaymentWindowMinutes, giờ bắt đầu chơi)` (**15 phút**, Q2), đây cũng là hạn giữ chỗ tuyệt đối của đơn (P6-02); gia hạn slot lock tới hạn đó. **Không** tạo Payment hay URL VNPay (P6-10): khách lấy link bằng `retry-payment` (Mục 3.3). Riêng mức cọc 0 % (Q4): `PENDING_APPROVAL → CONFIRMED`, `depositRate = 0`, `depositAmount = 0`, hóa đơn `UNPAID`, xóa slot lock (booking `CONFIRMED` đã giữ sân qua `booking_courts`), toàn bộ tiền thu tại quầy như booking tại quầy. Nếu điều kiện trạng thái không còn đúng (một request duyệt/từ chối khác chạy song song đã ghi trước, job hết hạn hoặc khách hủy chen vào) ⇒ 409 theo quy tắc a/b/c ở bước 4, **không** hồi sinh booking (quyết định 5).
+6. TADSS 200 ⇒ cập nhật booking bằng câu lệnh có điều kiện trạng thái: `PENDING_APPROVAL → PENDING`, lưu `depositRate`/`depositAmount` **do TADSS trả về**, `depositSource = MANAGER`, `approvalResult = APPROVED`, `resolvedBy`/`resolvedAt`, lý do của Manager; đặt hạn thanh toán `expiresAt = min(thời điểm duyệt + TadssConfig:ApprovedPaymentWindowMinutes, giờ bắt đầu chơi)` (**15 phút**, Q2), đây cũng là hạn giữ chỗ tuyệt đối của đơn (P6-02); gia hạn slot lock tới hạn đó. **Không** tạo Payment hay URL VNPay (P6-10): khách lấy link bằng `retry-payment` (Mục 3.3). Riêng mức cọc 0 % (Q4): `PENDING_APPROVAL → CONFIRMED`, `depositRate = 0`, `depositAmount = 0`, hóa đơn `UNPAID` và `POSTPAID`, khuyến mãi của đơn (nếu có) được tính một lượt trong cùng transaction (như nhánh a′ ở Mục 3.1), xóa slot lock (booking `CONFIRMED` đã giữ sân qua `booking_courts`), toàn bộ tiền thu tại quầy như booking tại quầy. Nếu điều kiện trạng thái không còn đúng (một request duyệt/từ chối khác chạy song song đã ghi trước, job hết hạn hoặc khách hủy chen vào) ⇒ 409 theo quy tắc a/b/c ở bước 4, **không** hồi sinh booking (quyết định 5). Điều kiện của câu cập nhật (chốt 24/10, 6A-3): booking còn `PENDING_APPROVAL` **và** `approvalExpiresAt > now`, nên đơn vừa quá hạn trong lúc chờ TADSS cũng nhận 409 `APPROVAL_EXPIRED` dù TADSS trả 200. BE kiểm response của TADSS trước khi ghi: ghi đè phải đúng `decisionId`, đúng hành động, `APPROVE` có mức cọc trong phạm vi và không vượt tổng đơn (lệch ⇒ 503, Mục 5 dòng 22). Số tiền TADSS trả dưới mức tối thiểu (gồm 0) ⇒ nhánh 0 % (`CONFIRMED`).
 7. Sau commit: phát `BookingApprovalResolved`, `PendingApprovalQueueChanged` (Mục 6); gửi email cho khách "đơn đã được xác nhận, vui lòng thanh toán cọc trước HH:mm" kèm link tới lịch sử đặt sân của FE (`/bookings`), **không** chứa URL VNPay (Q3).
 
 Ví dụ request:
@@ -626,6 +654,8 @@ Response lỗi — đã quá hạn duyệt (HTTP 409):
 | :---: | :--- | :--- | :---: | :---: | :--- |
 | 1 | Đặt sân: TADSS `REJECTED` | `BOOKING_REJECTED` (mới) | 400 | Không | Thông báo không nhận đơn, gợi ý chọn khung giờ khác |
 | 2 | Đặt sân: tắt flag, TADSS timeout/lỗi mạng/5xx/401/413/429 | — (thành công, cọc 100 %) | 201 | — | Như nhánh thanh toán bình thường; không báo lỗi |
+| 2a | Đặt sân: đơn vừa tạo bị nhân viên xử lý (hủy) trước khi BE áp kết quả cọc (rất hiếm) | `CONFLICT` (có sẵn), `data = null` | 409 | Không | "Đơn đặt sân vừa được nhân viên xử lý, vui lòng xem lịch sử đặt sân"; mở lịch sử đặt sân |
+| 2b | Đặt sân: khung giờ đã bắt đầu hoặc đã qua (giờ VN so với bây giờ) | `BAD_REQUEST` (có sẵn), `data = null` | 400 | Không | "Khung giờ đã bắt đầu hoặc đã qua, vui lòng chọn khung giờ khác"; kiểm trước mọi bước nên không tạo bản ghi và không gọi TADSS |
 | 3 | Duyệt: `depositRate` ngoài `[0, 1]` hoặc quá 4 chữ số thập phân; số tiền cọc quy đổi > 0 nhưng dưới mức tối thiểu (bước 4b); `reason` thiếu, < 5, > 500 code point, chỉ khoảng trắng | `VALIDATION_ERROR` (có sẵn) | 400 | Sửa rồi gửi | Lỗi dưới ô nhập theo khóa `errors` (`DepositRate`, `Reason`) |
 | 4 | Duyệt: TADSS 400 `VALIDATION_ERROR` về `deposit.rate` (BE đã kiểm nên chỉ xảy ra khi lệch quy tắc) | `VALIDATION_ERROR` (có sẵn), `errors.DepositRate` | 400 | Sửa rồi gửi | Như #3 |
 | 5 | Duyệt: TADSS 400 khác (`MISSING_HEADER`, `VALIDATION_ERROR` về header/`reason` mà BE không bắt được, `DOMAIN_INVARIANT_VIOLATION`), 413, 415 — lỗi lập trình của BE | `INTERNAL_ERROR` (có sẵn) | 500 | Không | "Đã xảy ra lỗi hệ thống"; BE log mức Error kèm correlation id |
@@ -642,17 +672,20 @@ Response lỗi — đã quá hạn duyệt (HTTP 409):
 | 16 | Duyệt: TADSS 401 `UNAUTHORIZED` (khóa `X-Api-Key` của BE sai/thiếu) | `TADSS_UNAVAILABLE` (mới) | 503 | Vô ích tới khi sửa cấu hình | Như #13; BE log mức Error để quản trị sửa khóa. Không cọc 100 %, booking vẫn chờ tới khi hết hạn |
 | 17 | Duyệt: TADSS 200 nhưng booking đã đổi trạng thái trong lúc gọi (request duyệt/từ chối khác ghi trước, job hết hạn, khách hủy chen vào — Q8) | `APPROVAL_ALREADY_RESOLVED`, `APPROVAL_EXPIRED` hoặc `BOOKING_NOT_PENDING_APPROVAL` (mới) theo quy tắc a/b/c ở 4.2 bước 4 | 409 | Không | Như #10/#11/#9. BE không hồi sinh booking; đối soát theo INTEGRATION_SPEC §4.3 |
 | 18 | Hàng chờ: `BRANCH_MANAGER` truyền `branchId` khác | `FORBIDDEN` (có sẵn) | 403 | Không | Như #7 |
-| 19 | Thanh toán lại (`retry-payment`) sau hạn giữ chỗ tuyệt đối (Mục 3.3) | `PAYMENT_HOLD_EXPIRED` (mới) | 400 | Không | "Đã hết thời gian giữ chỗ, vui lòng đặt lại"; tải lại chi tiết |
+| 19 | Thanh toán lại (`retry-payment`) sau hạn giữ chỗ tuyệt đối (Mục 3.3), hoặc còn dưới 3 phút nên link không kịp dùng (6A-6, P6-27) | `PAYMENT_HOLD_EXPIRED` (mới) | 400 | Không | "Đã hết thời gian giữ chỗ, vui lòng đặt lại" hoặc "Không còn đủ thời gian thanh toán, vui lòng đặt lại"; tải lại chi tiết |
 | 20 | Đặt sân online khi chưa đăng nhập / không phải `CUSTOMER` (P6-01) | — (không envelope) | 401 / 403 | Không | Chuyển tới đăng nhập |
-| 21 | Khách hủy (trong app) khi đã tới giờ bắt đầu (P6-23, Mục 3.4) | `BOOKING_ALREADY_STARTED` (mới) | 400 | Không | "Đơn đã tới giờ chơi, không thể tự hủy; vui lòng liên hệ chi nhánh"; FE ẩn nút hủy khi đã tới giờ bắt đầu |
+| 21 | Khách hủy (trong app hoặc bằng link email) khi đã tới giờ bắt đầu (P6-23, Mục 3.4) | `BOOKING_ALREADY_STARTED` (mới) | 400 | Không | "Đơn đã tới giờ chơi, không thể tự hủy; vui lòng liên hệ chi nhánh"; FE ẩn nút hủy khi đã tới giờ bắt đầu |
+| 22 | Duyệt: TADSS trả 2xx nhưng response không dùng được (ghi đè của quyết định khác, sai hành động, thiếu mức cọc, mức cọc vượt tổng đơn, trang HTML của proxy) — chốt 24/10 | `TADSS_UNAVAILABLE` (mới) | 503 | **Có** | Như #13. BE log mức Error; thường do proxy (ngrok) trả trang lỗi, khi đó TADSS chưa ghi gì nên thử lại là đúng |
+| 23 | Duyệt: TADSS 403, hoặc 404 không có mã `DECISION_NOT_FOUND` (VD URL ngrok đổi sau khi khởi động lại) — chốt 24/10 | `TADSS_UNAVAILABLE` (mới) | 503 | Vô ích tới khi sửa cấu hình | Như #16; BE log mức Error. Không báo "không tìm thấy quyết định" vì quyết định vẫn còn |
+| 24 | Duyệt: TADSS 409 với mã ngoài danh sách của override — chốt 24/10 | `INTERNAL_ERROR` (có sẵn) | 500 | Không | Như #5 (lệch hợp đồng, lỗi lập trình); BE log mức Error |
 
-Các mục 6–17 áp dụng giống nhau cho `POST /reject`. Với từ chối, #3/#4 chỉ còn phần `reason`.
+Các mục 6–17 và 22–24 áp dụng giống nhau cho `POST /reject`. Với từ chối, #3/#4 chỉ còn phần `reason`.
 
 ---
 
 ## 6. Sự kiện SignalR đề xuất
 
-> **Đề xuất, thêm vào `Common/Constants/SignalREvents.cs` và `smashcourt-fe/src/lib/signalr-events.ts` ở Phase 6**, chưa thêm bây giờ. Hub `/hubs/notifications` (`NotificationHub`) đã có sẵn các nhóm `user_{userId}`, `role_{role}`, `branch_{branchId}` (nhóm chi nhánh gồm **cả** `BRANCH_MANAGER` lẫn `STAFF`; xem Q5).
+> **BE đã thêm vào `Common/Constants/SignalREvents.cs` (6A-2c Task 3, 23/10)**; FE cần thêm vào `smashcourt-fe/src/lib/signalr-events.ts`. `BookingPendingApproval` và `PendingApprovalQueueChanged` (`ADDED`/`NEW`) đã phát ở nhánh (b) của đặt sân online; `BookingApprovalResolved` và `PendingApprovalQueueChanged` (`REMOVED`/`APPROVED`, `REJECTED`) đã phát từ 6A-3 (24/10); `EXPIRED`, `CANCELLED` phát ở 6A-5, 6A-4. Đơn bị TADSS từ chối chỉ phát `BookingCancelled` cho nhóm chi nhánh, `role_OWNER` và lưới giờ, **không** vào `user_{customerId}` (C2). Hub `/hubs/notifications` (`NotificationHub`) đã có sẵn các nhóm `user_{userId}`, `role_{role}`, `branch_{branchId}` (nhóm chi nhánh gồm **cả** `BRANCH_MANAGER` lẫn `STAFF`; xem Q5).
 
 | Hằng C# / giá trị | Hằng FE | Nhóm nhận | Lúc phát |
 | :--- | :--- | :--- | :--- |
@@ -730,7 +763,7 @@ Với từ chối: `"approvalResult": "REJECTED"`, `"status": "CANCELLED"`, `mes
 | **Cùng Manager bấm hai lần** | Lần hai tới **sau** khi lần đầu thành công: booking đã rời `PENDING_APPROVAL` ⇒ 409 ở bước 4 (quy tắc a), không gọi TADSS. Hai lần chạy song song: cả hai được TADSS trả 200 (cùng key, cùng nội dung), nhưng chỉ một lần thắng cập nhật có điều kiện, lần còn lại ⇒ 409. BE không nhận diện request lặp | Lần đầu 200, lần hai 409 `APPROVAL_ALREADY_RESOLVED`; FE khóa nút khi đang gửi |
 | **Thử lại sau 503 khi TADSS thực ra đã ghi** | Booking vẫn `PENDING_APPROVAL`; lần thử lại gửi cùng `{decisionId}:{action}`, cùng Manager, cùng nội dung ⇒ TADSS trả override đã lưu (200), BE hoàn tất bước 6. Đây là trường hợp **duy nhất** request lặp nhận lại kết quả đã lưu | 200 như một lần duyệt bình thường |
 | **Gửi lại sau timeout nhưng đổi mức cọc** | TADSS đã ghi lần đầu ⇒ `IDEMPOTENCY_KEY_REUSE`. Q9: BE đọc `GET /api/v2/decisions/{decisionId}`, nếu booking còn `PENDING_APPROVAL` và chưa hết hạn thì áp override đã lưu, rồi trả 409 | 409 `APPROVAL_ALREADY_RESOLVED`; tải lại thấy mức cọc của lần đầu |
-| **Duyệt sau hạn** | BE kiểm `approvalExpiresAt ≤ now` trước khi gọi TADSS ⇒ 409. Nếu đồng hồ BE còn hạn nhưng TADSS báo `APPROVAL_EXPIRED` ⇒ cũng 409; booking giữ `PENDING_APPROVAL` tới khi job hủy | 409 `APPROVAL_EXPIRED`; đơn biến khỏi hàng chờ (hàng chờ đã lọc `approvalExpiresAt > now`) |
+| **Duyệt sau hạn** | BE kiểm `approvalExpiresAt ≤ now` trước khi gọi TADSS ⇒ 409. Nếu đồng hồ BE còn hạn nhưng TADSS báo `APPROVAL_EXPIRED` ⇒ cũng 409; booking giữ `PENDING_APPROVAL` tới khi job hủy. Đơn quá hạn trong lúc chờ TADSS (TADSS trả 200) cũng 409: câu cập nhật có điều kiện `approvalExpiresAt > now` (6A-3) | 409 `APPROVAL_EXPIRED`; đơn biến khỏi hàng chờ (hàng chờ đã lọc `approvalExpiresAt > now`) |
 | **TADSS không phản hồi khi duyệt** | Không có đường lùi 100 %; booking giữ `PENDING_APPROVAL`; mỗi lần thử dùng cùng idempotency key nên lần thử sau không tạo override thứ hai. Hết hạn mà vẫn không duyệt được ⇒ job hủy | 503 `TADSS_UNAVAILABLE`, nút "Thử lại" (Mục 5 #13–#16) |
 | **Tắt `EnableTadssDecision` khi đang có đơn chờ** | Q7: flag chỉ quyết định việc **gọi đánh giá khi đặt sân**; đơn mới đi đường 100 %. Đơn đã `PENDING_APPROVAL` vẫn duyệt/từ chối qua override của TADSS; nếu TADSS không phản hồi thì như dòng trên và hết hạn thì bị hủy | Hàng chờ chỉ còn các đơn cũ, giảm dần; không có đơn mới vào |
 | **Hết hạn duyệt** (E2E-04) | Job Hangfire mới (chạy mỗi 1 phút, như Job-01 hủy `PENDING` quá hạn): booking `PENDING_APPROVAL` có `approvalExpiresAt ≤ now` ⇒ `CANCELLED` (`CancelSource = SYSTEM`), xóa slot lock, báo người đăng ký chờ slot, email cho khách; sau đó job outcome báo `APPROVAL_EXPIRED` cho TADSS. **Không bao giờ tự duyệt** | `BookingExpired` (khách, chi nhánh, OWNER, time grid) + `PendingApprovalQueueChanged` (`REMOVED`/`EXPIRED`); chi tiết booking `CANCELLED` |
@@ -822,5 +855,9 @@ Sau khi lần theo luồng thực tế FE → BE trên mã hiện có, nhóm ch�
 | P6-15 | `PENDING_APPROVAL` là giá trị cuối của enum (số 10 phía FE) | 2.1 |
 | P6-22 | Quy tắc thời gian (rà soát 19/10/2026): BE so sánh và lưu thời điểm ở UTC, giờ chơi đổi bằng `DateTimeHelper.ToUtcFromVietnam` (sửa % hoàn, hạn link hủy online và tại quầy); request TADSS mọi trường thời gian có offset; FE lấy "hôm nay" theo giờ VN, đọc chuỗi giờ của BE bằng hàm chung, gửi ngày lên dạng `yyyy-MM-dd` | 1.3, 3.4 |
 | P6-23 | Khách không tự hủy khi đã tới giờ bắt đầu (chốt 19/10/2026) | 3.4, 5, 7 |
+| P6-24 | `NEED_APPROVAL` có hạn duyệt đã qua lúc BE ghi đơn hoặc sau giờ chơi ⇒ cọc 100 % như nhánh (d) (chốt 27/10/2026, 6A-5) | 3.1 (d) |
+| P6-27 | Link thanh toán có hạn theo hạn đơn (chốt 27/10/2026, 6A-6; đã thử sandbox VNPay 28/10) | 3.3, 3.6 |
+| P6-28 | `POST /api/payments/vnpay/confirm` trả thêm `bookingStatus`; FE rẽ nhánh theo trạng thái đơn, không theo `isSuccess` (chốt 29/10/2026, 6A-6) | 3.6 |
+| P6-31 | `BookingDto` thêm `cancelSource` (ai hủy, mọi endpoint), `cancelledByName` (tên nhân viên hủy / Manager từ chối, chỉ endpoint nhân viên) và `cancelledAt` (thời điểm hủy, mọi endpoint) để hiển thị và tra cứu rõ ràng (chốt 31/10/2026) | 2.2, 3.2 |
 
 Mã lỗi mới: `PAYMENT_HOLD_EXPIRED`, `BOOKING_ALREADY_STARTED` (Mục 5). Không đổi hợp đồng BE ↔ TADSS.

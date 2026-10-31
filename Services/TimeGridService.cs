@@ -93,7 +93,8 @@ namespace SmashCourt_BE.Services
                         s == BookingStatus.PAID_ONLINE))
                         status = "RESERVED";
                     // Priority 3: Đang giữ slot tạm thời
-                    else if (overlappedBookings.Contains(BookingStatus.PENDING))
+                    else if (overlappedBookings.Contains(BookingStatus.PENDING) ||
+                             overlappedBookings.Contains(BookingStatus.PENDING_APPROVAL))
                         status = "LOCKED";
                 }
 

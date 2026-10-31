@@ -50,25 +50,8 @@ namespace SmashCourt_BE.Controllers
         }
 
         /// <summary>
-        /// VNPay IPN (Instant Payment Notification): VNPay gọi server-to-server bằng GET
-        /// 
-        /// 🎯 RESPONSIBILITY: UPDATE DATABASE (Source of Truth)
-        /// 
-        /// Flow:
-        /// 1. VNPay gọi endpoint này sau khi user thanh toán (server-to-server)
-        /// 2. Verify signature từ VNPay
-        /// 3. Update booking status → PAID_ONLINE hoặc CANCELLED
-        /// 4. Update payment status → SUCCESS hoặc FAILED
-        /// 5. Update invoice status → PARTIALLY_PAID
-        /// 6. Gửi email xác nhận (nếu thành công)
-        /// 
-        /// 🔒 IDEMPOTENCY: VNPay có thể gọi IPN nhiều lần (retry mechanism)
-        /// - Check booking.Status trước khi update
-        /// - Nếu đã PAID_ONLINE hoặc CANCELLED → return early (idempotent)
-        /// - Log tất cả IPN requests vào payment_ipn_logs table
-        /// 
-        /// ⚠️ PRODUCTION: VNPay LUÔN gọi IPN endpoint này
-        /// ⚠️ SANDBOX: Cần config IPN URL trong VNPay dashboard (xem /vnpay/confirm docs)
+        /// IPN của VNPay (server gọi server): nơi duy nhất ghi kết quả giao dịch. Thất bại không hủy đơn mà giữ thêm tối đa ân hạn;
+        /// tiền về sau khi đơn đã hủy được ghi nhận kèm hoàn 100 % tại chi nhánh. Gọi lặp không ghi thêm gì.
         /// </summary>
         [HttpGet("vnpay/ipn")]
         public async Task<IActionResult> VnPayIpn()
@@ -79,49 +62,8 @@ namespace SmashCourt_BE.Controllers
         }
 
         /// <summary>
-        /// VNPay Payment Confirmation: Frontend gọi sau khi nhận callback từ VNPay
-        /// 
-        /// 🎯 RESPONSIBILITY: HYBRID - IPN Primary + Confirm Fallback
-        /// 
-        /// Flow:
-        /// 1. User thanh toán xong → VNPay redirect browser về /vnpay/callback
-        /// 2. Backend redirect về FE với query params
-        /// 3. FE gọi endpoint này
-        /// 4. Check: Đã được xử lý bởi IPN chưa?
-        ///    - ✅ Đã xử lý → Chỉ read và return (idempotent)
-        ///    - ❌ Chưa xử lý → Update DB như fallback (sandbox case)
-        /// 
-        /// 🔒 IDEMPOTENCY GUARANTEE:
-        /// - Check payment.Status trước khi update
-        /// - Nếu đã SUCCESS → skip update, chỉ read
-        /// - HandleVnPayIpnAsync có idempotency check riêng
-        /// - Safe để gọi nhiều lần
-        /// 
-        /// 🎯 WHY HYBRID?
-        /// - Production: IPN luôn được gọi → Confirm chỉ read
-        /// - Sandbox: IPN có thể fail/delay → Confirm làm fallback
-        /// - Best of both worlds: Reliable + Production-ready
-        /// 
-        /// 📊 SCENARIOS:
-        /// 
-        /// Scenario 1: IPN hoạt động (Production)
-        /// - IPN → Update DB → payment.Status = SUCCESS
-        /// - Confirm → Check payment.Status = SUCCESS → Skip update, chỉ read
-        /// - ✅ Không duplicate
-        /// 
-        /// Scenario 2: IPN không hoạt động (Sandbox)
-        /// - Confirm → Check payment.Status = PENDING → Update DB
-        /// - ✅ System vẫn chạy
-        /// 
-        /// Scenario 3: IPN đến trễ
-        /// - Confirm → Update DB → payment.Status = SUCCESS
-        /// - IPN → Check booking.Status = PAID_ONLINE → Skip (idempotent)
-        /// - ✅ Không duplicate
-        /// 
-        /// Scenario 4: User refresh page
-        /// - Confirm lần 1 → Update DB
-        /// - Confirm lần 2 → Check payment.Status = SUCCESS → Skip
-        /// - ✅ Idempotent
+        /// FE gọi sau khi trình duyệt quay lại từ VNPay: kiểm chữ ký và đọc trạng thái đơn để hiển thị. Chỉ đọc, không ghi DB;
+        /// kết quả giao dịch chỉ được ghi qua IPN.
         /// </summary>
         [HttpPost("vnpay/confirm")]
         public async Task<IActionResult> VnPayConfirm([FromBody] VnPayConfirmRequest request)
@@ -136,7 +78,6 @@ namespace SmashCourt_BE.Controllers
                 )
             );
 
-            // 🔥 STEP 1: Check đã xử lý bởi IPN chưa (idempotency check)
             var txnRef = queryCollection["vnp_TxnRef"].ToString();
             
             _logger.LogInformation(
@@ -154,10 +95,7 @@ namespace SmashCourt_BE.Controllers
         }
 
         /// <summary>
-        /// VNPay Return URL: Browser redirect sau khi user thanh toán
-        /// ✅ REDIRECT về FE với query params để FE xử lý UI
-        /// ⚠️ KHÔNG UPDATE DATABASE - chỉ redirect về FE
-        /// FE sẽ gọi /confirm endpoint để update DB
+        /// Trình duyệt quay lại từ VNPay: chuyển tiếp nguyên tham số về trang kết quả của FE; không ghi DB.
         /// </summary>
         [HttpGet("vnpay/callback")]
         public IActionResult VnPayCallback()

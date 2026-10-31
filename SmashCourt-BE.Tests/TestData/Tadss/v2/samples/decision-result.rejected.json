@@ -1,0 +1,15 @@
+{
+  "decisionId": "0f9c7e5a-0000-4000-8000-00000000d004",
+  "reservationId": "5b0a6f0e-7c0d-4a0e-9a64-0c2e7f1b9a11",
+  "status": "REJECTED",
+  "deposit": null,
+  "strategyName": "DefaultDecisionStrategy",
+  "strategyVersion": "2.1.0",
+  "executionType": "AUTOMATED",
+  "fallbackUsed": false,
+  "reasonCode": "REPEATED_PAYMENT_EXPIRY",
+  "reasons": ["Khách nhiều lần để quá hạn thanh toán."],
+  "recommendations": [],
+  "approvalExpiresAt": null,
+  "evaluatedAt": "2026-11-18T02:15:00.041Z"
+}

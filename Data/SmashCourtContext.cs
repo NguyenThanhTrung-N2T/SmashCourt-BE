@@ -83,6 +83,11 @@ namespace SmashCourt_BE.Data
             modelBuilder.HasPostgresEnum<RefundStatus>("refund_status");
             modelBuilder.HasPostgresEnum<IpnProvider>("ipn_provider");
 
+            // Cọc TADSS
+            modelBuilder.HasPostgresEnum<DepositSource>("deposit_source");
+            modelBuilder.HasPostgresEnum<ApprovalResult>("approval_result");
+            modelBuilder.HasPostgresEnum<BookingCancelReason>("booking_cancel_reason");
+
             // Apply configurations từng entity
             modelBuilder.ApplyConfigurationsFromAssembly(typeof(SmashCourtContext).Assembly);
 
@@ -461,10 +466,22 @@ namespace SmashCourt_BE.Data
                 e.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()");
                 e.Property(x => x.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("now()");
 
+                // Cọc TADSS
+                e.Property(x => x.TadssDecisionId).HasColumnName("tadss_decision_id");
+                e.Property(x => x.ApprovalExpiresAt).HasColumnName("approval_expires_at");
+                e.Property(x => x.ApprovalReasonCode).HasColumnName("approval_reason_code").HasMaxLength(64);
+                e.Property(x => x.ApprovalReasons).HasColumnName("approval_reasons");
+                e.Property(x => x.ApprovalResult).HasColumnName("approval_result");
+                e.Property(x => x.ApprovalResolvedBy).HasColumnName("approval_resolved_by");
+                e.Property(x => x.ApprovalResolvedAt).HasColumnName("approval_resolved_at");
+                e.Property(x => x.ApprovalResolutionNote).HasColumnName("approval_resolution_note").HasMaxLength(500);
+                e.Property(x => x.CancelReason).HasColumnName("cancel_reason");
+                e.Property(x => x.TadssOutcomeReportedAt).HasColumnName("tadss_outcome_reported_at");
+
                 e.HasOne(x => x.Branch).WithMany(x => x.Bookings).HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
                 e.HasOne(x => x.Invoice).WithOne(x => x.Booking).HasForeignKey<Invoice>(x => x.BookingId).OnDelete(DeleteBehavior.Restrict);
                 e.HasOne(x => x.BookingPromotion).WithOne(x => x.Booking).HasForeignKey<BookingPromotion>(x => x.BookingId).OnDelete(DeleteBehavior.Cascade);
-                e.HasOne(x => x.SlotLock).WithOne(x => x.Booking).HasForeignKey<SlotLock>(x => x.BookingId).OnDelete(DeleteBehavior.Cascade);
+                e.HasMany(x => x.SlotLocks).WithOne(x => x.Booking).HasForeignKey(x => x.BookingId).OnDelete(DeleteBehavior.Cascade);
             });
 
             modelBuilder.Entity<BookingCourt>(e =>
@@ -594,6 +611,10 @@ namespace SmashCourt_BE.Data
                 e.Property(x => x.PaymentStatus).HasColumnName("payment_status");
                 e.Property(x => x.PaymentTiming).HasColumnName("payment_timing").HasConversion<int>();
                 e.Property(x => x.ExpiresAt).HasColumnName("expires_at");
+                e.Property(x => x.DepositRate).HasColumnName("deposit_rate").HasPrecision(5, 4);
+                e.Property(x => x.DepositAmount).HasColumnName("deposit_amount").HasPrecision(12, 2);
+                e.Property(x => x.DepositSource).HasColumnName("deposit_source");
+                e.Property(x => x.HoldDeadline).HasColumnName("hold_deadline");
                 e.Property(x => x.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()");
                 e.Property(x => x.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("now()");
             });

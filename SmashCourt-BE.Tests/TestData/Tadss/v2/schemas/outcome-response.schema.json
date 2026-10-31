@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tadss.local/schemas/v2/outcome-response.schema.json",
+  "title": "OutcomeResponse v2",
+  "description": "Response 200 của POST /api/v2/decisions/{decisionId}/outcome — INTEGRATION_SPEC §3.7; reportedAt là thời điểm TADSS ghi nhận (UTC).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["decisionId", "outcome", "occurredAt", "reportedAt"],
+  "properties": {
+    "decisionId": { "$ref": "#/$defs/uuid" },
+    "outcome": { "enum": ["COMPLETED", "NO_SHOW", "CANCELLED_BY_CUSTOMER", "CANCELLED_BY_STAFF", "PAYMENT_EXPIRED", "APPROVAL_EXPIRED", "REJECTED"] },
+    "occurredAt": { "$ref": "#/$defs/dateTime" },
+    "reportedAt": { "$ref": "#/$defs/dateTime" }
+  },
+  "$defs": {
+    "uuid": { "type": "string", "format": "uuid" },
+    "dateTime": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]{1,7})?(Z|[+-][0-9]{2}:[0-9]{2})$" }
+  }
+}

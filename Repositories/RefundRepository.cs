@@ -1,4 +1,4 @@
-﻿using SmashCourt_BE.Data;
+using SmashCourt_BE.Data;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Repositories.IRepository;
 using Microsoft.EntityFrameworkCore;
@@ -28,13 +28,13 @@ namespace SmashCourt_BE.Repositories
             await _context.SaveChangesAsync();
         }
 
-        public async Task<Refund?> GetByBookingIdAsync(Guid bookingId)
+        public async Task<List<Refund>> GetPendingByBookingIdAsync(Guid bookingId)
         {
             return await _context.Refunds
                 .Include(r => r.Payment)
-                .FirstOrDefaultAsync(r =>
-                    r.Payment.Invoice.BookingId == bookingId &&
-                    r.Status == RefundStatus.PENDING);
+                .Where(r => r.Payment.Invoice.BookingId == bookingId && r.Status == RefundStatus.PENDING)
+                .ToListAsync();
         }
+
     }
 }

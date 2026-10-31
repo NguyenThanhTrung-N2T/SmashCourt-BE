@@ -1,0 +1,15 @@
+{
+  "decisionId": "0f9c7e5a-0000-4000-8000-00000000d001",
+  "reservationId": "5b0a6f0e-7c0d-4a0e-9a64-0c2e7f1b9a11",
+  "status": "APPROVED",
+  "deposit": { "rate": 0.5, "amount": 114000, "currency": "VND" },
+  "strategyName": "MockAlternativeDecisionStrategy",
+  "strategyVersion": "2.0.0",
+  "executionType": "AUTOMATED",
+  "fallbackUsed": false,
+  "reasonCode": "PEAK_HOUR_DEPOSIT",
+  "reasons": ["Khung giờ cao điểm (18:00 thứ Sáu, giờ chi nhánh) áp dụng cọc 50%."],
+  "recommendations": [],
+  "approvalExpiresAt": null,
+  "evaluatedAt": "2026-11-18T02:15:00.041Z"
+}

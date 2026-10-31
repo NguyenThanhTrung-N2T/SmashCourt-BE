@@ -1,4 +1,4 @@
-﻿using SmashCourt_BE.Models.Entities;
+using SmashCourt_BE.Models.Entities;
 
 namespace SmashCourt_BE.Repositories.IRepository
 {
@@ -10,7 +10,8 @@ namespace SmashCourt_BE.Repositories.IRepository
         // Cập nhật refund
         Task UpdateAsync(Refund refund);
 
-        // Lấy refund theo bookingId, trả về null nếu không tìm thấy
-        Task<Refund?> GetByBookingIdAsync(Guid bookingId);
+
+        // Mọi refund đang chờ của booking (một refund cho mỗi Payment đã thu), kèm Payment
+        Task<List<Refund>> GetPendingByBookingIdAsync(Guid bookingId);
     }
 }

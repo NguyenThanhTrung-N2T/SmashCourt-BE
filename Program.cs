@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using Npgsql;
@@ -26,9 +27,11 @@ using SmashCourt_BE.Services.AccessControl;
 using SmashCourt_BE.Services.IService;
 using System.IdentityModel.Tokens.Jwt;
 using System.Text;
-using VNPAY.Extensions;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Cấu hình cốt lõi (DB, JWT, OTP) phải có trước khi đăng ký service: thiếu thì dừng ngay, thông báo chỉ nêu tên khóa (Epic 6C, OPS-03)
+RequiredConfiguration.EnsureBlockingKeys(builder.Configuration);
 
 // TẮT EnableLegacyTimestampBehavior để làm việc với UTC thuần
 // Npgsql sẽ đọc timestamptz ra DateTime với Kind=Utc (không convert sang Local)
@@ -39,32 +42,8 @@ AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", false);
 var dataSourceBuilder = new NpgsqlDataSourceBuilder(
     builder.Configuration.GetConnectionString("DefaultConnection"));
 
-// Sử dụng UpperCaseEnumTranslator để giữ nguyên tên enum khi map sang PostgreSQL
-var translator = new UpperCaseEnumTranslator();
-
-// Tự động map enum C# sang enum type của PostgreSQL
-dataSourceBuilder.MapEnum<UserRole>("user_role", translator);
-dataSourceBuilder.MapEnum<UserStatus>("user_status", translator);
-dataSourceBuilder.MapEnum<OtpType>("otp_type", translator);
-dataSourceBuilder.MapEnum<BranchStatus>("branch_status", translator);
-dataSourceBuilder.MapEnum<CourtTypeStatus>("court_type_status", translator);
-dataSourceBuilder.MapEnum<CourtStatus>("court_status", translator);
-dataSourceBuilder.MapEnum<UserBranchRole>("user_branch_role", translator);
-dataSourceBuilder.MapEnum<DayType>("day_type", translator);
-dataSourceBuilder.MapEnum<ServiceStatus>("service_status", translator);
-dataSourceBuilder.MapEnum<BranchServiceStatus>("branch_service_status", translator);
-dataSourceBuilder.MapEnum<LoyaltyTransactionType>("loyalty_transaction_type", translator);
-dataSourceBuilder.MapEnum<PromotionStatus>("promotion_status", translator);
-dataSourceBuilder.MapEnum<DiscountTypeEnum>("discount_type_enum", translator);
-dataSourceBuilder.MapEnum<BookingStatus>("booking_status", translator);
-dataSourceBuilder.MapEnum<BookingSource>("booking_source", translator);
-dataSourceBuilder.MapEnum<CancelSourceEnum>("cancel_source_enum", translator);
-dataSourceBuilder.MapEnum<InvoicePaymentStatus>("invoice_payment_status", translator);
-dataSourceBuilder.MapEnum<PaymentTiming>("payment_timing", translator);
-dataSourceBuilder.MapEnum<PaymentTxStatus>("payment_tx_status", translator);
-dataSourceBuilder.MapEnum<PaymentTxMethod>("payment_tx_method", translator);
-dataSourceBuilder.MapEnum<RefundStatus>("refund_status", translator);
-dataSourceBuilder.MapEnum<IpnProvider>("ipn_provider", translator);
+// Tự động map enum C# sang enum type của PostgreSQL (danh sách ở NpgsqlEnumMappingExtensions)
+dataSourceBuilder.MapSmashCourtEnums();
 
 var dataSource = dataSourceBuilder.Build();
 
@@ -130,6 +109,7 @@ builder.Services.AddScoped<IGoogleAuthService, GoogleAuthService>();
 builder.Services.AddScoped<IOAuthAccountRepository, OAuthAccountRepository>();
 builder.Services.AddScoped<ILoyaltyService, LoyaltyService>();
 builder.Services.AddScoped<ICustomerLoyaltyRepository, CustomerLoyaltyRepository>();
+builder.Services.AddScoped<ICustomerHistoryRepository, CustomerHistoryRepository>();
 builder.Services.AddScoped<ILoyaltyTransactionRepository, LoyaltyTransactionRepository>();
 builder.Services.AddScoped<ICancelPolicyRepository, CancelPolicyRepository>();
 builder.Services.AddScoped<ICancelPolicyService, CancelPolicyService>();
@@ -166,7 +146,11 @@ builder.Services.AddScoped<IPaymentService, PaymentService>();
 builder.Services.AddScoped<ITimeGridService, TimeGridService>();
 builder.Services.AddScoped<IBookingJob, BookingJob>();
 builder.Services.AddScoped<IBroadcastService, BroadcastService>();
-builder.Services.AddScoped<IVnPayService, VnPayService>();
+// Mỗi cổng thanh toán đăng ký một IPaymentGateway; nghiệp vụ thanh toán dùng chung cho mọi cổng
+builder.Services.AddScoped<IPaymentGateway, VnPayService>();
+builder.Services.AddScoped<IPaymentGatewayResolver, PaymentGatewayResolver>();
+builder.Services.AddScoped<IOnlinePaymentStarter, OnlinePaymentStarter>();
+builder.Services.AddScoped<IPaymentResultService, PaymentResultService>();
 builder.Services.AddScoped<IBranchManagerService, BranchManagerService>();
 builder.Services.AddScoped<IBranchStaffService, BranchStaffService>();
 builder.Services.AddScoped<IBranchUserService, BranchUserService>();
@@ -196,6 +180,22 @@ builder.Services.AddHttpClient<IFastApiClient, FastApiClient>((serviceProvider, 
     client.Timeout = Timeout.InfiniteTimeSpan;
 });
 
+// Đăng ký TADSS và cấu hình giữ chỗ: kiểm khi khởi động, đọc qua IOptionsMonitor
+builder.Services.AddOptions<BookingPaymentSettings>()
+    .Bind(builder.Configuration.GetSection(BookingPaymentSettings.SectionName))
+    .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<BookingPaymentSettings>, BookingPaymentSettingsValidator>();
+// Mã mới lấy "bây giờ" qua TimeProvider để test được bằng FakeTimeProvider
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddTadssIntegration(builder.Configuration);
+// /health/live, /health/ready, /health/dependencies cho Docker healthcheck và CD (Epic 6C, OPS-04)
+builder.Services.AddSmashCourtHealthChecks();
+builder.Services.AddScoped<IBookingDepositService, BookingDepositService>();
+builder.Services.AddScoped<ISlotInterestNotificationService, SlotInterestNotificationService>();
+builder.Services.AddScoped<IBookingApprovalService, BookingApprovalService>();
+builder.Services.AddScoped<IBookingNotificationService, BookingNotificationService>();
+builder.Services.AddScoped<IBookingCancellationService, BookingCancellationService>();
+
 builder.Services.AddScoped<EmailService>();
 builder.Services.AddScoped<OtpService>();
 builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("Jwt"));
@@ -217,20 +217,6 @@ builder.Services.Configure<IpRateLimitPolicies>(builder.Configuration.GetSection
 builder.Services.AddInMemoryRateLimiting();
 builder.Services.AddSingleton<IRateLimitConfiguration, RateLimitConfiguration>();
 
-var vnPayConfig = builder.Configuration.GetSection("VnPay");
-builder.Services.AddVnpayClient(config =>
-{
-    config.TmnCode = vnPayConfig["TmnCode"]!;
-    config.HashSecret = vnPayConfig["HashSecret"]!;
-    config.CallbackUrl = vnPayConfig["CallbackUrl"]!;
-
-    if (!string.IsNullOrWhiteSpace(vnPayConfig["BaseUrl"]))
-        config.BaseUrl = vnPayConfig["BaseUrl"]!;
-    if (!string.IsNullOrWhiteSpace(vnPayConfig["Version"]))
-        config.Version = vnPayConfig["Version"]!;
-    if (!string.IsNullOrWhiteSpace(vnPayConfig["OrderType"]))
-        config.OrderType = vnPayConfig["OrderType"]!;
-});
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders =
@@ -261,78 +247,8 @@ builder.Services.AddCors(options =>
     });
 });
 
-// Rate limiting - 100 requests/minute
-builder.Services.AddRateLimiter(options =>
-{
-    // Login - rất chặt
-    options.AddFixedWindowLimiter("login", opt =>
-    {
-        opt.PermitLimit = 5;
-        opt.Window = TimeSpan.FromMinutes(1);
-        opt.QueueLimit = 0;
-    });
-
-    // Booking / Payment
-    options.AddFixedWindowLimiter("booking", opt =>
-    {
-        opt.PermitLimit = 20;
-        opt.Window = TimeSpan.FromMinutes(1);
-        opt.QueueLimit = 0;
-    });
-
-    // Upload / Email
-    options.AddFixedWindowLimiter("sensitive", opt =>
-    {
-        opt.PermitLimit = 10;
-        opt.Window = TimeSpan.FromMinutes(1);
-        opt.QueueLimit = 0;
-    });
-
-    // AI Public endpoints (FAQ, public chat) - cho phép nhiều request vì là public
-    options.AddFixedWindowLimiter("ai-public", opt =>
-    {
-        opt.PermitLimit = 100;
-        opt.Window = TimeSpan.FromMinutes(1);
-        opt.QueueLimit = 0;
-    });
-
-    // AI User endpoints (customer personalized suggestions) - vừa phải
-    options.AddFixedWindowLimiter("ai-user", opt =>
-    {
-        opt.PermitLimit = 20;
-        opt.Window = TimeSpan.FromMinutes(1);
-        opt.QueueLimit = 0;
-    });
-
-    // AI Management endpoints (analytics, pricing, promotions) - chặt hơn vì tốn tài nguyên
-    options.AddFixedWindowLimiter("ai-management", opt =>
-    {
-        opt.PermitLimit = 10;
-        opt.Window = TimeSpan.FromMinutes(1);
-        opt.QueueLimit = 0;
-    });
-
-    options.RejectionStatusCode = 429;
-
-    options.OnRejected = async (context, token) =>
-    {
-        context.HttpContext.Response.ContentType = "application/json";
-
-        var response = System.Text.Json.JsonSerializer.Serialize(
-            ApiResponse.Fail(
-                "Bạn gửi quá nhiều request, vui lòng thử lại sau",
-                ErrorCodes.OtpLimitExceeded  // 429 — dùng code rate-limit, không phải BadRequest
-            ),
-            new System.Text.Json.JsonSerializerOptions
-            {
-                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-                PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
-            }
-        );
-
-        await context.HttpContext.Response.WriteAsync(response, token);
-    };
-});
+// Rate limiting đếm theo từng người (user hoặc IP), giới hạn cấu hình ở section RateLimiting
+builder.Services.AddSmashCourtRateLimiting(builder.Configuration);
 
 // Swagger
 builder.Services.AddEndpointsApiExplorer();
@@ -479,6 +395,13 @@ builder.Services.AddAuthorization(AuthorizationPolicies.Register);
 
 var app = builder.Build();
 
+// Khóa của tính năng phụ còn thiếu: chỉ cảnh báo, tính năng đó sẽ lỗi lúc dùng (Epic 6C, OPS-03)
+var missingOptionalKeys = RequiredConfiguration.MissingOptionalKeys(app.Configuration);
+if (missingOptionalKeys.Count > 0)
+{
+    app.Logger.LogWarning("Thiếu cấu hình của tính năng phụ (tính năng đó sẽ lỗi khi dùng): {Keys}", string.Join(", ", missingOptionalKeys));
+}
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -494,14 +417,14 @@ app.UseCors("AllowFrontend");
 // IP Rate Limiting middleware for AI endpoints
 app.UseIpRateLimiting();
 
-// Thêm middleware rate limiting toàn cục — có thể override bằng attribute ở controller/action
-app.UseRateLimiter();
 // Middleware xử lý lỗi toàn cục — trả về JSON chuẩn
 app.UseMiddleware<ExceptionMiddleware>();
 // Clear default claim type mapping để giữ nguyên tên claim trong token
 JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
 // Xác thực và phân quyền
 app.UseAuthentication();
+// Rate limiting theo policy của controller/action; đặt SAU xác thực để đếm theo từng người đã đăng nhập
+app.UseRateLimiter();
 // Middleware kiểm tra user status (LOCKED/INACTIVE) - chặn ngay lập tức
 app.UseMiddleware<UserStatusMiddleware>();
 app.UseAuthorization();
@@ -509,6 +432,7 @@ app.UseAuthorization();
 app.UseHangfireServices(app.Configuration);
 
 app.MapControllers();
+app.MapSmashCourtHealthEndpoints();
 
 // SignalR Hub endpoint
 app.MapHub<SmashCourt_BE.Hubs.NotificationHub>("/hubs/notifications");
@@ -536,3 +460,6 @@ using (var scope = app.Services.CreateScope())
 Console.WriteLine("http://localhost:8080/hangfire - Dashboard Hangfire (admin only)");
 
 app.Run();
+
+// Cho project test tham chiếu được lớp Program (WebApplicationFactory<Program>)
+public partial class Program;

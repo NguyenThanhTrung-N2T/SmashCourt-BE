@@ -14,18 +14,21 @@ public class EmailService
     }
 
     // Hàm gửi email chung
-    private async Task SendAsync(string toEmail, string subject, string htmlBody)
+    // protected virtual: host test HTTP ghi lại thư thay vì gửi qua SMTP thật; mọi loại email đều đi qua đây
+    protected virtual async Task SendAsync(string toEmail, string subject, string htmlBody)
     {
         var host = _config["Smtp:Host"] ?? throw new InvalidOperationException("Smtp:Host chưa cấu hình");
         var port = int.Parse(_config["Smtp:Port"] ?? "587");
         var user = _config["Smtp:Username"] ?? throw new InvalidOperationException("Smtp:Username chưa cấu hình");
         var pass = _config["Smtp:Password"] ?? throw new InvalidOperationException("Smtp:Password chưa cấu hình");
         var from = _config["Smtp:From"] ?? user;
+        // Vắng khóa ⇒ true (Gmail, production); chỉ compose phụ Mailpit (không TLS, mạng Docker nội bộ) đặt false
+        var enableSsl = _config.GetValue("Smtp:EnableSsl", true);
 
         using var client = new SmtpClient(host, port)
         {
             Credentials = new NetworkCredential(user, pass),
-            EnableSsl = true
+            EnableSsl = enableSsl
         };
 
         var message = new MailMessage(from, toEmail, subject, htmlBody)
@@ -137,6 +140,50 @@ public class EmailService
         // Xử lý conditional rendering cho discounts
         body = ProcessConditionalSection(body, "LoyaltyDiscount", model.LoyaltyDiscount);
         body = ProcessConditionalSection(body, "PromotionDiscount", model.PromotionDiscount);
+        body = ProcessConditionalSection(body, "DepositPaid", model.DepositPaid);
+        body = ProcessConditionalSection(body, "RemainingAmount", model.RemainingAmount);
+
+        await SendAsync(model.Email, subject, body);
+    }
+
+    // Báo khách đơn online đang chờ Quản lý duyệt mức cọc
+    public Task SendBookingPendingApprovalAsync(DepositApprovalEmailModel model) =>
+        SendApprovalEmailAsync("BookingPendingApproval.html", $"⏳ Đơn {model.BookingCode} đang chờ duyệt - SmashCourt", model);
+
+    // Báo khách đơn đã được duyệt: số cọc, phần còn lại, hạn trả cọc; dẫn tới lịch sử đặt sân, không có link VNPay
+    public Task SendDepositApprovedAsync(DepositApprovalEmailModel model) =>
+        SendApprovalEmailAsync("DepositApproved.html", $"✅ Đơn {model.BookingCode} đã được duyệt, vui lòng thanh toán cọc - SmashCourt", model);
+
+    // Báo khách đơn không được nhận; không ghi lý do của Quản lý (ghi chú nội bộ)
+    public Task SendApprovalRejectedAsync(DepositApprovalEmailModel model) =>
+        SendApprovalEmailAsync("ApprovalRejected.html", $"Đơn {model.BookingCode} không được nhận - SmashCourt", model);
+
+    // Báo khách đơn chờ duyệt đã tự hủy vì chi nhánh chưa duyệt kịp; đơn chờ duyệt không có link thanh toán nên khách chưa bị trừ tiền
+    public Task SendApprovalExpiredAsync(DepositApprovalEmailModel model) =>
+        SendApprovalEmailAsync("ApprovalExpired.html", $"Đơn {model.BookingCode} đã hết hạn duyệt - SmashCourt", model);
+
+    private async Task SendApprovalEmailAsync(string templateFile, string subject, DepositApprovalEmailModel model)
+    {
+        var templatePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Templates", templateFile);
+        if (!File.Exists(templatePath))
+            throw new FileNotFoundException($"Email template not found: {templatePath}");
+
+        var body = (await File.ReadAllTextAsync(templatePath))
+            .Replace("{{Name}}", WebUtility.HtmlEncode(model.Name))
+            .Replace("{{BookingCode}}", model.BookingCode)
+            .Replace("{{BranchName}}", WebUtility.HtmlEncode(model.BranchName))
+            .Replace("{{BranchAddress}}", WebUtility.HtmlEncode(model.BranchAddress))
+            .Replace("{{BranchPhone}}", WebUtility.HtmlEncode(model.BranchPhone))
+            .Replace("{{Courts}}", WebUtility.HtmlEncode(string.Join(", ", model.CourtNames)))
+            .Replace("{{Date}}", model.BookingDate)
+            .Replace("{{Time}}", $"{model.StartTime} – {model.EndTime}")
+            .Replace("{{TotalAmount}}", model.TotalAmount)
+            .Replace("{{DepositAmount}}", model.DepositAmount ?? "")
+            .Replace("{{RemainingAmount}}", model.RemainingAmount ?? "")
+            .Replace("{{PayBefore}}", model.PayBefore ?? "")
+            .Replace("{{ApprovalExpiresAt}}", model.ApprovalExpiresAt ?? "")
+            .Replace("{{BookingsUrl}}", model.BookingsUrl)
+            .Replace("{{Year}}", DateTime.UtcNow.Year.ToString());
 
         await SendAsync(model.Email, subject, body);
     }
@@ -256,11 +303,16 @@ public class EmailService
     /// <param name="branchAddress">Địa chỉ chi nhánh</param>
     /// <param name="branchPhone">Số điện thoại chi nhánh (optional)</param>
     /// <param name="refundAmount">Số tiền hoàn (0 = không hoàn tiền)</param>
+    /// <param name="hasPaidAmount">Đơn đã có khoản thanh toán thành công; hoàn 0 đ mà chưa trả gì thì báo "chưa thanh toán", không báo "hủy quá gần giờ chơi"</param>
     public async Task SendCancelConfirmationAsync(
-        string toEmail, string fullName, Guid bookingId, string branchName, 
-        string branchAddress, string? branchPhone, decimal refundAmount)
+        string toEmail, string fullName, Guid bookingId, string branchName,
+        string branchAddress, string? branchPhone, decimal refundAmount, bool hasPaidAmount)
     {
         var subject = "❌ Xác nhận hủy đặt sân - SmashCourt";
+
+        var noRefundNotice = hasPaidAmount
+            ? "Đơn này không được hoàn tiền do hủy quá gần giờ chơi."
+            : "Đơn chưa được thanh toán nên không phát sinh khoản hoàn tiền nào.";
 
         // Conditional rendering: Có tiền hoàn vs Không hoàn tiền
         var refundMessage = refundAmount > 0
@@ -330,7 +382,7 @@ public class EmailService
                     <tr><td style="padding: 25px;">
                         <p style="margin: 0; color: #92400e; font-size: 15px; line-height: 1.8; text-align: center;">
                             <strong style="font-size: 16px;">⚠️ Thông báo</strong><br/><br/>
-                            Đơn này không được hoàn tiền do hủy quá gần giờ chơi.<br/>
+                            {noRefundNotice}<br/>
                             Cảm ơn bạn đã thông báo trước cho chúng tôi.
                         </p>
                     </td></tr>

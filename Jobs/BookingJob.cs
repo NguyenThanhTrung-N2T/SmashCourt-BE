@@ -9,9 +9,7 @@ using SmashCourt_BE.Repositories.IRepository;
 using SmashCourt_BE.DTOs.SignalR;
 using SmashCourt_BE.Common.Constants;
 using System.Diagnostics;
-using SmashCourt_BE.Services;
 using SmashCourt_BE.Services.IService;
-using Microsoft.Extensions.Configuration;
 
 namespace SmashCourt_BE.Jobs
 {
@@ -27,10 +25,15 @@ namespace SmashCourt_BE.Jobs
     ///   ngăn chặn hai thực thể ứng dụng chạy cùng một tác vụ đồng thời. Thời gian chờ (10 giây)
     ///   được cấu hình ngắn — nếu không lấy được khóa, tác vụ sẽ bị bỏ qua và chờ lượt quét tiếp theo.
     ///
+    /// Đổi trạng thái booking (P6-25, gói 6A-5):
+    ///   Tác vụ 01, 02, 04 xử lý từng đơn trong một transaction riêng; câu cập nhật có điều kiện (hoặc khóa rồi đọc lại) chạy đầu tiên.
+    ///   Đơn vừa được nhân viên check-in, check-out hay hủy thì job thua và bỏ qua, không ghi gì. Không SaveChanges cả lô entity đã nạp
+    ///   từ trước (cách cũ ghi đè được thao tác vừa commit).
+    ///
     /// Cơ chế giải phóng sân:
-    ///   Sân chỉ được đặt về AVAILABLE khi không còn đơn đặt sân hoạt động nào khác giữ sân đó.
-    ///   "Hoạt động" bao gồm: CONFIRMED | PAID_ONLINE | IN_PROGRESS.
-    ///   Đơn đặt sân đang được xử lý sẽ bị loại trừ khỏi kiểm tra sân bận để tránh tự khóa chính nó.
+    ///   Sân chỉ được đặt về AVAILABLE khi không còn đơn đặt sân hoạt động nào khác giữ sân đó
+    ///   ("hoạt động": CONFIRMED | PAID_ONLINE | IN_PROGRESS) và sân không ở SUSPENDED / INACTIVE.
+    ///   "Sân còn bận" tính sau khi job thắng, chỉ loại trừ chính đơn đang xử lý.
     /// </summary>
     public class BookingJob : IBookingJob
     {
@@ -38,19 +41,15 @@ namespace SmashCourt_BE.Jobs
         private readonly SmashCourtContext _db;
         private readonly ISlotInterestRepository _slotInterestRepo;
         private readonly IBroadcastService _broadcast;
-        private readonly EmailService _emailService;
-        private readonly IConfiguration _configuration;
+        private readonly ISlotInterestNotificationService _slotInterestNotifier;
+        private readonly IBookingRepository _bookingRepo;
+        private readonly IInvoiceRepository _invoiceRepo;
+        private readonly ICourtRepository _courtRepo;
+        private readonly IBookingCancellationService _cancellationService;
+        private readonly TimeProvider _timeProvider;
         private readonly ILogger<BookingJob> _logger;
 
         // ── Khai báo hằng số ────────────────────────────────────────────────
-
-        /// <summary>Các trạng thái xác định sân đang được sử dụng.</summary>
-        private static readonly BookingStatus[] ActiveStatuses =
-        [
-            BookingStatus.CONFIRMED,
-            BookingStatus.PAID_ONLINE,
-            BookingStatus.IN_PROGRESS,
-        ];
 
         /// <summary>
         /// Thời gian ân hạn (phút) trước khi đơn đặt sân đã xác nhận nhưng
@@ -58,74 +57,32 @@ namespace SmashCourt_BE.Jobs
         /// </summary>
         private const int NoShowGraceMinutes = 15;
 
+        /// <summary>Số đơn tối đa mỗi lần chạy của job hủy đơn hết hạn; còn thì lần chạy sau (mỗi phút) làm tiếp.</summary>
+        private const int ExpiryBatchSize = 100;
+
         // ── Constructor ─────────────────────────────────────────────────────
         public BookingJob(
             SmashCourtContext db,
             ISlotInterestRepository slotInterestRepo,
             IBroadcastService broadcast,
-            EmailService emailService,
-            IConfiguration configuration,
+            ISlotInterestNotificationService slotInterestNotifier,
+            IBookingRepository bookingRepo,
+            IInvoiceRepository invoiceRepo,
+            ICourtRepository courtRepo,
+            IBookingCancellationService cancellationService,
+            TimeProvider timeProvider,
             ILogger<BookingJob> logger)
         {
             _db = db;
             _slotInterestRepo = slotInterestRepo;
             _broadcast = broadcast;
-            _emailService = emailService;
-            _configuration = configuration;
+            _slotInterestNotifier = slotInterestNotifier;
+            _bookingRepo = bookingRepo;
+            _invoiceRepo = invoiceRepo;
+            _courtRepo = courtRepo;
+            _cancellationService = cancellationService;
+            _timeProvider = timeProvider;
             _logger = logger;
-        }
-
-
-
-        private async Task NotifySlotInterestedUsersAsync(Booking booking)
-        {
-            var frontendUrl = _configuration["FrontendBaseUrl"] ?? "https://smashcourt.vn";
-            var branchName = booking.Branch?.Name ?? string.Empty;
-
-            foreach (var bc in booking.BookingCourts)
-            {
-                var interested = await _slotInterestRepo.GetOverlappingSlotInterestsAsync(
-                    bc.CourtId, bc.Date, bc.StartTime, bc.EndTime);
-
-                if (!interested.Any()) continue;
-
-                _logger.LogInformation(
-                    "[SLOT_INTEREST] Notifying {Count} users for released slot | Court={CourtId} | Date={Date} | Slot={Start}-{End}",
-                    interested.Count, bc.CourtId, bc.Date, bc.StartTime, bc.EndTime);
-
-                var courtName = bc.Court?.Name ?? "Sân";
-                var bookingUrl = $"{frontendUrl}/booking?courtId={bc.CourtId}&date={bc.Date:yyyy-MM-dd}&start={bc.StartTime:HH:mm}&end={bc.EndTime:HH:mm}";
-
-                foreach (var interest in interested)
-                {
-                    try
-                    {
-                        await _emailService.SendSlotAvailableNotificationAsync(
-                            interest.Email,
-                            courtName,
-                            branchName,
-                            bc.Date,
-                            bc.StartTime,
-                            bc.EndTime,
-                            bookingUrl);
-                    }
-                    catch (Exception ex)
-                    {
-                        // Lỗi gửi email không block việc notify người khác
-                        _logger.LogError(ex,
-                            "[SLOT_INTEREST] Failed to send notification to {Email} for slot Court={CourtId}",
-                            interest.Email, bc.CourtId);
-                    }
-                }
-
-                // Xóa tất cả interests của slot này sau khi đã notify (one-shot)
-                var deletedCount = await _slotInterestRepo.DeleteOverlappingSlotInterestsAsync(
-                    bc.CourtId, bc.Date, bc.StartTime, bc.EndTime);
-
-                _logger.LogInformation(
-                    "[SLOT_INTEREST] Deleted {DeletedCount} slot interests after notification | Court={CourtId} | Date={Date} | Slot={Start}-{End}",
-                    deletedCount, bc.CourtId, bc.Date, bc.StartTime, bc.EndTime);
-            }
         }
 
         // ════════════════════════════════════════════════════════════════════
@@ -133,272 +90,86 @@ namespace SmashCourt_BE.Jobs
         // ════════════════════════════════════════════════════════════════════
 
         /// <summary>
-        /// Tác vụ hủy các đơn PENDING có hóa đơn quá hạn thanh toán.
-        ///
-        /// Các trường hợp xử lý:
-        ///   • Trạng thái PENDING + Hóa đơn quá hạn → CANCELLED, giải phóng sân.
-        ///   • Trạng thái PENDING + Chưa quá hạn → Bỏ qua không quét.
-        ///   • Sân đang bị giữ bởi đơn khác → Giữ nguyên trạng thái sân (tránh giải phóng nhầm).
+        /// Hủy đơn PENDING quá hạn thanh toán (spec 7.11, gói 6A-5): tối đa 100 đơn mỗi lần, hạn sớm nhất trước. Mỗi đơn đi qua dịch vụ hủy
+        /// chung trong transaction riêng: khóa booking, kiểm lại hạn (lần gia hạn của Thanh toán lại vừa commit thì bỏ qua), hủy có điều kiện
+        /// (SYSTEM, PAYMENT_EXPIRED hoặc SYSTEM_CLEANUP), nhả sân và slot lock của đơn, Payment chờ ⇒ FAILED, hóa đơn ⇒ EXPIRED, thông báo
+        /// sau commit. Slot lock hết hạn của toàn hệ thống do Tác vụ 03 dọn.
         /// </summary>
         [DisableConcurrentExecution(timeoutInSeconds: 10)]
-        public async Task CancelExpiredPendingBookingsAsync()
-        {
-            var sw = Stopwatch.StartNew();
-            _logger.LogInformation("[Job-01] Bắt đầu quét đơn PENDING quá hạn.");
-
-            try
-            {
-                var now = DateTimeHelper.GetUtcNow();
-                // 1. Tìm các hóa đơn quá hạn và chưa thanh toán
-                var expiredInvoices = await _db.Invoices
-                    .Include(i => i.Booking)
-                        .ThenInclude(b => b.BookingCourts)
-                            .ThenInclude(bc => bc.Court)
-                    .Include(i => i.Booking.Branch)
-                    .Include(i => i.Booking.Customer)
-                    .Where(i => i.PaymentStatus == InvoicePaymentStatus.UNPAID
-                             && i.ExpiresAt < now
-                             && i.Booking.Status == BookingStatus.PENDING)
-                    .ToListAsync();
-
-                if (expiredInvoices.Count == 0)
-                {
-                    _logger.LogInformation("[Job-01] Không có đơn PENDING nào quá hạn. Thời gian chạy: {Ms}ms", sw.ElapsedMilliseconds);
-                    return;
-                }
-
-                // Trích xuất danh sách các đơn đặt sân quá hạn để xử lý
-                var expiredBookings = expiredInvoices.Select(i => i.Booking).ToList();
-
-                var cancelledCourtIds = expiredBookings
-                    .SelectMany(b => b.BookingCourts)
-                    .Select(bc => bc.CourtId)
-                    .Distinct()
-                    .ToHashSet();
-
-                var cancelledBookingIds = expiredBookings
-                    .Select(b => b.Id)
-                    .ToHashSet();
-
-                var busyCourtIds = await GetBusyCourtIdsAsync(cancelledCourtIds, cancelledBookingIds);
-
-                // 2. Duyệt qua hóa đơn để cập nhật hóa đơn và đơn đặt sân tương ứng
-                foreach (var invoice in expiredInvoices)
-                {
-                    // Cập nhật trạng thái hóa đơn
-                    invoice.PaymentStatus = InvoicePaymentStatus.EXPIRED;
-                    invoice.UpdatedAt = now;
-
-                    // Cập nhật trạng thái đơn đặt sân
-                    var booking = invoice.Booking;
-                    if (booking != null)
-                    {
-                        booking.Status = BookingStatus.CANCELLED;
-                        booking.CancelledAt = now;
-                        booking.CancelSource = CancelSourceEnum.SYSTEM;
-                        booking.UpdatedAt = now;
-
-                        ReleaseCourtSlots(booking.BookingCourts, busyCourtIds, now, deactivate: true);
-                    }
-                }
-
-                // Xóa các khóa slot tạm thời đã hết hạn trong cùng một transaction
-                await _db.SlotLocks
-                    .Where(sl => sl.ExpiresAt <= now)
-                    .ExecuteDeleteAsync();
-
-                await _db.SaveChangesAsync();
-
-                // 3. Gửi thông báo real-time qua SignalR
-                foreach (var booking in expiredBookings)
-                {
-                    var customerName = booking.Customer?.FullName ?? booking.GuestName ?? "Khách";
-                    var notification = new BookingNotificationDto
-                    {
-                        BookingId = booking.Id,
-                        CustomerId = booking.CustomerId ?? Guid.Empty,
-                        CustomerName = customerName,
-                        BranchId = booking.BranchId,
-                        BranchName = booking.Branch?.Name ?? "",
-                        CourtIds = booking.BookingCourts.Select(bc => bc.CourtId.ToString()).ToList(),
-                        Status = booking.Status.ToString(),
-                        Message = $"Booking #{booking.BookingCode} của {customerName} đã bị hủy tự động do hết hạn thanh toán.",
-                        Timestamp = DateTimeHelper.GetUtcNow()
-                    };
-
-                    // includeTimeGrid=true: slot released → customers viewing the grid need a refresh
-                    await _broadcast.BroadcastBookingEventAsync(
-                        SignalREvents.BookingExpired,
-                        notification,
-                        booking,
-                        includeTimeGrid: true);
-
-                    // Gửi email cho người dùng đăng ký quan tâm slot trống (nếu có)
-                    await NotifySlotInterestedUsersAsync(booking);
-                }
-
-                _logger.LogInformation(
-                    "[Job-01] Đã hủy {Count} đơn PENDING quá hạn thanh toán. Thời gian chạy: {Ms}ms",
-                    expiredBookings.Count, sw.ElapsedMilliseconds);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "[Job-01] Gặp lỗi không mong muốn. Thời gian chạy: {Ms}ms", sw.ElapsedMilliseconds);
-            }
-        }
+        public Task CancelExpiredPendingBookingsAsync() =>
+            ExpiryBatch.RunAsync("Job-01",
+                () => _bookingRepo.GetExpiredUnpaidIdsAsync(UtcNow(), ExpiryBatchSize),
+                _cancellationService.ExpireUnpaidAsync,
+                _logger);
 
         // ════════════════════════════════════════════════════════════════════
         // Tác vụ 02 · Hoàn tất các đơn đặt sân đã kết thúc giờ chơi (quét mỗi 1 phút)
         // ════════════════════════════════════════════════════════════════════
 
         /// <summary>
-        /// Tác vụ xử lý hoàn tất các đơn đặt sân khi hết giờ chơi.
+        /// Tác vụ xử lý hoàn tất các đơn đặt sân khi hết giờ chơi (giờ kết thúc muộn nhất ≤ bây giờ).
         ///
-        /// Các trường hợp xử lý:
+        /// Mỗi đơn một transaction (B7, P6-25): khóa booking ⇒ đọc lại trạng thái booking và hóa đơn dưới khóa ⇒ đã đổi (nhân viên vừa
+        /// check-out) thì bỏ qua ⇒ câu cập nhật có điều kiện ⇒ tắt booking_courts, trả sân ⇒ commit ⇒ SignalR.
         /// ┌────────────────┬──────────────────────────┬────────────────────────────────┐
-        /// │ Trạng thái     │ Điều kiện hóa đơn        │ Kết quả trạng thái mới         │
+        /// │ Trạng thái     │ Hóa đơn (đọc dưới khóa)  │ Kết quả trạng thái mới         │
         /// ├────────────────┼──────────────────────────┼────────────────────────────────┤
-        /// │ IN_PROGRESS    │ Hóa đơn đã PAID          │ → COMPLETED                    │
-        /// │ IN_PROGRESS    │ Hóa đơn khác PAID        │ → PENDING_PAYMENT              │
-        /// │ PAID_ONLINE    │ Chưa check-in            │ Bỏ qua (Do Job-04 xử lý)       │
-        /// │ PAID_ONLINE    │ Đã check-in + PAID       │ → COMPLETED                    │
-        /// │ PAID_ONLINE    │ Đã check-in + PARTIALLY  │ → PENDING_PAYMENT              │
-        /// │ CONFIRMED      │ Chưa check-in            │ Bỏ qua (Do Job-04 xử lý)       │
-        /// │ CONFIRMED      │ Đã check-in + PAID       │ → COMPLETED                    │
-        /// │ CONFIRMED      │ Đã check-in + khác PAID  │ → PENDING_PAYMENT              │
+        /// │ IN_PROGRESS    │ PAID                     │ → COMPLETED                    │
+        /// │ IN_PROGRESS    │ khác PAID / không có     │ → PENDING_PAYMENT              │
+        /// │ CONFIRMED /    │ Đã check-in (dữ liệu cũ, │ Như IN_PROGRESS                │
+        /// │ PAID_ONLINE    │ check-in nay luôn đổi    │                                │
+        /// │                │ sang IN_PROGRESS)        │                                │
+        /// │ CONFIRMED /    │ Chưa check-in            │ Bỏ qua (Tác vụ 04 xử lý)       │
+        /// │ PAID_ONLINE    │                          │                                │
         /// └────────────────┴──────────────────────────┴────────────────────────────────┘
+        /// Đơn trả cọc online để hóa đơn PARTIALLY_PAID nên sang PENDING_PAYMENT; hóa đơn chỉ đổi updated_at.
         /// </summary>
         [DisableConcurrentExecution(timeoutInSeconds: 10)]
         public async Task ProcessExpiredActiveBookingsAsync()
         {
             var sw = Stopwatch.StartNew();
-            _logger.LogInformation("[Job-02] Bắt đầu quét đơn hoạt động hết giờ.");
-
             try
             {
-                var now = DateTimeHelper.GetUtcNow();
-
-                var activeBookings = await _db.Bookings
-                    .Include(b => b.BookingCourts)
-                        .ThenInclude(bc => bc.Court)
-                    .Include(b => b.Invoice)
-                    .Include(b => b.Branch)
-                    .Include(b => b.Customer)
-                    .Where(b =>
-                        b.Status == BookingStatus.IN_PROGRESS ||
-                        b.Status == BookingStatus.PAID_ONLINE ||
-                        b.Status == BookingStatus.CONFIRMED)
-                    .ToListAsync();
-
-                if (activeBookings.Count == 0)
-                {
-                    _logger.LogInformation("[Job-02] Không có đơn hoạt động nào cần xử lý. Thời gian chạy: {Ms}ms", sw.ElapsedMilliseconds);
-                    return;
-                }
-
-                // Lọc danh sách các đơn đã hết giờ chơi trong bộ nhớ
-                var expiredBookings = activeBookings
-                    .Where(b => b.BookingCourts.Any() &&
-                                ToUtcFromVietnam(
-                                    b.BookingCourts.OrderByDescending(bc => bc.Date)
-                                                   .ThenByDescending(bc => bc.EndTime)
-                                                   .First().Date,
-                                    b.BookingCourts.OrderByDescending(bc => bc.Date)
-                                                   .ThenByDescending(bc => bc.EndTime)
-                                                   .First().EndTime) <= now)
-                    .ToList();
-
-                if (expiredBookings.Count == 0)
+                var now = UtcNow();
+                var candidates = await _bookingRepo.GetPlayEndCandidatesAsync(TodayInVietnam(now));
+                var ended = candidates.Where(b => b.BookingCourts.Count > 0 && LastPlayEndUtc(b) <= now).ToList();
+                if (ended.Count == 0)
                 {
                     _logger.LogInformation("[Job-02] Không có đơn nào hết giờ chơi. Thời gian chạy: {Ms}ms", sw.ElapsedMilliseconds);
                     return;
                 }
 
-                var affectedCourtIds = expiredBookings
-                    .SelectMany(b => b.BookingCourts)
-                    .Select(bc => bc.CourtId)
-                    .Distinct()
-                    .ToHashSet();
-
-                var processingIds = expiredBookings
-                    .Select(b => b.Id)
-                    .ToHashSet();
-
-                var busyCourtIds = await GetBusyCourtIdsAsync(affectedCourtIds, processingIds);
-
-                int completed = 0;
-                int pendingPayment = 0;
-                int skipped = 0;
-                int errors = 0;
-
-                foreach (var booking in expiredBookings)
+                int completed = 0, pendingPayment = 0, skipped = 0, errors = 0;
+                foreach (var booking in ended)
                 {
                     try
                     {
-                        var result = FinalizeExpiredBooking(booking, busyCourtIds, now);
-
-                        switch (result)
+                        var newStatus = await EndPlayAsync(booking, now);
+                        if (newStatus == null)
                         {
-                            case FinalizeResult.Completed: completed++; break;
-                            case FinalizeResult.PendingPayment: pendingPayment++; break;
-                            case FinalizeResult.Skipped: skipped++; break;
+                            skipped++;
+                            _logger.LogInformation("[Job-02] Đơn {BookingId} đã đổi trạng thái trước khi job khóa được; bỏ qua", booking.Id);
+                            continue;
                         }
+
+                        if (newStatus == BookingStatus.COMPLETED)
+                            completed++;
+                        else
+                            pendingPayment++;
+                        await NotifyPlayEndedAsync(booking, now);
                     }
                     catch (Exception ex)
                     {
                         errors++;
-                        _logger.LogError(ex,
-                            "[Job-02] Thất bại khi hoàn tất đơn {BookingId} (Trạng thái={Status}). Bỏ qua.",
+                        _logger.LogError(ex, "[Job-02] Thất bại khi hoàn tất đơn {BookingId} (Trạng thái={Status}). Bỏ qua.",
                             booking.Id, booking.Status);
-                        // Khôi phục lại trạng thái trong bộ nhớ để tránh lưu lỗi dữ liệu một phần
-                        _db.Entry(booking).State = EntityState.Unchanged;
-                        foreach (var bc in booking.BookingCourts)
-                            _db.Entry(bc).State = EntityState.Unchanged;
-                        if (booking.Invoice != null)
-                            _db.Entry(booking.Invoice).State = EntityState.Unchanged;
-                    }
-                }
-
-                await _db.SaveChangesAsync();
-
-                // 3. Gửi thông báo real-time qua SignalR
-                foreach (var booking in expiredBookings)
-                {
-                    if (booking.Status == BookingStatus.COMPLETED || booking.Status == BookingStatus.PENDING_PAYMENT)
-                    {
-                        var customerName = booking.Customer?.FullName ?? booking.GuestName ?? "Khách";
-                        var notification = new BookingNotificationDto
-                        {
-                            BookingId = booking.Id,
-                            CustomerId = booking.CustomerId ?? Guid.Empty,
-                            CustomerName = customerName,
-                            BranchId = booking.BranchId,
-                            BranchName = booking.Branch?.Name ?? "",
-                            CourtIds = booking.BookingCourts.Select(bc => bc.CourtId.ToString()).ToList(),
-                            Status = booking.Status.ToString(),
-                            Message = booking.Status == BookingStatus.COMPLETED
-                                ? $"Booking #{booking.BookingCode} của {customerName} đã hoàn tất."
-                                : $"Booking #{booking.BookingCode} của {customerName} đã hết giờ chơi. Vui lòng thanh toán tại quầy.",
-                            Timestamp = DateTimeHelper.GetUtcNow()
-                        };
-
-                        var eventName = booking.Status == BookingStatus.COMPLETED
-                            ? SignalREvents.BookingCompleted
-                            : SignalREvents.BookingPendingPayment; // PENDING_PAYMENT sử dụng BookingPendingPayment để phân biệt với Cancelled
-
-                        // includeTimeGrid=false: session end doesn't open a currently bookable slot
-                        await _broadcast.BroadcastBookingEventAsync(
-                            eventName,
-                            notification,
-                            booking,
-                            includeTimeGrid: false);
                     }
                 }
 
                 _logger.LogInformation(
-                    "[Job-02] Hoàn tất quét. Đã xong={Completed} Chờ thanh toán={PendingPayment} " +
-                    "Bỏ qua={Skipped} Lỗi={Errors} Thời gian chạy: {Ms}ms",
-                    completed, pendingPayment, skipped, errors, sw.ElapsedMilliseconds);
+                    "[Job-02] {Candidates} ứng viên hết giờ: hoàn tất {Completed}, chờ thanh toán {PendingPayment}, " +
+                    "bỏ qua vì đổi trạng thái {Skipped}, lỗi {Errors}. Thời gian chạy: {Ms}ms",
+                    ended.Count, completed, pendingPayment, skipped, errors, sw.ElapsedMilliseconds);
             }
             catch (Exception ex)
             {
@@ -406,8 +177,60 @@ namespace SmashCourt_BE.Jobs
             }
         }
 
+        // Một đơn hết giờ trong transaction riêng; trả trạng thái mới, null khi đơn đã đổi (job thua)
+        private async Task<BookingStatus?> EndPlayAsync(Booking booking, DateTime now)
+        {
+            BookingStatus newStatus;
+            using (var transaction = TransactionScopeHelper.ReadCommitted())
+            {
+                // Check-out và thêm dịch vụ cũng khóa booking trước nên dữ liệu đọc dưới khóa là bản cuối cùng
+                await _bookingRepo.LockAsync(booking.Id);
+                var current = await _bookingRepo.GetBookingStatusAsync(booking.Id);
+                if (current != booking.Status)
+                    return null;
+
+                var invoiceStatus = await _invoiceRepo.GetPaymentStatusByBookingIdAsync(booking.Id);
+                if (invoiceStatus == null)
+                    _logger.LogWarning("[Job-02] Đơn {BookingId} không có hóa đơn; chuyển về PENDING_PAYMENT", booking.Id);
+                newStatus = invoiceStatus == InvoicePaymentStatus.PAID ? BookingStatus.COMPLETED : BookingStatus.PENDING_PAYMENT;
+
+                if (!await _bookingRepo.EndPlayAsync(booking.Id, current, newStatus, now))
+                    return null;
+
+                await ReleaseCourtsAsync(booking, now);
+                transaction.Complete();
+            }
+
+            booking.Status = newStatus;
+            booking.UpdatedAt = now;
+            return newStatus;
+        }
+
+        private async Task NotifyPlayEndedAsync(Booking booking, DateTime now)
+        {
+            try
+            {
+                var customerName = CustomerName(booking);
+                var completed = booking.Status == BookingStatus.COMPLETED;
+                var message = completed
+                    ? $"Booking #{booking.BookingCode} của {customerName} đã hoàn tất."
+                    : $"Booking #{booking.BookingCode} của {customerName} đã hết giờ chơi. Vui lòng thanh toán tại quầy.";
+
+                // includeTimeGrid=false: hết giờ chơi không mở ra slot còn đặt được
+                await _broadcast.BroadcastBookingEventAsync(
+                    completed ? SignalREvents.BookingCompleted : SignalREvents.BookingPendingPayment,
+                    BookingNotification(booking, message, now),
+                    booking,
+                    includeTimeGrid: false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[Job-02] Gửi thông báo của đơn {BookingId} lỗi; dữ liệu đã ghi không đổi", booking.Id);
+            }
+        }
+
         // ════════════════════════════════════════════════════════════════════
-        // Tác vụ 03 · Dọn dẹp các slot tạm khóa đã hết hiệu lực (quét mỗi 30 giây)
+        // Tác vụ 03 · Dọn dẹp các slot tạm khóa đã hết hiệu lực (quét mỗi 1 phút)
         // ════════════════════════════════════════════════════════════════════
 
         /// <summary>
@@ -440,156 +263,122 @@ namespace SmashCourt_BE.Jobs
         // ════════════════════════════════════════════════════════════════════
 
         /// <summary>
-        /// Tác vụ quét các đơn CONFIRMED / PAID_ONLINE không check-in trong thời gian ân hạn.
-        /// Chuyển trạng thái sang NO_SHOW và giải phóng sân trống.
+        /// Tác vụ quét các đơn CONFIRMED / PAID_ONLINE không check-in quá giờ bắt đầu + 15 phút ân hạn.
+        /// Mỗi đơn một transaction (B6, P6-25): câu cập nhật có điều kiện "trạng thái chưa đổi và checked_in_at còn trống" chạy đầu tiên;
+        /// thua (nhân viên vừa check-in hoặc vừa hủy) thì bỏ qua. Thắng thì tắt booking_courts, trả sân; sau commit phát BookingNoShow và
+        /// báo người chờ slot qua dịch vụ chung (link trang chủ).
         /// </summary>
         [DisableConcurrentExecution(timeoutInSeconds: 10)]
         public async Task DetectNoShowBookingsAsync()
         {
             var sw = Stopwatch.StartNew();
-            _logger.LogInformation("[Job-04] Bắt đầu quét phát hiện NO_SHOW.");
-
             try
             {
-                var now = DateTimeHelper.GetUtcNow();
-                var eligibleStatuses = BookingStatusTransition.GetNoShowEligibleStatuses();
-
-                var candidates = await _db.Bookings
-                    .Include(b => b.BookingCourts)
-                        .ThenInclude(bc => bc.Court)
-                    .Include(b => b.Invoice)
-                    .Include(b => b.Branch)
-                    .Include(b => b.Customer)
-                    .Where(b => eligibleStatuses.Contains(b.Status) && b.CheckedInAt == null)
-                    .ToListAsync();
-
-                if (candidates.Count == 0)
-                {
-                    _logger.LogInformation("[Job-04] Không phát hiện đơn tiềm năng NO_SHOW. Thời gian chạy: {Ms}ms", sw.ElapsedMilliseconds);
-                    return;
-                }
-
-                var noShowBookings = candidates
-                    .Where(b =>
-                    {
-                        if (!b.BookingCourts.Any()) return false;
-                        var first = b.BookingCourts
-                            .OrderBy(bc => bc.Date)
-                            .ThenBy(bc => bc.StartTime)
-                            .First();
-                        return ToUtcFromVietnam(first.Date, first.StartTime)
-                                   .AddMinutes(NoShowGraceMinutes) < now;
-                    })
+                var now = UtcNow();
+                var candidates = await _bookingRepo.GetNoShowCandidatesAsync(TodayInVietnam(now));
+                var noShows = candidates
+                    .Where(b => b.BookingCourts.Count > 0 && FirstPlayStartUtc(b).AddMinutes(NoShowGraceMinutes) < now)
                     .ToList();
-
-                if (noShowBookings.Count == 0)
+                if (noShows.Count == 0)
                 {
                     _logger.LogInformation("[Job-04] Không có đơn nào vượt quá thời gian ân hạn. Thời gian chạy: {Ms}ms", sw.ElapsedMilliseconds);
                     return;
                 }
 
-                var affectedCourtIds = noShowBookings
-                    .SelectMany(b => b.BookingCourts)
-                    .Select(bc => bc.CourtId)
-                    .Distinct()
-                    .ToHashSet();
-
-                var processingIds = noShowBookings
-                    .Select(b => b.Id)
-                    .ToHashSet();
-
-                var busyCourtIds = await GetBusyCourtIdsAsync(affectedCourtIds, processingIds);
-
-                int marked = 0;
-                int errors = 0;
-
-                foreach (var booking in noShowBookings)
+                int marked = 0, skipped = 0, errors = 0;
+                foreach (var booking in noShows)
                 {
                     try
                     {
-                        booking.Status = BookingStatus.NO_SHOW;
-                        booking.UpdatedAt = now;
-
-                        foreach (var bc in booking.BookingCourts)
+                        if (!await MarkNoShowAsync(booking, now))
                         {
-                            bc.IsActive = false;
-
-                            if (bc.Court != null
-                                && !busyCourtIds.Contains(bc.CourtId)
-                                && bc.Court.Status != CourtStatus.SUSPENDED
-                                && bc.Court.Status != CourtStatus.INACTIVE)
-                            {
-                                bc.Court.Status = CourtStatus.AVAILABLE;
-                                bc.Court.UpdatedAt = now;
-                            }
+                            skipped++;
+                            _logger.LogInformation(
+                                "[Job-04] Đơn {BookingId} đã check-in hoặc đổi trạng thái trước khi job ghi; bỏ qua", booking.Id);
+                            continue;
                         }
 
                         marked++;
-
-                        var first = booking.BookingCourts.OrderBy(bc => bc.Date).ThenBy(bc => bc.StartTime).First();
-                        var courtIdList = string.Join(", ", booking.BookingCourts.Select(bc => bc.CourtId));
-
-                        _logger.LogWarning(
-                            "[Job-04] CẢNH BÁO NO_SHOW — BookingId={BookingId} CustomerId={CustomerId} " +
-                            "Courts=[{CourtIds}] Ngày={Date} Giờ Bắt Đầu={Start} " +
-                            "Phương thức TT={Timing} Số tiền={Amount}",
-                            booking.Id,
-                            booking.CustomerId ?? Guid.Empty,
-                            courtIdList,
-                            first.Date,
-                            first.StartTime,
-                            booking.Invoice?.PaymentTiming.ToString() ?? "N/A",
-                            booking.Invoice?.FinalTotal ?? 0);
+                        LogNoShow(booking);
+                        await NotifyNoShowAsync(booking, now);
                     }
                     catch (Exception ex)
                     {
                         errors++;
-                        _logger.LogError(ex,
-                            "[Job-04] Lỗi khi đánh dấu đơn {BookingId} là NO_SHOW. Bỏ qua.",
-                            booking.Id);
-                        _db.Entry(booking).State = EntityState.Unchanged;
-                        foreach (var bc in booking.BookingCourts)
-                            _db.Entry(bc).State = EntityState.Unchanged;
+                        _logger.LogError(ex, "[Job-04] Lỗi khi đánh dấu đơn {BookingId} là NO_SHOW. Bỏ qua.", booking.Id);
                     }
                 }
 
-                await _db.SaveChangesAsync();
-
-                // Gửi thông báo real-time qua SignalR cho các đơn NO_SHOW
-                foreach (var booking in noShowBookings)
-                {
-                    var customerName = booking.Customer?.FullName ?? booking.GuestName ?? "Khách";
-                    var notification = new BookingNotificationDto
-                    {
-                        BookingId = booking.Id,
-                        CustomerId = booking.CustomerId ?? Guid.Empty,
-                        CustomerName = customerName,
-                        BranchId = booking.BranchId,
-                        BranchName = booking.Branch?.Name ?? "",
-                        CourtIds = booking.BookingCourts.Select(bc => bc.CourtId.ToString()).ToList(),
-                        Status = booking.Status.ToString(),
-                        Message = $"Booking #{booking.BookingCode} của {customerName} bị đánh dấu NO_SHOW do không nhận sân đúng giờ.",
-                        Timestamp = DateTimeHelper.GetUtcNow()
-                    };
-
-                    // includeTimeGrid=true: no-show releases the slot → timegrid needs refresh
-                    await _broadcast.BroadcastBookingEventAsync(
-                        SignalREvents.BookingNoShow,
-                        notification,
-                        booking,
-                        includeTimeGrid: true);
-
-                    // Gửi email cho người dùng đăng ký quan tâm slot trống (nếu có)
-                    await NotifySlotInterestedUsersAsync(booking);
-                }
-
                 _logger.LogInformation(
-                    "[Job-04] Kết thúc. Đã xử lý NO_SHOW={Marked} Lỗi={Errors} Thời gian chạy: {Ms}ms",
-                    marked, errors, sw.ElapsedMilliseconds);
+                    "[Job-04] {Candidates} ứng viên quá ân hạn: đã đánh NO_SHOW {Marked}, bỏ qua vì đổi trạng thái {Skipped}, lỗi {Errors}. " +
+                    "Thời gian chạy: {Ms}ms",
+                    noShows.Count, marked, skipped, errors, sw.ElapsedMilliseconds);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "[Job-04] Gặp lỗi không mong muốn. Thời gian chạy: {Ms}ms", sw.ElapsedMilliseconds);
+            }
+        }
+
+        // Một đơn NO_SHOW trong transaction riêng; false khi job thua
+        private async Task<bool> MarkNoShowAsync(Booking booking, DateTime now)
+        {
+            using (var transaction = TransactionScopeHelper.ReadCommitted())
+            {
+                // Câu điều kiện đầu tiên vừa khóa dòng booking vừa quyết định bên thắng với check-in / hủy của nhân viên
+                if (!await _bookingRepo.MarkNoShowAsync(booking.Id, booking.Status, now))
+                    return false;
+
+                await ReleaseCourtsAsync(booking, now);
+                transaction.Complete();
+            }
+
+            booking.Status = BookingStatus.NO_SHOW;
+            booking.UpdatedAt = now;
+            return true;
+        }
+
+        private void LogNoShow(Booking booking)
+        {
+            var first = booking.BookingCourts.OrderBy(bc => bc.Date).ThenBy(bc => bc.StartTime).First();
+            _logger.LogWarning(
+                "[Job-04] CẢNH BÁO NO_SHOW — BookingId={BookingId} CustomerId={CustomerId} " +
+                "Courts=[{CourtIds}] Ngày={Date} Giờ Bắt Đầu={Start} " +
+                "Phương thức TT={Timing} Số tiền={Amount}",
+                booking.Id,
+                booking.CustomerId ?? Guid.Empty,
+                string.Join(", ", booking.BookingCourts.Select(bc => bc.CourtId)),
+                first.Date,
+                first.StartTime,
+                booking.Invoice?.PaymentTiming.ToString() ?? "N/A",
+                booking.Invoice?.FinalTotal ?? 0);
+        }
+
+        // Mỗi bước tự bắt lỗi: thông báo hỏng không đổi kết quả đã ghi và không chặn bước sau
+        private async Task NotifyNoShowAsync(Booking booking, DateTime now)
+        {
+            try
+            {
+                // includeTimeGrid=true: NO_SHOW nhả slot nên lưới giờ cần tải lại
+                await _broadcast.BroadcastBookingEventAsync(
+                    SignalREvents.BookingNoShow,
+                    BookingNotification(booking,
+                        $"Booking #{booking.BookingCode} của {CustomerName(booking)} bị đánh dấu NO_SHOW do không nhận sân đúng giờ.", now),
+                    booking,
+                    includeTimeGrid: true);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[Job-04] Phát BookingNoShow của đơn {BookingId} lỗi; dữ liệu đã ghi không đổi", booking.Id);
+            }
+
+            try
+            {
+                await _slotInterestNotifier.NotifyReleasedSlotsAsync(booking);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[Job-04] Báo người chờ slot của đơn {BookingId} lỗi; dữ liệu đã ghi không đổi", booking.Id);
             }
         }
 
@@ -617,152 +406,53 @@ namespace SmashCourt_BE.Jobs
         // ════════════════════════════════════════════════════════════════════
 
         /// <summary>
-        /// Trả về danh sách ID sân hiện đang bận bởi các đơn đặt sân đang hoạt động khác.
-        /// Tránh giải phóng nhầm sân khi kết thúc một đơn nhưng sân đang được đặt tiếp.
+        /// Tắt booking_courts của đơn và trả sân về AVAILABLE khi không còn đơn hoạt động khác giữ sân (tính sau khi job thắng, chỉ loại
+        /// trừ chính đơn này); sân SUSPENDED / INACTIVE giữ nguyên. Gọi trong transaction của job, sau câu cập nhật có điều kiện.
         /// </summary>
-        private async Task<HashSet<Guid>> GetBusyCourtIdsAsync(
-            HashSet<Guid> candidateCourtIds,
-            HashSet<Guid> excludeBookingIds)
+        private async Task ReleaseCourtsAsync(Booking booking, DateTime now)
         {
-            if (candidateCourtIds.Count == 0) return [];
+            await _bookingRepo.UpdateCourtActiveStatusAsync(booking.Id, false);
 
-            var ids = await _db.BookingCourts
-                .Where(other =>
-                    candidateCourtIds.Contains(other.CourtId) &&
-                    other.IsActive &&
-                    !excludeBookingIds.Contains(other.BookingId) &&
-                    ActiveStatuses.Contains(other.Booking.Status))
-                .Select(other => other.CourtId)
-                .Distinct()
-                .ToListAsync();
-
-            return ids.ToHashSet();
-        }
-
-        /// <summary>
-        /// Hủy kích hoạt BookingCourt và đặt trạng thái sân về trống (AVAILABLE) nếu an toàn.
-        /// </summary>
-        private static void ReleaseCourtSlots(
-            IEnumerable<BookingCourt> slots,
-            HashSet<Guid> busyCourtIds,
-            DateTime now,
-            bool deactivate)
-        {
-            foreach (var bc in slots)
-            {
-                if (deactivate) bc.IsActive = false;
-
-                if (bc.Court != null
-                    && !busyCourtIds.Contains(bc.CourtId)
-                    && bc.Court.Status != CourtStatus.SUSPENDED
-                    && bc.Court.Status != CourtStatus.INACTIVE)
-                {
-                    bc.Court.Status = CourtStatus.AVAILABLE;
-                    bc.Court.UpdatedAt = now;
-                }
-            }
-        }
-
-        /// <summary>
-        /// Logic lõi xử lý hoàn tất cho từng đơn hết giờ của Job-02.
-        /// </summary>
-        private FinalizeResult FinalizeExpiredBooking(
-            Booking booking,
-            HashSet<Guid> busyCourtIds,
-            DateTime now)
-        {
-            if (!booking.BookingCourts.Any())
-            {
-                _logger.LogWarning(
-                    "[Job-02] Đơn đặt {BookingId} không chứa BookingCourts. Bỏ qua.",
-                    booking.Id);
-                return FinalizeResult.Skipped;
-            }
-
-            var invoice = booking.Invoice;
-
-            switch (booking.Status)
-            {
-                case BookingStatus.PAID_ONLINE:
-                case BookingStatus.CONFIRMED:
-                    {
-                        if (booking.CheckedInAt == null)
-                            return FinalizeResult.Skipped;
-
-                        return CompleteOrPendPayment(booking, invoice, busyCourtIds, now);
-                    }
-
-                case BookingStatus.IN_PROGRESS:
-                    {
-                        return CompleteOrPendPayment(booking, invoice, busyCourtIds, now);
-                    }
-
-                default:
-                    _logger.LogWarning(
-                        "[Job-02] Trạng thái không mong muốn {Status} trên đơn {BookingId}.",
-                        booking.Status, booking.Id);
-                    return FinalizeResult.Skipped;
-            }
-        }
-
-        /// <summary>
-        /// Chuyển đơn sang COMPLETED hoặc PENDING_PAYMENT dựa trên hóa đơn, sau đó giải phóng sân.
-        /// </summary>
-        private FinalizeResult CompleteOrPendPayment(
-            Booking booking,
-            Invoice? invoice,
-            HashSet<Guid> busyCourtIds,
-            DateTime now)
-        {
-            if (invoice == null)
-            {
-                _logger.LogWarning(
-                    "[Job-02] Đơn đặt {BookingId} (Trạng thái={Status}) không có hóa đơn. " +
-                    "Mặc định chuyển về PENDING_PAYMENT.",
-                    booking.Id, booking.Status);
-            }
-
-            bool fullyPaid = invoice?.PaymentStatus == InvoicePaymentStatus.PAID;
-
-            booking.Status = fullyPaid ? BookingStatus.COMPLETED : BookingStatus.PENDING_PAYMENT;
-            booking.UpdatedAt = now;
-
-            if (invoice != null) invoice.UpdatedAt = now;
+            var courtIds = booking.BookingCourts.Select(bc => bc.CourtId).Distinct().ToList();
+            var held = await _bookingRepo.GetCourtsHeldByOtherBookingsAsync(courtIds, booking.Id);
+            var free = courtIds.Except(held).ToList();
+            if (free.Count > 0)
+                await _courtRepo.ReleaseToAvailableAsync(free, now);
 
             foreach (var bc in booking.BookingCourts)
-            {
                 bc.IsActive = false;
-
-                if (bc.Court != null
-                    && !busyCourtIds.Contains(bc.CourtId)
-                    && bc.Court.Status != CourtStatus.SUSPENDED
-                    && bc.Court.Status != CourtStatus.INACTIVE)
-                {
-                    bc.Court.Status = CourtStatus.AVAILABLE;
-                    bc.Court.UpdatedAt = now;
-                }
-            }
-
-            return fullyPaid ? FinalizeResult.Completed : FinalizeResult.PendingPayment;
         }
 
-        /// <summary>
-        /// Chuyển đổi cặp ngày+giờ từ múi giờ Việt Nam sang UTC.
-        /// </summary>
-        private static DateTime ToUtcFromVietnam(DateOnly date, TimeOnly time)
+        private static BookingNotificationDto BookingNotification(Booking booking, string message, DateTime timestamp) => new()
         {
-            var local = date.ToDateTime(time);
-            return TimeZoneInfo.ConvertTimeToUtc(
-                DateTime.SpecifyKind(local, DateTimeKind.Unspecified),
-                DateTimeHelper.VNTimezone);
-        }
-    }
+            BookingId = booking.Id,
+            CustomerId = booking.CustomerId ?? Guid.Empty,
+            CustomerName = CustomerName(booking),
+            BranchId = booking.BranchId,
+            BranchName = booking.Branch?.Name ?? "",
+            CourtIds = booking.BookingCourts.Select(bc => bc.CourtId.ToString()).ToList(),
+            Status = booking.Status.ToString(),
+            Message = message,
+            Timestamp = timestamp
+        };
 
-    /// <summary>Kết quả xử lý hoàn tất để tổng hợp báo cáo log.</summary>
-    internal enum FinalizeResult
-    {
-        Completed,
-        PendingPayment,
-        Skipped,
+        private static string CustomerName(Booking booking) => booking.Customer?.FullName ?? booking.GuestName ?? "Khách";
+
+        // Giờ bắt đầu sớm nhất / kết thúc muộn nhất của đơn (giờ VN quy đổi UTC)
+        private static DateTime FirstPlayStartUtc(Booking booking)
+        {
+            var first = booking.BookingCourts.OrderBy(bc => bc.Date).ThenBy(bc => bc.StartTime).First();
+            return DateTimeHelper.ToUtcFromVietnam(first.Date, first.StartTime);
+        }
+
+        private static DateTime LastPlayEndUtc(Booking booking)
+        {
+            var last = booking.BookingCourts.OrderByDescending(bc => bc.Date).ThenByDescending(bc => bc.EndTime).First();
+            return DateTimeHelper.ToUtcFromVietnam(last.Date, last.EndTime);
+        }
+
+        private static DateOnly TodayInVietnam(DateTime nowUtc) => DateOnly.FromDateTime(DateTimeHelper.ToVietnamTime(nowUtc));
+
+        private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
     }
 }

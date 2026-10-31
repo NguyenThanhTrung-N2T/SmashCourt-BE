@@ -1,6 +1,9 @@
+using System.Globalization;
 using SmashCourt_BE.DTOs.Email;
+using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
+using SmashCourt_BE.Services.Deposit;
 
 namespace SmashCourt_BE.Factories;
 
@@ -65,6 +68,11 @@ public static class BookingEmailFactory
             ? "-" + FormatCurrency(invoice.PromotionDiscountAmount)
             : null;
 
+        // Chỉ hiện phần cọc khi khách mới trả một phần, phần còn lại thu tại quầy
+        var remaining = invoice?.DepositAmount is > 0 and var deposit
+            ? DepositFieldsMapper.RemainingAmount(invoice.FinalTotal, deposit)
+            : 0m;
+
         var paymentMethod = MapPaymentMethod(invoice?.Payments?.FirstOrDefault()?.Method);
         var paymentStatus = MapPaymentStatus(invoice?.PaymentStatus);
 
@@ -95,9 +103,63 @@ public static class BookingEmailFactory
             PromotionDiscount = promotionDiscount,
             PaymentMethod = paymentMethod,
             PaymentStatus = paymentStatus,
+            DepositPaid = remaining > 0 ? FormatCurrency(invoice!.DepositAmount!.Value) : null,
+            RemainingAmount = remaining > 0 ? FormatCurrency(remaining) : null,
             CancelUrl = cancelUrl
         };
     }
+
+    /// <summary>
+    /// Model cho email luồng duyệt cọc (chờ duyệt, đã duyệt, bị từ chối). Booking cần nạp sẵn Customer, Branch, BookingCourts.Court, Invoice.
+    /// Giờ (hạn duyệt, hạn trả cọc) đổi từ UTC sang giờ VN; không đưa lý do của Quản lý vào email. Hạn trả cọc hiển thị là mốc muộn nhất
+    /// khách còn bấm thanh toán được (hạn − khoảng đệm link − 1', P6-27), không phải hạn của đơn.
+    /// </summary>
+    public static DepositApprovalEmailModel BuildApproval(Booking booking, string frontendBaseUrl, int paymentLinkBufferMinutes)
+    {
+        ArgumentNullException.ThrowIfNull(booking);
+
+        var email = booking.Customer?.Email;
+        var name = booking.Customer?.FullName;
+        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(name))
+            throw new InvalidOperationException($"Missing recipient info for booking {booking.Id}");
+
+        var courtNames = booking.BookingCourts?
+            .Where(bc => bc.Court != null)
+            .Select(bc => bc.Court.Name)
+            .ToList() ?? new List<string>();
+        if (!courtNames.Any())
+            courtNames.Add("Sân không xác định");
+
+        var firstSlot = booking.BookingCourts?.OrderBy(bc => bc.Date).ThenBy(bc => bc.StartTime).FirstOrDefault();
+        var invoice = booking.Invoice;
+        var deposit = invoice?.DepositAmount;
+
+        return new DepositApprovalEmailModel
+        {
+            Email = email,
+            Name = name,
+            BranchName = booking.Branch?.Name ?? "SmashCourt",
+            BranchAddress = booking.Branch?.Address ?? "Địa chỉ không xác định",
+            BranchPhone = booking.Branch?.Phone ?? "Liên hệ qua website",
+            CourtNames = courtNames,
+            BookingDate = booking.BookingDate.ToString("dd/MM/yyyy"),
+            StartTime = firstSlot?.StartTime.ToString("HH:mm") ?? "00:00",
+            EndTime = firstSlot?.EndTime.ToString("HH:mm") ?? "00:00",
+            BookingCode = booking.BookingCode,
+            TotalAmount = FormatCurrency(invoice?.FinalTotal ?? 0),
+            DepositAmount = deposit is { } d ? FormatCurrency(d) : null,
+            RemainingAmount = deposit is { } paid ? FormatCurrency(Math.Max(0, (invoice?.FinalTotal ?? 0) - paid)) : null,
+            PayBefore = FormatVietnamTime(invoice?.ExpiresAt is { } expiresAt
+                ? PaymentHoldPolicy.LatestPaymentStart(expiresAt, paymentLinkBufferMinutes)
+                : null),
+            ApprovalExpiresAt = FormatVietnamTime(booking.ApprovalExpiresAt),
+            BookingsUrl = $"{frontendBaseUrl.TrimEnd('/')}/bookings"
+        };
+    }
+
+    // Mốc UTC trong DB ⇒ giờ VN dạng "HH:mm dd/MM/yyyy"
+    private static string? FormatVietnamTime(DateTime? utc) =>
+        utc is { } value ? DateTimeHelper.ToVietnamTime(value).ToString("HH:mm dd/MM/yyyy", CultureInfo.InvariantCulture) : null;
 
     /// <summary>
     /// Format số tiền thành chuỗi VND với dấu phân cách hàng nghìn

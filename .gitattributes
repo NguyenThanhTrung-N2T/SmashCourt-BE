@@ -1,0 +1,2 @@
+# Script shell chạy trong container Linux và CI: luôn LF, kể cả trên Windows có core.autocrlf=true (CRLF làm bash báo lỗi "command not found" ở ký tự \r)
+*.sh text eol=lf

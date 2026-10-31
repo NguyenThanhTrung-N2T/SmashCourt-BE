@@ -30,6 +30,16 @@ public static class ErrorCodes
     public const string SlotUnavailable  = "SLOT_UNAVAILABLE";
     public const string SlotUnavailableNotifyRegistered = "SLOT_UNAVAILABLE_NOTIFY_REGISTERED";
 
+    // ─── Deposit Approval ────────────────────────────────────────────────
+    public const string BookingRejected           = "BOOKING_REJECTED";             // 400: TADSS từ chối đơn đặt sân online (nhánh c)
+    public const string BookingNotPendingApproval = "BOOKING_NOT_PENDING_APPROVAL"; // 409: đơn không ở trạng thái chờ duyệt
+    public const string ApprovalAlreadyResolved   = "APPROVAL_ALREADY_RESOLVED";    // 409: đơn đã được duyệt/từ chối trước đó
+    public const string ApprovalExpired           = "APPROVAL_EXPIRED";             // 409: đã quá hạn duyệt
+    public const string ApprovalDecisionNotFound  = "APPROVAL_DECISION_NOT_FOUND";  // 409: không tìm thấy quyết định cọc của đơn
+    public const string TadssUnavailable          = "TADSS_UNAVAILABLE";            // 503: TADSS không phản hồi khi duyệt/từ chối, đơn vẫn chờ
+    public const string PaymentHoldExpired        = "PAYMENT_HOLD_EXPIRED";         // 400: thanh toán lại sau hạn giữ chỗ tuyệt đối
+    public const string BookingAlreadyStarted     = "BOOKING_ALREADY_STARTED";      // 400: khách tự hủy khi đã tới giờ bắt đầu
+
     // ─── Branch Management ───────────────────────────────────────────────
     public const string BranchNotFound         = "BRANCH_NOT_FOUND";
     public const string UserNotFound           = "USER_NOT_FOUND";

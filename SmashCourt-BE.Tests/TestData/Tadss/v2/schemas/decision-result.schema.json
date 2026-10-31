@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tadss.local/schemas/v2/decision-result.schema.json",
+  "title": "DecisionResult v2",
+  "description": "Response 200 của POST /api/v2/decisions — INTEGRATION_SPEC §3.3; INV-7: APPROVED ⇔ deposit, NEED_APPROVAL ⇔ approvalExpiresAt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["decisionId", "reservationId", "status", "deposit", "strategyName", "strategyVersion", "executionType", "fallbackUsed", "reasonCode", "reasons", "recommendations", "approvalExpiresAt", "evaluatedAt"],
+  "properties": {
+    "decisionId": { "$ref": "#/$defs/uuid" },
+    "reservationId": { "$ref": "#/$defs/uuid" },
+    "status": { "enum": ["APPROVED", "NEED_APPROVAL", "REJECTED"] },
+    "deposit": { "oneOf": [{ "$ref": "#/$defs/deposit" }, { "type": "null" }] },
+    "strategyName": { "type": "string", "minLength": 1 },
+    "strategyVersion": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "executionType": { "enum": ["AUTOMATED", "FALLBACK", "CACHE_HIT"] },
+    "fallbackUsed": { "type": "boolean" },
+    "reasonCode": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "reasons": { "type": "array", "items": { "type": "string" } },
+    "recommendations": { "type": "array", "items": { "$ref": "#/$defs/recommendation" } },
+    "approvalExpiresAt": { "oneOf": [{ "$ref": "#/$defs/dateTime" }, { "type": "null" }] },
+    "evaluatedAt": { "$ref": "#/$defs/dateTime" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "APPROVED" } } },
+      "then": { "properties": { "deposit": { "$ref": "#/$defs/deposit" } } },
+      "else": { "properties": { "deposit": { "type": "null" } } }
+    },
+    {
+      "if": { "properties": { "status": { "const": "NEED_APPROVAL" } } },
+      "then": { "properties": { "approvalExpiresAt": { "$ref": "#/$defs/dateTime" } } },
+      "else": { "properties": { "approvalExpiresAt": { "type": "null" } } }
+    }
+  ],
+  "$defs": {
+    "uuid": { "type": "string", "format": "uuid" },
+    "dateTime": { "type": "string", "format": "date-time" },
+    "deposit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rate", "amount", "currency"],
+      "properties": {
+        "rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "amount": { "type": "number", "minimum": 0 },
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" }
+      }
+    },
+    "recommendation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "description"],
+      "properties": {
+        "type": { "enum": ["REQUIRE_APPROVAL", "ALTERNATIVE_SLOT", "ALTERNATIVE_RESOURCE", "PRIORITY_ESCALATION"] },
+        "description": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

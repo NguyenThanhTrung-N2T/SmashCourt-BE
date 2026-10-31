@@ -23,12 +23,12 @@ public class LoyaltyTransactionQuery
     public int PageSize { get; set; } = 20;
     
     /// <summary>
-    /// Filter từ ngày
+    /// Filter từ ngày (ngày theo giờ VN, dạng yyyy-MM-dd; phần giờ bị bỏ qua)
     /// </summary>
     public DateTime? FromDate { get; set; }
-    
+
     /// <summary>
-    /// Filter đến ngày
+    /// Filter đến ngày (ngày theo giờ VN, tính hết ngày; phần giờ bị bỏ qua)
     /// </summary>
     public DateTime? ToDate { get; set; }
 }

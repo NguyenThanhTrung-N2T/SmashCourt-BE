@@ -39,5 +39,11 @@ namespace SmashCourt_BE.DTOs.Payment
         /// Response code từ VNPay (00 = success)
         /// </summary>
         public string? ResponseCode { get; set; }
+
+        /// <summary>
+        /// Trạng thái đơn đọc từ DB lúc gọi (tên enum như OnlineBookingResponse.Status); null khi chữ ký sai hoặc không tìm thấy giao dịch.
+        /// FE rẽ nhánh theo trường này; IsSuccess chỉ là kết quả của cổng (N-36, P6-28)
+        /// </summary>
+        public string? BookingStatus { get; set; }
     }
 }

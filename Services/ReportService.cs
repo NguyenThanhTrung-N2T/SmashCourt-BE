@@ -42,7 +42,7 @@ public class ReportService : IReportService
     /// </summary>
     private (DateOnly fromDate, DateOnly toDate) ValidateDateRange(ReportFilterDto filter)
     {
-        var toDate = filter.ToDate ?? DateOnly.FromDateTime(DateTime.UtcNow);
+        var toDate = filter.ToDate ?? DateTimeHelper.GetTodayInVietnam();
         var fromDate = filter.FromDate ?? toDate.AddDays(-30);
 
         // Validate FromDate <= ToDate
@@ -58,23 +58,22 @@ public class ReportService : IReportService
     }
 
     /// <summary>
-    /// Tính khoảng thời gian hiện tại và khoảng tương đương trước đó
+    /// Kỳ so sánh của khoảng đã chuẩn hóa [fromDate; toDate]: cùng số ngày, liền trước, tính bằng DateOnly (T-16).
+    /// False khi trước fromDate không đủ ngày (sát ngày đầu của lịch): không có kỳ so sánh
     /// </summary>
-    private static (
-        DateTime currentStart,
-        DateTime currentEnd,
-        DateTime previousStart,
-        DateTime previousEnd
-    ) GetComparisonPeriods(ReportFilterDto filter)
+    private static bool TryGetPreviousPeriod(
+        DateOnly fromDate, DateOnly toDate, out DateOnly previousFrom, out DateOnly previousTo)
     {
-        var currentStart = filter.FromDate!.Value.ToDateTime(TimeOnly.MinValue);
-        var currentEnd = filter.ToDate!.Value.ToDateTime(TimeOnly.MaxValue);
+        var days = toDate.DayNumber - fromDate.DayNumber + 1;
+        if (fromDate.DayNumber < days)
+        {
+            previousFrom = previousTo = default;
+            return false;
+        }
 
-        var durationDays = (currentEnd - currentStart).TotalDays + 1;
-        var previousStart = currentStart.AddDays(-durationDays);
-        var previousEnd = currentStart.AddSeconds(-1);
-
-        return (currentStart, currentEnd, previousStart, previousEnd);
+        previousFrom = fromDate.AddDays(-days);
+        previousTo = fromDate.AddDays(-1);
+        return true;
     }
 
     /// <summary>
@@ -150,13 +149,9 @@ public class ReportService : IReportService
         // Query current period
         var summary = await _reportRepo.GetDashboardSummaryAsync(fromDate, toDate, filter.BranchId, isAllTime);
 
-        // Percentage changes — only when a date range is provided
-        if (!isAllTime)
+        // Percentage changes — only when a date range is provided and a previous period exists
+        if (!isAllTime && TryGetPreviousPeriod(fromDate, toDate, out var prevFromDate, out var prevToDate))
         {
-            var (_, _, prevStart, prevEnd) = GetComparisonPeriods(filter);
-            var prevFromDate = DateOnly.FromDateTime(prevStart);
-            var prevToDate = DateOnly.FromDateTime(prevEnd.Date);
-
             var prev = await _reportRepo.GetDashboardSummaryAsync(
                 prevFromDate, prevToDate, filter.BranchId, isAllTime: false);
 
@@ -274,13 +269,9 @@ public class ReportService : IReportService
         // Query current period (chỉ chi nhánh mình)
         var summary = await _reportRepo.GetDashboardSummaryAsync(fromDate, toDate, branchId, isAllTime);
 
-        // Percentage changes — only when a date range is provided
-        if (!isAllTime)
+        // Percentage changes — only when a date range is provided and a previous period exists
+        if (!isAllTime && TryGetPreviousPeriod(fromDate, toDate, out var prevFromDate, out var prevToDate))
         {
-            var (_, _, prevStart, prevEnd) = GetComparisonPeriods(filter);
-            var prevFromDate = DateOnly.FromDateTime(prevStart);
-            var prevToDate = DateOnly.FromDateTime(prevEnd.Date);
-
             var prev = await _reportRepo.GetDashboardSummaryAsync(
                 prevFromDate, prevToDate, branchId, isAllTime: false);
 

@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tadss.local/schemas/v2/decision-detail.schema.json",
+  "title": "DecisionDetail v2",
+  "description": "Response 200 của GET /api/v2/decisions/{decisionId} — INTEGRATION_SPEC §3.4; override theo §3.6, outcome theo §3.7; INV-7 áp cho result.status. Mỗi schema v2 tự đủ ($defs nội bộ), nên $defs.request là bản sao của decision-request.schema.json (sửa một bên phải sửa bên kia).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["decisionId", "reservationId", "request", "result", "execution", "override", "outcome", "createdAt", "correlationId"],
+  "properties": {
+    "decisionId": { "$ref": "#/$defs/uuid" },
+    "reservationId": { "$ref": "#/$defs/uuid" },
+    "request": { "$ref": "#/$defs/request" },
+    "result": { "$ref": "#/$defs/result" },
+    "execution": { "$ref": "#/$defs/execution" },
+    "override": { "oneOf": [{ "$ref": "#/$defs/override" }, { "type": "null" }] },
+    "outcome": { "oneOf": [{ "$ref": "#/$defs/outcome" }, { "type": "null" }] },
+    "createdAt": { "$ref": "#/$defs/dateTime" },
+    "correlationId": { "oneOf": [{ "type": "string" }, { "type": "null" }] }
+  },
+  "$defs": {
+    "uuid": { "type": "string", "format": "uuid" },
+    "dateTime": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]{1,7})?(Z|[+-][0-9]{2}:[0-9]{2})$" },
+    "count": { "type": "integer", "minimum": 0 },
+    "deposit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rate", "amount", "currency"],
+      "properties": {
+        "rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "amount": { "type": "number", "minimum": 0 },
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" }
+      }
+    },
+    "recommendation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "description"],
+      "properties": {
+        "type": { "enum": ["REQUIRE_APPROVAL", "ALTERNATIVE_SLOT", "ALTERNATIVE_RESOURCE", "PRIORITY_ESCALATION"] },
+        "description": { "type": "string", "minLength": 1 }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "strategyStatus", "deposit", "reasonCode", "reasons", "recommendations", "approvalExpiresAt"],
+      "properties": {
+        "status": { "enum": ["APPROVED", "NEED_APPROVAL", "REJECTED"] },
+        "strategyStatus": { "enum": ["APPROVED", "NEED_APPROVAL", "REJECTED"] },
+        "deposit": { "oneOf": [{ "$ref": "#/$defs/deposit" }, { "type": "null" }] },
+        "reasonCode": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "reasons": { "type": "array", "items": { "type": "string" } },
+        "recommendations": { "type": "array", "items": { "$ref": "#/$defs/recommendation" } },
+        "approvalExpiresAt": { "oneOf": [{ "$ref": "#/$defs/dateTime" }, { "type": "null" }] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "APPROVED" } } },
+          "then": { "properties": { "deposit": { "$ref": "#/$defs/deposit" } } },
+          "else": { "properties": { "deposit": { "type": "null" } } }
+        },
+        {
+          "if": { "properties": { "status": { "const": "NEED_APPROVAL" } } },
+          "then": { "properties": { "approvalExpiresAt": { "$ref": "#/$defs/dateTime" } } },
+          "else": { "properties": { "approvalExpiresAt": { "type": "null" } } }
+        }
+      ]
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strategyName", "strategyVersion", "executionType", "executionTimeMs", "fallbackUsed", "failureReason", "cacheHit"],
+      "properties": {
+        "strategyName": { "type": "string", "minLength": 1 },
+        "strategyVersion": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+        "executionType": { "enum": ["AUTOMATED", "FALLBACK", "CACHE_HIT"] },
+        "executionTimeMs": { "type": "integer", "minimum": 0 },
+        "fallbackUsed": { "type": "boolean" },
+        "failureReason": { "oneOf": [{ "type": "string" }, { "type": "null" }] },
+        "cacheHit": { "type": "boolean" }
+      }
+    },
+    "override": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decisionId", "action", "deposit", "actorId", "reason", "overriddenAt"],
+      "properties": {
+        "decisionId": { "$ref": "#/$defs/uuid" },
+        "action": { "enum": ["APPROVE", "REJECT"] },
+        "deposit": { "oneOf": [{ "$ref": "#/$defs/deposit" }, { "type": "null" }] },
+        "actorId": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 5, "maxLength": 500 },
+        "overriddenAt": { "$ref": "#/$defs/dateTime" }
+      },
+      "if": { "properties": { "action": { "const": "APPROVE" } } },
+      "then": { "properties": { "deposit": { "$ref": "#/$defs/deposit" } } },
+      "else": { "properties": { "deposit": { "type": "null" } } }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decisionId", "outcome", "occurredAt", "reportedAt"],
+      "properties": {
+        "decisionId": { "$ref": "#/$defs/uuid" },
+        "outcome": { "enum": ["COMPLETED", "NO_SHOW", "CANCELLED_BY_CUSTOMER", "CANCELLED_BY_STAFF", "PAYMENT_EXPIRED", "APPROVAL_EXPIRED", "REJECTED"] },
+        "occurredAt": { "$ref": "#/$defs/dateTime" },
+        "reportedAt": { "$ref": "#/$defs/dateTime" }
+      }
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reservationId", "branchId", "branchTimeZone", "items", "customer", "totalPrice", "currency", "channel", "requestedAt"],
+      "properties": {
+        "reservationId": { "$ref": "#/$defs/uuid" },
+        "branchId": { "$ref": "#/$defs/uuid" },
+        "branchTimeZone": { "type": "string", "minLength": 1 },
+        "items": { "type": "array", "minItems": 1, "maxItems": 20, "items": { "$ref": "#/$defs/item" } },
+        "customer": { "$ref": "#/$defs/customer" },
+        "totalPrice": { "type": "number", "minimum": 0 },
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+        "channel": { "enum": ["ONLINE", "WALK_IN"] },
+        "demand": { "oneOf": [{ "$ref": "#/$defs/demand" }, { "type": "null" }] },
+        "requestedAt": { "$ref": "#/$defs/dateTime" },
+        "metadata": { "oneOf": [{ "type": "object", "additionalProperties": { "type": "string" } }, { "type": "null" }] }
+      }
+    },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["resourceId", "resourceTypeId", "startTime", "endTime", "price"],
+      "properties": {
+        "resourceId": { "$ref": "#/$defs/uuid" },
+        "resourceTypeId": { "$ref": "#/$defs/uuid" },
+        "startTime": { "$ref": "#/$defs/dateTime" },
+        "endTime": { "$ref": "#/$defs/dateTime" },
+        "price": { "type": "number", "minimum": 0 }
+      }
+    },
+    "customer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["isGuest", "tier"],
+      "properties": {
+        "customerId": { "oneOf": [{ "$ref": "#/$defs/uuid" }, { "type": "null" }] },
+        "isGuest": { "type": "boolean" },
+        "tier": { "enum": ["STANDARD", "SILVER", "GOLD", "PLATINUM", "DIAMOND"] },
+        "memberSince": { "oneOf": [{ "$ref": "#/$defs/dateTime" }, { "type": "null" }] },
+        "history": { "oneOf": [{ "$ref": "#/$defs/history" }, { "type": "null" }] }
+      },
+      "if": { "properties": { "isGuest": { "const": false } } },
+      "then": { "required": ["customerId"], "properties": { "customerId": { "$ref": "#/$defs/uuid" } } },
+      "else": { "properties": { "customerId": { "type": "null" }, "memberSince": { "type": "null" } } }
+    },
+    "history": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["completedCount", "noShowCount", "cancelledCount"],
+      "properties": {
+        "completedCount": { "$ref": "#/$defs/count" },
+        "noShowCount": { "$ref": "#/$defs/count" },
+        "cancelledCount": { "$ref": "#/$defs/count" },
+        "lateCancelledCount": { "$ref": "#/$defs/count" },
+        "paymentExpiredCount": { "$ref": "#/$defs/count" },
+        "lastCompletedAt": { "oneOf": [{ "$ref": "#/$defs/dateTime" }, { "type": "null" }] }
+      }
+    },
+    "demand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["occupancyRate", "waitlistCount"],
+      "properties": {
+        "occupancyRate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "waitlistCount": { "$ref": "#/$defs/count" }
+      }
+    }
+  }
+}

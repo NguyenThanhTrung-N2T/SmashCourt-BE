@@ -1,0 +1,28 @@
+# Compose phụ cho đợt E2E / LT-04 (plan 6A-6 Task 12, P6-30): email đi vào Mailpit thay Gmail SMTP (giới hạn ~500 thư/ngày).
+# Dùng: docker compose -f docker-compose.yml -f docker-compose.mailpit.yml up -d --build
+# Giao diện + API Mailpit: http://localhost:8025 (chỉ 127.0.0.1). Mailpit không có TLS nên Smtp__EnableSsl=false chỉ đặt ở file này.
+# Tài khoản SMTP là giá trị giả (Mailpit nhận mọi tài khoản), để mật khẩu Gmail thật không bị gửi sang Mailpit.
+
+services:
+  smashcourt-be:
+    environment:
+      - Smtp__Host=mailpit
+      - Smtp__Port=1025
+      - Smtp__EnableSsl=false
+      - Smtp__Username=smashcourt@mailpit.local
+      - Smtp__Password=mailpit
+      - Smtp__From=no-reply@smashcourt.local
+    depends_on:
+      - mailpit
+
+  mailpit:
+    image: axllent/mailpit:v1.27.10
+    container_name: smashcourt-mailpit
+    ports:
+      - "127.0.0.1:8025:8025"
+    environment:
+      - MP_SMTP_AUTH_ACCEPT_ANY=1
+      - MP_SMTP_AUTH_ALLOW_INSECURE=1
+    networks:
+      - smashcourt-network
+    restart: unless-stopped

@@ -23,6 +23,10 @@ public class ReportRepository : IReportRepository
     private const int OFF_PEAK_HOURS_COUNT = 3;
     private const int MAX_COURT_UTILIZATION_ITEMS = 100;
 
+    // Dashboard Manager: "sắp bắt đầu" trong 30' tới, "nguy cơ không đến" tới 15' sau giờ bắt đầu
+    private const int UPCOMING_WINDOW_MINUTES = 30;
+    private static readonly TimeSpan NoShowRiskWindow = TimeSpan.FromMinutes(15);
+
     public ReportRepository(SmashCourtContext context)
     {
         _context = context;
@@ -99,10 +103,8 @@ public class ReportRepository : IReportRepository
 
             if (!isAllTime)
             {
-                // PostgreSQL yêu cầu DateTime phải có Kind = UTC cho timestamp with time zone
-                var fromDateTime = fromDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
-                var toDateTime = toDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc);
-                userQuery = userQuery.Where(u => u.CreatedAt >= fromDateTime && u.CreatedAt <= toDateTime);
+                var (fromUtc, toUtcExclusive) = VietnamDaysToUtcRange(fromDate, toDate);
+                userQuery = userQuery.Where(u => u.CreatedAt >= fromUtc && u.CreatedAt < toUtcExclusive);
             }
 
             newCustomers = await userQuery.CountAsync();
@@ -274,7 +276,7 @@ public class ReportRepository : IReportRepository
         Guid branchId, DateOnly today, DateTime now)
     {
         var nowTime = TimeOnly.FromDateTime(now);
-        var upcomingLimit = TimeOnly.FromDateTime(now.AddMinutes(30));
+        var upcomingLimit = UpcomingLimit(now);
 
         var revenueToday = await _context.Invoices
             .AsNoTracking()
@@ -341,7 +343,7 @@ public class ReportRepository : IReportRepository
         Guid branchId, DateOnly today, DateTime now, int fixedCards = 8)
     {
         var nowTime = TimeOnly.FromDateTime(now);
-        var upcomingLimit = TimeOnly.FromDateTime(now.AddMinutes(30));
+        var upcomingLimit = UpcomingLimit(now);
 
         var courts = await _context.Courts
             .AsNoTracking()
@@ -1344,13 +1346,12 @@ public class ReportRepository : IReportRepository
         }
         else
         {
-            var fromDateTime = fromDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
-            var toDateTime = toDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc);
+            var (fromUtc, toUtcExclusive) = VietnamDaysToUtcRange(fromDate, toDate);
             newCustomers = await _context.Users
                 .AsNoTracking()
                 .Where(u => u.Role == UserRole.CUSTOMER &&
-                            u.CreatedAt >= fromDateTime &&
-                            u.CreatedAt <= toDateTime)
+                            u.CreatedAt >= fromUtc &&
+                            u.CreatedAt < toUtcExclusive)
                 .CountAsync();
         }
 
@@ -1454,14 +1455,13 @@ public class ReportRepository : IReportRepository
     private async Task<List<CustomerAcquisitionTrendDto>> GetCustomerAcquisitionTrendAsync(
         DateOnly fromDate, DateOnly toDate, Guid? branchId, string? groupBy)
     {
-        var fromDateTime = fromDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
-        var toDateTime = toDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc);
+        var (fromUtc, toUtcExclusive) = VietnamDaysToUtcRange(fromDate, toDate);
 
         var newCustomersQuery = _context.Users
             .AsNoTracking()
             .Where(u => u.Role == UserRole.CUSTOMER &&
-                        u.CreatedAt >= fromDateTime &&
-                        u.CreatedAt <= toDateTime);
+                        u.CreatedAt >= fromUtc &&
+                        u.CreatedAt < toUtcExclusive);
 
         if (branchId.HasValue)
         {
@@ -1470,15 +1470,14 @@ public class ReportRepository : IReportRepository
                     b.CustomerId == u.Id && b.BranchId == branchId.Value));
         }
 
-        // Load to memory vì DateOnly.FromDateTime() không thể translate sang SQL
-        // EF Core không hỗ trợ DateOnly operations trong query translation
+        // Load to memory vì đổi múi giờ rồi lấy ngày không dịch được sang SQL
         var data = await newCustomersQuery
-            .Select(u => u.CreatedAt.Date)
+            .Select(u => u.CreatedAt)
             .ToListAsync();
 
-        // GroupBy trong memory để convert DateTime.Date sang DateOnly
+        // GroupBy trong memory theo ngày giờ VN (T-9)
         var trendData = data
-            .GroupBy(d => DateOnly.FromDateTime(d))
+            .GroupBy(createdAt => DateOnly.FromDateTime(DateTimeHelper.ToVietnamTime(createdAt)))
             .Select(g => new CustomerAcquisitionTrendDto
             {
                 Period = g.Key.ToString("yyyy-MM-dd"),
@@ -1788,6 +1787,17 @@ public class ReportRepository : IReportRepository
 
     #region Manager Dashboard Helpers
 
+    // Ngày VN [fromDate; toDate] ⇒ nửa khoảng UTC [00:00 VN fromDate; 00:00 VN ngày sau toDate), dùng với >= và < (T-9)
+    private static (DateTime FromUtc, DateTime ToUtcExclusive) VietnamDaysToUtcRange(DateOnly fromDate, DateOnly toDate) =>
+        (DateTimeHelper.StartOfVietnamDayUtc(fromDate), DateTimeHelper.EndOfVietnamDayUtcExclusive(toDate));
+
+    // Giới hạn "sắp bắt đầu" = now + 30'; sang ngày sau thì lấy hết ngày hôm nay, không để TimeOnly quay về 00:xx (T-10)
+    private static TimeOnly UpcomingLimit(DateTime now)
+    {
+        var limit = now.AddMinutes(UPCOMING_WINDOW_MINUTES);
+        return limit.Date > now.Date ? TimeOnly.MaxValue : TimeOnly.FromDateTime(limit);
+    }
+
     private static BookingStatus[] GetCancelledOrRefundedStatuses() =>
     [
         BookingStatus.CANCELLED,
@@ -1811,6 +1821,7 @@ public class ReportRepository : IReportRepository
     private static BookingStatus[] GetLiveCourtBookingStatuses() =>
     [
         BookingStatus.PENDING,
+        BookingStatus.PENDING_APPROVAL,
         BookingStatus.CONFIRMED,
         BookingStatus.PAID_ONLINE,
         BookingStatus.PENDING_PAYMENT,
@@ -1820,6 +1831,7 @@ public class ReportRepository : IReportRepository
     private static BookingStatus[] GetForecastBookingStatuses() =>
     [
         BookingStatus.PENDING,
+        BookingStatus.PENDING_APPROVAL,
         BookingStatus.CONFIRMED,
         BookingStatus.PAID_ONLINE,
         BookingStatus.IN_PROGRESS
@@ -1855,7 +1867,8 @@ public class ReportRepository : IReportRepository
             .Where(bc => GetCheckInWaitingStatuses().Contains(bc.Booking.Status) &&
                          bc.Booking.CheckedInAt == null &&
                          bc.StartTime <= nowTime &&
-                         bc.StartTime.AddMinutes(15) >= nowTime)
+                         // Hiệu TimeOnly đúng khi StartTime <= nowTime; StartTime.AddMinutes(15) quay về 00:xx với đơn sau 23:45 (T-10)
+                         nowTime - bc.StartTime <= NoShowRiskWindow)
             .OrderBy(bc => bc.StartTime)
             .FirstOrDefault();
 
@@ -1946,7 +1959,8 @@ public class ReportRepository : IReportRepository
             StartTime = minStart?.ToString("yyyy-MM-ddTHH:mm:ss"),
             EndTime = maxEnd?.ToString("yyyy-MM-ddTHH:mm:ss"),
             Amount = CalculateActionAmount(booking),
-            CreatedAt = booking.CreatedAt.ToString("yyyy-MM-ddTHH:mm:ss")
+            // Giờ tường VN như StartTime/EndTime (chuỗi không offset, FE đọc theo giờ máy); CreatedAt lưu UTC (T-15)
+            CreatedAt = DateTimeHelper.ToVietnamTime(booking.CreatedAt).ToString("yyyy-MM-ddTHH:mm:ss")
         };
     }
 

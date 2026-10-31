@@ -21,23 +21,12 @@ namespace SmashCourt_BE.Services.IService
         // Lấy thông tin booking theo id, có phân quyền
         Task<BookingDto> GetDetailsByIdAsync(Guid id, Guid currentUserId, string currentUserRole);
 
-        // Tạo booking online (có thể có hoặc không có customerId, nếu không có thì sẽ tạo booking với thông tin khách vãng lai)
-        Task<OnlineBookingResponse> CreateOnlineAsync(CreateOnlineBookingDto dto, Guid? customerId);
+        // Tạo booking online cho khách đã đăng nhập: giữ chỗ, hỏi quyết định cọc, rồi áp nhánh xử lý
+        Task<OnlineBookingResponse> CreateOnlineAsync(CreateOnlineBookingDto dto, Guid customerId);
 
         // Đặt lịch trực tiếp tại quầy (walk-in booking) bởi nhân viên, có thể có hoặc không có customerId, nếu không có thì sẽ tạo booking với thông tin khách vãng lai
         Task<BookingDto> CreateWalkInAsync(CreateWalkInBookingDto dto, Guid createdBy);
 
-        // Hủy booking bởi nhân viên (staff) 
-        Task CancelByStaffAsync(Guid id, Guid cancelledBy, string currentUserRole);
-
-        // Hủy booking bởi khách hàng (customer) - authenticated cancel from booking history
-        Task CancelByCustomerAsync(Guid id, Guid customerId);
-
-        // Lấy thông tin hủy booking theo token (dùng cho khách hàng hủy booking online)
-        Task<CancelTokenInfoDto> GetCancelInfoAsync(string token);
-
-        // Hủy booking bởi khách hàng thông qua token (dùng cho khách hàng hủy booking online)
-        Task CancelByTokenAsync(string token);
 
         // Check-in booking bởi nhân viên (staff)
         Task CheckInAsync(Guid id, Guid currentUserId, string currentUserRole);

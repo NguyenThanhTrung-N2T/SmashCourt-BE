@@ -26,6 +26,18 @@ namespace SmashCourt_BE.Models.Entities
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
 
+        // Quyết định cọc TADSS (đơn không qua TADSS: tất cả NULL)
+        public Guid? TadssDecisionId { get; set; }
+        public DateTime? ApprovalExpiresAt { get; set; }            // Hạn Manager duyệt; giữ lại sau khi duyệt/hủy để tra cứu
+        public string? ApprovalReasonCode { get; set; }
+        public List<string>? ApprovalReasons { get; set; }          // Lý do cần duyệt (text[])
+        public ApprovalResult? ApprovalResult { get; set; }
+        public Guid? ApprovalResolvedBy { get; set; }
+        public DateTime? ApprovalResolvedAt { get; set; }
+        public string? ApprovalResolutionNote { get; set; }
+        public BookingCancelReason? CancelReason { get; set; }
+        public DateTime? TadssOutcomeReportedAt { get; set; }      // Đã báo kết quả booking về TADSS
+
         // Navigation
         public Branch Branch { get; set; } = null!;
         public User? Customer { get; set; }
@@ -34,7 +46,7 @@ namespace SmashCourt_BE.Models.Entities
         public ICollection<BookingCourt> BookingCourts { get; set; } = [];
         public ICollection<BookingService> BookingServices { get; set; } = [];
         public BookingPromotion? BookingPromotion { get; set; }
-        public SlotLock? SlotLock { get; set; }
+        public ICollection<SlotLock> SlotLocks { get; set; } = [];  // Một lock cho mỗi sân của đơn
         public Invoice? Invoice { get; set; }
         public ICollection<LoyaltyTransaction> LoyaltyTransactions { get; set; } = [];
     }

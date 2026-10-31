@@ -20,4 +20,18 @@ public static class SignalREvents
     // Payment Events
     public const string PaymentSuccess = "PaymentSuccess";
     public const string PaymentFailed = "PaymentFailed";
+
+    // Deposit approval Events — FE: smashcourt-fe/src/lib/signalr-events.ts
+    public const string BookingPendingApproval = "BookingPendingApproval";
+    public const string BookingApprovalResolved = "BookingApprovalResolved";
+    public const string PendingApprovalQueueChanged = "PendingApprovalQueueChanged";
+
+    // Giá trị change / reason của PendingApprovalQueueChanged
+    public const string QueueChangeAdded = "ADDED";
+    public const string QueueChangeRemoved = "REMOVED";
+    public const string QueueReasonNew = "NEW";
+    public const string QueueReasonApproved = "APPROVED";
+    public const string QueueReasonRejected = "REJECTED";
+    public const string QueueReasonCancelled = "CANCELLED";
+    public const string QueueReasonExpired = "EXPIRED";
 }

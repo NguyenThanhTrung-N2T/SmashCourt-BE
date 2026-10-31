@@ -1,0 +1,65 @@
+{
+  "decisionId": "0f9c7e5a-0000-4000-8000-00000000d003",
+  "reservationId": "5b0a6f0e-7c0d-4a0e-9a64-0c2e7f1b9a11",
+  "request": {
+    "reservationId": "5b0a6f0e-7c0d-4a0e-9a64-0c2e7f1b9a11",
+    "branchId": "1f2e3d4c-0000-4000-8000-000000000001",
+    "branchTimeZone": "Asia/Ho_Chi_Minh",
+    "items": [
+      {
+        "resourceId": "c0a8012e-0000-4000-8000-0000000000aa",
+        "resourceTypeId": "c0a8012e-0000-4000-8000-0000000000bb",
+        "startTime": "2026-11-20T18:00:00+07:00",
+        "endTime": "2026-11-20T20:00:00+07:00",
+        "price": 240000
+      }
+    ],
+    "customer": {
+      "customerId": "9d3f1c2a-0000-4000-8000-000000000123",
+      "isGuest": false,
+      "tier": "GOLD",
+      "memberSince": "2025-03-14T08:00:00+07:00",
+      "history": { "completedCount": 12, "noShowCount": 1, "cancelledCount": 2, "lateCancelledCount": 1, "paymentExpiredCount": 0, "lastCompletedAt": "2026-11-02T20:00:00+07:00" }
+    },
+    "totalPrice": 228000,
+    "currency": "VND",
+    "channel": "ONLINE",
+    "demand": null,
+    "requestedAt": "2026-11-18T09:15:00+07:00",
+    "metadata": null
+  },
+  "result": {
+    "status": "NEED_APPROVAL",
+    "strategyStatus": "NEED_APPROVAL",
+    "deposit": null,
+    "reasonCode": "HIGH_VALUE_REVIEW",
+    "reasons": ["Đơn có giá trị cao, cần Manager xem xét mức cọc."],
+    "recommendations": [{ "type": "REQUIRE_APPROVAL", "description": "Manager duyệt kèm mức cọc." }],
+    "approvalExpiresAt": "2026-11-18T14:15:00+07:00"
+  },
+  "execution": {
+    "strategyName": "DefaultDecisionStrategy",
+    "strategyVersion": "2.1.0",
+    "executionType": "AUTOMATED",
+    "executionTimeMs": 3,
+    "fallbackUsed": false,
+    "failureReason": null,
+    "cacheHit": false
+  },
+  "override": {
+    "decisionId": "0f9c7e5a-0000-4000-8000-00000000d003",
+    "action": "APPROVE",
+    "deposit": { "rate": 0.3, "amount": 68400, "currency": "VND" },
+    "actorId": "7c1d9e42-0000-4000-8000-00000000a001",
+    "reason": "Khách quen, chi nhánh bảo lãnh",
+    "overriddenAt": "2026-11-18T03:00:00.120+00:00"
+  },
+  "outcome": {
+    "decisionId": "0f9c7e5a-0000-4000-8000-00000000d003",
+    "outcome": "COMPLETED",
+    "occurredAt": "2026-11-20T13:00:00+00:00",
+    "reportedAt": "2026-11-20T13:05:00+00:00"
+  },
+  "createdAt": "2026-11-18T02:15:00.041+00:00",
+  "correlationId": "0HN7ABC:00000001"
+}

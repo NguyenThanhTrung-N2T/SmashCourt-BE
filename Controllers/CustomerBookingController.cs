@@ -17,11 +17,14 @@ namespace SmashCourt_BE.Controllers
     {
         private readonly IBookingService _service;
         private readonly IPaymentService _paymentService;
+        private readonly IBookingCancellationService _cancellationService;
 
-        public CustomerBookingController(IBookingService service, IPaymentService paymentService)
+        public CustomerBookingController(
+            IBookingService service, IPaymentService paymentService, IBookingCancellationService cancellationService)
         {
             _service = service;
             _paymentService = paymentService;
+            _cancellationService = cancellationService;
         }
 
 
@@ -57,7 +60,7 @@ namespace SmashCourt_BE.Controllers
         public async Task<IActionResult> CancelMyBooking(Guid id)
         {
             var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            await _service.CancelByCustomerAsync(id, userId);
+            await _cancellationService.CancelByCustomerAsync(id, userId);
             return Ok(ApiResponse.Ok(message: "Hủy đơn thành công"));
         }
 

@@ -7,10 +7,26 @@ namespace SmashCourt_BE.Extensions;
 
 public static class HangfireExtensions
 {
+    /// <summary>Khóa bật/tắt toàn bộ Hangfire. Mặc định bật; host test HTTP đặt false để job thật không chạy trên DB test.</summary>
+    public const string EnabledKey = "Hangfire:Enabled";
+
+    // GetValue ném khi giá trị không phải bool: cấu hình sai thì lỗi ngay lúc khởi động thay vì lặng lẽ chạy job thật
+    public static bool IsEnabled(IConfiguration config) => config.GetValue(EnabledKey, true);
+
     public static IServiceCollection AddHangfireServices(
         this IServiceCollection services,
         IConfiguration config)
     {
+        // Lớp job luôn đăng ký để gọi trực tiếp được (test); chỉ hạ tầng Hangfire mới tắt được
+        services.AddScoped<IAuthCleanupJob, AuthCleanupJob>();
+        services.AddScoped<IPromotionJob, PromotionJob>();
+        services.AddScoped<IBookingJob, BookingJob>();
+        services.AddScoped<IBookingApprovalJob, BookingApprovalJob>();
+        services.AddScoped<ITadssOutcomeJob, TadssOutcomeJob>();
+
+        if (!IsEnabled(config))
+            return services;
+
         // Cấu hình Hangfire với PostgreSQL
         services.AddHangfire(hangfire => hangfire
             .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
@@ -28,9 +44,6 @@ public static class HangfireExtensions
                 }));
 
         services.AddHangfireServer();
-        services.AddScoped<IAuthCleanupJob, AuthCleanupJob>();
-        services.AddScoped<IPromotionJob, PromotionJob>();
-        services.AddScoped<IBookingJob, BookingJob>();
 
         return services;
     }
@@ -40,6 +53,10 @@ public static class HangfireExtensions
         this IApplicationBuilder app,
         IConfiguration config)
     {
+        // Tắt Hangfire thì không có dashboard (cần dịch vụ Hangfire) và không đăng ký job định kỳ (cần storage)
+        if (!IsEnabled(config))
+            return app;
+
         var isDashboardEnabled = config.GetValue<bool>("Hangfire:Dashboard");
 
         if (isDashboardEnabled)
@@ -97,6 +114,13 @@ public static class HangfireExtensions
             "* * * * *",
             new RecurringJobOptions { TimeZone = vnTimezone });
 
+        // Mỗi 1 phút — hủy đơn chờ duyệt quá hạn duyệt (không bao giờ tự duyệt)
+        RecurringJob.AddOrUpdate<IBookingApprovalJob>(
+            "expire-approvals",
+            job => job.ExpireApprovalsAsync(),
+            "* * * * *",
+            new RecurringJobOptions { TimeZone = vnTimezone });
+
         // Mỗi 1 phút — xóa slot_locks hết hạn
         // Lưu ý: Hangfire chỉ hỗ trợ cron 5-field tiêu chuẩn (không có seconds field)
         // "*/30 * * * * *" (6-field) sẽ bị parse lỗi → phải dùng "* * * * *" (mỗi phút)
@@ -110,6 +134,13 @@ public static class HangfireExtensions
         RecurringJob.AddOrUpdate<IBookingJob>(
             "detect-no-show",
             job => job.DetectNoShowBookingsAsync(),
+            "*/5 * * * *",
+            new RecurringJobOptions { TimeZone = vnTimezone });
+
+        // Mỗi 5 phút — báo kết quả đơn đã kết thúc về TADSS (tối đa 20 đơn, tuần tự; chạy cả khi tắt cờ đánh giá)
+        RecurringJob.AddOrUpdate<ITadssOutcomeJob>(
+            "report-tadss-outcomes",
+            job => job.ReportOutcomesAsync(),
             "*/5 * * * *",
             new RecurringJobOptions { TimeZone = vnTimezone });
 

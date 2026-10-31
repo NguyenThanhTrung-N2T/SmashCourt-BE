@@ -29,6 +29,23 @@ namespace SmashCourt_BE.DTOs.Booking
         public string PaymentStatus { get; set; } = null!;
         public DateTime? ExpiresAt { get; set; }
 
+        // Cọc: null khi đơn đang chờ duyệt, đơn tại quầy và đơn online cũ chưa áp dụng cọc
+        public decimal? DepositRate { get; set; }
+        public decimal? DepositAmount { get; set; }
+        public decimal? RemainingAmount { get; set; }
+        public string? DepositSource { get; set; }
+        public DateTime? ApprovalExpiresAt { get; set; }
+        // Lý do cần duyệt: chỉ endpoint của nhân viên; endpoint của khách luôn null
+        public string? ApprovalReasonCode { get; set; }
+        public List<string>? ApprovalReasons { get; set; }
+        public string? CancelReason { get; set; }
+        // Ai hủy: CUSTOMER (trong app), LINK (link email), STAFF (nhân viên hủy hoặc Manager từ chối), SYSTEM (job, TADSS từ chối); null khi chưa hủy
+        public string? CancelSource { get; set; }
+        // Tên nhân viên đã hủy hoặc từ chối (cột cancelled_by): chỉ endpoint của nhân viên; khách, link, job không ghi người hủy nên luôn null
+        public string? CancelledByName { get; set; }
+        // Thời điểm hủy (cột cancelled_at, UTC; JSON trả giờ VN như các trường giờ khác): khách và nhân viên đều thấy; null khi chưa hủy
+        public DateTime? CancelledAt { get; set; }
+
         // Courts
         public List<BookingCourtDto> Courts { get; set; } = [];
 

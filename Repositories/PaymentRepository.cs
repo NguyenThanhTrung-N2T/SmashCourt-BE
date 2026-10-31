@@ -28,6 +28,10 @@ namespace SmashCourt_BE.Repositories
                 .Include(p => p.Invoice)
                     .ThenInclude(i => i.Booking)
                         .ThenInclude(b => b.Branch)
+                // IPN tăng lượt khuyến mãi theo BookingPromotion; thiếu Include thì đơn online không bao giờ được tính lượt
+                .Include(p => p.Invoice)
+                    .ThenInclude(i => i.Booking)
+                        .ThenInclude(b => b.BookingPromotion)
                 .FirstOrDefaultAsync(p => p.TransactionRef == transactionRef);
         }
 
@@ -74,6 +78,42 @@ namespace SmashCourt_BE.Repositories
                     p.Status == PaymentTxStatus.SUCCESS)
                 .SumAsync(p => p.Amount - p.RefundedAmount);
         }
+        public async Task<bool> TryMarkSuccessAsync(Guid paymentId, DateTime nowUtc)
+        {
+            return await _context.Payments
+                .Where(p => p.Id == paymentId && p.Status != PaymentTxStatus.SUCCESS)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(p => p.Status, PaymentTxStatus.SUCCESS)
+                    .SetProperty(p => p.PaidAt, (DateTime?)nowUtc)
+                    .SetProperty(p => p.UpdatedAt, nowUtc)) == 1;
+        }
+
+        public async Task<bool> TryFailPendingAsync(Guid paymentId, DateTime nowUtc)
+        {
+            return await _context.Payments
+                .Where(p => p.Id == paymentId && p.Status == PaymentTxStatus.PENDING)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(p => p.Status, PaymentTxStatus.FAILED)
+                    .SetProperty(p => p.UpdatedAt, nowUtc)) == 1;
+        }
+
+        public async Task<int> FailPendingByInvoiceAsync(Guid invoiceId, Guid? exceptPaymentId, DateTime nowUtc)
+        {
+            return await _context.Payments
+                .Where(p => p.InvoiceId == invoiceId && p.Status == PaymentTxStatus.PENDING && p.Id != exceptPaymentId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(p => p.Status, PaymentTxStatus.FAILED)
+                    .SetProperty(p => p.UpdatedAt, nowUtc));
+        }
+
+        public async Task<List<Payment>> GetSuccessfulByInvoiceAsync(Guid invoiceId)
+        {
+            return await _context.Payments
+                .AsNoTracking()
+                .Where(p => p.InvoiceId == invoiceId && p.Status == PaymentTxStatus.SUCCESS)
+                .ToListAsync();
+        }
+
         public async Task CreateIpnLogAsync(PaymentIpnLog log)
         {
             _context.PaymentIpnLogs.Add(log);

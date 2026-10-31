@@ -84,6 +84,7 @@ namespace SmashCourt_BE.Repositories
             var activeStatuses = new[]
             {
             BookingStatus.PENDING,
+            BookingStatus.PENDING_APPROVAL,
             BookingStatus.CONFIRMED,
             BookingStatus.PAID_ONLINE,
             BookingStatus.IN_PROGRESS
@@ -110,6 +111,19 @@ namespace SmashCourt_BE.Repositories
         {
             _context.Courts.Update(court);
             await _context.SaveChangesAsync();
+        }
+
+        // Sân SUSPENDED / INACTIVE giữ nguyên; điều kiện nằm trong câu lệnh nên không ghi đè trạng thái vừa đổi
+        public async Task ReleaseToAvailableAsync(IReadOnlyCollection<Guid> courtIds, DateTime updatedAt)
+        {
+            if (courtIds.Count == 0) return;
+
+            var ids = courtIds.ToArray();
+            await _context.Courts
+                .Where(c => ids.Contains(c.Id) && c.Status != CourtStatus.SUSPENDED && c.Status != CourtStatus.INACTIVE)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(c => c.Status, CourtStatus.AVAILABLE)
+                    .SetProperty(c => c.UpdatedAt, updatedAt));
         }
 
         /// <summary>
@@ -229,6 +243,7 @@ namespace SmashCourt_BE.Repositories
         private static BookingStatus[] GetTimelineStatuses() =>
         [
             BookingStatus.PENDING,
+            BookingStatus.PENDING_APPROVAL,
             BookingStatus.CONFIRMED,
             BookingStatus.PAID_ONLINE,
             BookingStatus.PENDING_PAYMENT,

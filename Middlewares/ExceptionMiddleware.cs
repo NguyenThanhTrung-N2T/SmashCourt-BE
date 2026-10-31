@@ -36,7 +36,7 @@ public class ExceptionMiddleware
                 ex.StatusCode, ex.ErrorCode, ex.Message);
 
             await WriteResponseAsync(context, ex.StatusCode,
-                ApiResponse.Fail(ex.Message, ex.ErrorCode));
+                ApiResponse.Fail(ex.Message, ex.ErrorCode, ex.Errors));
         }
         catch (UnauthorizedAccessException ex)
         {

@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tadss.local/schemas/v2/decision-request.schema.json",
+  "title": "DecisionRequest v2",
+  "description": "POST /api/v2/decisions — INTEGRATION_SPEC §3.3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reservationId", "branchId", "branchTimeZone", "items", "customer", "totalPrice", "currency", "channel", "requestedAt"],
+  "properties": {
+    "reservationId": { "$ref": "#/$defs/uuid" },
+    "branchId": { "$ref": "#/$defs/uuid" },
+    "branchTimeZone": { "type": "string", "minLength": 1 },
+    "items": { "type": "array", "minItems": 1, "maxItems": 20, "items": { "$ref": "#/$defs/item" } },
+    "customer": { "$ref": "#/$defs/customer" },
+    "totalPrice": { "type": "number", "minimum": 0 },
+    "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+    "channel": { "enum": ["ONLINE", "WALK_IN"] },
+    "demand": { "oneOf": [{ "$ref": "#/$defs/demand" }, { "type": "null" }] },
+    "requestedAt": { "$ref": "#/$defs/dateTime" },
+    "metadata": { "oneOf": [{ "type": "object", "additionalProperties": { "type": "string" } }, { "type": "null" }] }
+  },
+  "$defs": {
+    "uuid": { "type": "string", "format": "uuid" },
+    "dateTime": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]{1,7})?(Z|[+-][0-9]{2}:[0-9]{2})$" },
+    "count": { "type": "integer", "minimum": 0 },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["resourceId", "resourceTypeId", "startTime", "endTime", "price"],
+      "properties": {
+        "resourceId": { "$ref": "#/$defs/uuid" },
+        "resourceTypeId": { "$ref": "#/$defs/uuid" },
+        "startTime": { "$ref": "#/$defs/dateTime" },
+        "endTime": { "$ref": "#/$defs/dateTime" },
+        "price": { "type": "number", "minimum": 0 }
+      }
+    },
+    "customer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["isGuest", "tier"],
+      "properties": {
+        "customerId": { "oneOf": [{ "$ref": "#/$defs/uuid" }, { "type": "null" }] },
+        "isGuest": { "type": "boolean" },
+        "tier": { "enum": ["STANDARD", "SILVER", "GOLD", "PLATINUM", "DIAMOND"] },
+        "memberSince": { "oneOf": [{ "$ref": "#/$defs/dateTime" }, { "type": "null" }] },
+        "history": { "oneOf": [{ "$ref": "#/$defs/history" }, { "type": "null" }] }
+      },
+      "if": { "properties": { "isGuest": { "const": false } } },
+      "then": { "required": ["customerId"], "properties": { "customerId": { "$ref": "#/$defs/uuid" } } },
+      "else": { "properties": { "customerId": { "type": "null" }, "memberSince": { "type": "null" } } }
+    },
+    "history": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["completedCount", "noShowCount", "cancelledCount"],
+      "properties": {
+        "completedCount": { "$ref": "#/$defs/count" },
+        "noShowCount": { "$ref": "#/$defs/count" },
+        "cancelledCount": { "$ref": "#/$defs/count" },
+        "lateCancelledCount": { "$ref": "#/$defs/count" },
+        "paymentExpiredCount": { "$ref": "#/$defs/count" },
+        "lastCompletedAt": { "oneOf": [{ "$ref": "#/$defs/dateTime" }, { "type": "null" }] }
+      }
+    },
+    "demand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["occupancyRate", "waitlistCount"],
+      "properties": {
+        "occupancyRate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "waitlistCount": { "$ref": "#/$defs/count" }
+      }
+    }
+  }
+}

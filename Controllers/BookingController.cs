@@ -16,10 +16,15 @@ namespace SmashCourt_BE.Controllers
     public class BookingController : ControllerBase
     {
         private readonly IBookingService _service;
+        private readonly IBookingApprovalService _approvalService;
+        private readonly IBookingCancellationService _cancellationService;
 
-        public BookingController(IBookingService service)
+        public BookingController(
+            IBookingService service, IBookingApprovalService approvalService, IBookingCancellationService cancellationService)
         {
             _service = service;
+            _approvalService = approvalService;
+            _cancellationService = cancellationService;
         }
         [HttpGet("{bookingId:guid}")]
         [Authorize(Policy = AuthorizationPolicies.StaffAndAbove)]
@@ -196,18 +201,69 @@ namespace SmashCourt_BE.Controllers
 
 
         /// <summary>
-        /// Đặt sân online - khách hàng có thể đặt sân mà không cần đăng nhập, nhưng nếu đã đăng nhập thì sẽ gắn booking với tài khoản đó
+        /// Đặt sân online - chỉ khách hàng đã đăng nhập; các trường guest* trong body được nhận nhưng bỏ qua
         /// </summary>
         [HttpPost("online")]
+        [Authorize(Policy = AuthorizationPolicies.CustomerOnly)]
         [EnableRateLimiting("booking")]
         public async Task<IActionResult> CreateOnline([FromBody] CreateOnlineBookingDto dto)
         {
-            Guid? customerId = User.Identity?.IsAuthenticated == true
-                ? Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!)
-                : null;
+            var customerId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
 
             var result = await _service.CreateOnlineAsync(dto, customerId);
-            return StatusCode(201, ApiResponse<OnlineBookingResponse>.Ok(result, "Đặt sân online thành công"));
+            // Câu thông báo theo trạng thái cuối; đơn bị từ chối đã ném 400 BOOKING_REJECTED ở service
+            var message = result.Status switch
+            {
+                nameof(BookingStatus.PENDING_APPROVAL) => "Đơn đặt sân đang chờ quản lý chi nhánh duyệt mức cọc",
+                nameof(BookingStatus.CONFIRMED) => "Đặt sân thành công, vui lòng thanh toán tại quầy",
+                _ => "Đặt sân online thành công"
+            };
+            return StatusCode(201, ApiResponse<OnlineBookingResponse>.Ok(result, message));
+        }
+
+
+        /// <summary>
+        /// Hàng chờ duyệt cọc: Manager thấy chi nhánh được gán, OWNER thấy mọi chi nhánh hoặc lọc một
+        /// </summary>
+        [HttpGet("pending-approval")]
+        [Authorize(Policy = AuthorizationPolicies.OwnerOrManager)]
+        public async Task<IActionResult> GetPendingApprovals([FromQuery] PendingApprovalListQuery query)
+        {
+            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var role = User.FindFirstValue(ClaimTypes.Role)!;
+            var result = await _approvalService.GetPendingApprovalsAsync(query, userId, role);
+            return Ok(ApiResponse<PagedResult<PendingApprovalBookingDto>>.Ok(result, "Lấy danh sách đơn chờ duyệt thành công"));
+        }
+
+
+        /// <summary>
+        /// Duyệt đơn chờ duyệt kèm tỷ lệ cọc; người duyệt lấy từ JWT, không lấy từ body
+        /// </summary>
+        [HttpPost("{bookingId:guid}/approve")]
+        [Authorize(Policy = AuthorizationPolicies.OwnerOrManager)]
+        public async Task<IActionResult> Approve(Guid bookingId, [FromBody] ApproveBookingDto dto)
+        {
+            var actorId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var role = User.FindFirstValue(ClaimTypes.Role)!;
+            var result = await _approvalService.ApproveAsync(bookingId, dto, actorId, role);
+            var message = result.Status == nameof(BookingStatus.CONFIRMED)
+                ? "Duyệt đơn thành công, đơn đã xác nhận, thu tiền tại quầy"
+                : "Duyệt đơn thành công, đã thông báo khách thanh toán cọc";
+            return Ok(ApiResponse<BookingApprovalResultDto>.Ok(result, message));
+        }
+
+
+        /// <summary>
+        /// Từ chối đơn chờ duyệt: hủy đơn, nhả sân, không hoàn tiền
+        /// </summary>
+        [HttpPost("{bookingId:guid}/reject")]
+        [Authorize(Policy = AuthorizationPolicies.OwnerOrManager)]
+        public async Task<IActionResult> Reject(Guid bookingId, [FromBody] RejectBookingDto dto)
+        {
+            var actorId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var role = User.FindFirstValue(ClaimTypes.Role)!;
+            var result = await _approvalService.RejectAsync(bookingId, dto, actorId, role);
+            return Ok(ApiResponse<BookingApprovalResultDto>.Ok(result, "Đã từ chối đơn và giải phóng sân"));
         }
 
 
@@ -233,7 +289,7 @@ namespace SmashCourt_BE.Controllers
         {
             var cancelledBy = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
             var role = User.FindFirstValue(ClaimTypes.Role)!;
-            await _service.CancelByStaffAsync(id, cancelledBy, role);
+            await _cancellationService.CancelByStaffAsync(id, cancelledBy, role);
             return Ok(ApiResponse.Ok(message: "Hủy đơn thành công"));
         }
 
@@ -258,7 +314,7 @@ namespace SmashCourt_BE.Controllers
         [HttpGet("cancel/{token}")]
         public async Task<IActionResult> GetCancelInfo(string token)
         {
-            var result = await _service.GetCancelInfoAsync(token);
+            var result = await _cancellationService.GetCancelInfoAsync(token);
             return Ok(ApiResponse<CancelTokenInfoDto>.Ok(result, "Lấy thông tin đặt sân thành công"));
         }
 
@@ -269,7 +325,7 @@ namespace SmashCourt_BE.Controllers
         [HttpPost("cancel/{token}")]
         public async Task<IActionResult> CancelByToken(string token)
         {
-            await _service.CancelByTokenAsync(token);
+            await _cancellationService.CancelByTokenAsync(token);
             return Ok(ApiResponse.Ok(message: "Hủy đơn thành công"));
         }
 

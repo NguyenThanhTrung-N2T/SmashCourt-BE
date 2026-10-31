@@ -18,7 +18,13 @@ namespace SmashCourt_BE.Helpers
                 // Online booking flow
                 (BookingStatus.PENDING, BookingStatus.PAID_ONLINE) => true,
                 (BookingStatus.PENDING, BookingStatus.CANCELLED) => true,
-                
+                (BookingStatus.PENDING, BookingStatus.CONFIRMED) => true,  // Cọc áp dụng bằng 0 hoặc dưới mức tối thiểu: xác nhận ngay
+
+                // Chờ Quản lý duyệt mức cọc: duyệt cọc > 0 → PENDING, duyệt 0% → CONFIRMED, từ chối/hết hạn/hủy → CANCELLED
+                (BookingStatus.PENDING_APPROVAL, BookingStatus.PENDING) => true,
+                (BookingStatus.PENDING_APPROVAL, BookingStatus.CONFIRMED) => true,
+                (BookingStatus.PENDING_APPROVAL, BookingStatus.CANCELLED) => true,
+
                 // Walk-in booking flow
                 (BookingStatus.CONFIRMED, BookingStatus.IN_PROGRESS) => true,
                 (BookingStatus.CONFIRMED, BookingStatus.CANCELLED) => true,
@@ -27,6 +33,7 @@ namespace SmashCourt_BE.Helpers
                 // After payment
                 (BookingStatus.PAID_ONLINE, BookingStatus.IN_PROGRESS) => true,
                 (BookingStatus.PAID_ONLINE, BookingStatus.CANCELLED_PENDING_REFUND) => true,
+                (BookingStatus.PAID_ONLINE, BookingStatus.CANCELLED) => true,  // Chính sách hủy hoàn 0%
                 (BookingStatus.PAID_ONLINE, BookingStatus.NO_SHOW) => true,
                 (BookingStatus.PAID_ONLINE, BookingStatus.COMPLETED) => true,  // Không đến nhưng hết giờ
                 
@@ -39,6 +46,8 @@ namespace SmashCourt_BE.Helpers
                 
                 // Cancellation flow
                 (BookingStatus.CANCELLED_PENDING_REFUND, BookingStatus.CANCELLED_REFUNDED) => true,
+                (BookingStatus.CANCELLED, BookingStatus.CANCELLED_PENDING_REFUND) => true,  // Tiền về sau khi đơn đã hủy
+                (BookingStatus.CANCELLED_REFUNDED, BookingStatus.CANCELLED_PENDING_REFUND) => true,  // Tiền về sau khi đã hoàn xong khoản trước
                 
                 // Default: không cho phép
                 _ => false
@@ -58,17 +67,47 @@ namespace SmashCourt_BE.Helpers
         }
 
         /// <summary>
-        /// Lấy danh sách các status được coi là "active" (chưa hoàn thành/hủy)
+        /// Lấy danh sách các status được coi là "active" (chưa hoàn thành/hủy): đơn còn giữ sân
         /// </summary>
         public static BookingStatus[] GetActiveStatuses()
         {
             return new[]
             {
                 BookingStatus.PENDING,
+                BookingStatus.PENDING_APPROVAL,
                 BookingStatus.CONFIRMED,
                 BookingStatus.PAID_ONLINE,
                 BookingStatus.IN_PROGRESS,
                 BookingStatus.PENDING_PAYMENT
+            };
+        }
+
+        /// <summary>
+        /// Các status đã hủy (kể cả đang chờ hoàn tiền / đã hoàn)
+        /// </summary>
+        public static BookingStatus[] GetCancelledStatuses()
+        {
+            return new[]
+            {
+                BookingStatus.CANCELLED,
+                BookingStatus.CANCELLED_PENDING_REFUND,
+                BookingStatus.CANCELLED_REFUNDED
+            };
+        }
+
+        /// <summary>
+        /// Các status CỐ Ý không giữ sân (đã kết thúc hoặc đã hủy).
+        /// Mọi giá trị BookingStatus phải thuộc GetActiveStatuses hoặc tập này (có test chặn khi thêm trạng thái mới).
+        /// </summary>
+        public static BookingStatus[] GetNonHoldingStatuses()
+        {
+            return new[]
+            {
+                BookingStatus.COMPLETED,
+                BookingStatus.NO_SHOW,
+                BookingStatus.CANCELLED,
+                BookingStatus.CANCELLED_PENDING_REFUND,
+                BookingStatus.CANCELLED_REFUNDED
             };
         }
 
