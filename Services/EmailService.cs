@@ -22,11 +22,13 @@ public class EmailService
         var user = _config["Smtp:Username"] ?? throw new InvalidOperationException("Smtp:Username chưa cấu hình");
         var pass = _config["Smtp:Password"] ?? throw new InvalidOperationException("Smtp:Password chưa cấu hình");
         var from = _config["Smtp:From"] ?? user;
+        // Vắng khóa ⇒ true (Gmail, production); chỉ compose phụ Mailpit (không TLS, mạng Docker nội bộ) đặt false
+        var enableSsl = _config.GetValue("Smtp:EnableSsl", true);
 
         using var client = new SmtpClient(host, port)
         {
             Credentials = new NetworkCredential(user, pass),
-            EnableSsl = true
+            EnableSsl = enableSsl
         };
 
         var message = new MailMessage(from, toEmail, subject, htmlBody)

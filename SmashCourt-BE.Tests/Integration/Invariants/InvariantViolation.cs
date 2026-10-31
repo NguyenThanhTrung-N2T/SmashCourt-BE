@@ -14,6 +14,7 @@ public static class InvariantRules
     public const string CancelledHoldsNothing = "SC6-3";
     public const string ActiveCourtsAreActive = "SC6-4a";
     public const string NoDoubleBooking = "SC6-4b";
+    public const string DecisionExistsInTadss = "SC6-5"; // chỉ ở lượt kiểm staging (gọi GET /api/v2/decisions/{id})
     public const string CancelledHasReason = "SC6-6"; // nâng từ điều phụ 31/10: lý do hủy là đầu vào của TADSS (lịch sử khách, outcome)
     public const string PendingHasHoldDeadline = "PHU-2";
 }

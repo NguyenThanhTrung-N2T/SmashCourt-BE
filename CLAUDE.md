@@ -15,6 +15,7 @@ dotnet test  SmashCourt-BE.slnx -c Release --no-build --filter "Category!=Integr
 dotnet test  SmashCourt-BE.slnx -c Release --no-build --filter "FullyQualifiedName~BookingServiceTests"
 dotnet test  SmashCourt-BE.slnx -c Release --filter "Category=Integration"   # cần Docker Desktop
 dotnet run                                                      # http://localhost:5179, Swagger /swagger
+docker compose -f docker-compose.yml -f docker-compose.mailpit.yml up -d --build   # BE + ngrok + Mailpit cho đợt E2E/LT-04: email vào http://localhost:8025 thay Gmail (Smtp:EnableSsl=false chỉ ở file phụ)
 ```
 CI (`.github/workflows/ci.yml`): restore → build Release → test → build Docker image.
 Build hiện **0 warning** (đã dọn 20/10/2026: MSB3277 EF Relational và CS8629) — không thêm warning mới.

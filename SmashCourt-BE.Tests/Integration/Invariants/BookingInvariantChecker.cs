@@ -169,7 +169,8 @@ public static class BookingInvariantChecker
         _ => "LOW: khách vãng lai, không có quyết định TADSS; chỉ không hiện lý do hủy"
     };
 
-    private static async Task<List<Guid>> ResolveScopeAsync(SmashCourtContext db, BookingScope scope, CancellationToken ct)
+    // Dùng lại ở lượt kiểm staging để lấy đúng tập đơn trong cùng snapshot
+    internal static async Task<List<Guid>> ResolveScopeAsync(SmashCourtContext db, BookingScope scope, CancellationToken ct)
     {
         if (scope.BookingIds != null)
             return scope.BookingIds.Distinct().ToList();
