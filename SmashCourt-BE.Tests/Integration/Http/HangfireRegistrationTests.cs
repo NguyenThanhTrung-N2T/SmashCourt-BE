@@ -78,6 +78,24 @@ public sealed class HangfireRegistrationTests(PostgreSqlIntegrationFixture datab
     }
 
     [Fact]
+    public void UseHangfireServices_WhenDashboardOffAndStorageNotResolvedYet_RegistersAllRecurringJobs()
+    {
+        // Production: appsettings.json tắt dashboard nên không gì lấy JobStorage từ DI trước khi đăng ký job. API tĩnh RecurringJob
+        // cần JobStorage.Current và từng làm BE sập lúc khởi động khi chạy Production (Epic 6C, môi trường deploy, 01/11/2026).
+        JobStorage.Current = null!;
+        var config = Config(null);
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddHangfireServices(config);
+        using var provider = services.BuildServiceProvider();
+
+        new ApplicationBuilder(provider).UseHangfireServices(config);
+
+        using var connection = provider.GetRequiredService<JobStorage>().GetConnection();
+        Assert.Equal(ExpectedJobIds.OrderBy(id => id), connection.GetRecurringJobs().Select(j => j.Id).OrderBy(id => id));
+    }
+
+    [Fact]
     public void UseHangfireServices_WhenRunTwice_KeepsOneEntryPerJobBecauseItUpsertsById()
     {
         // Khởi động lại app nhiều lần không nhân đôi job
