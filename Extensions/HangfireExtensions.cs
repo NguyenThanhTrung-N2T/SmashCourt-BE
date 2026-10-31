@@ -73,49 +73,53 @@ public static class HangfireExtensions
 
         var vnTimezone = SmashCourt_BE.Helpers.DateTimeHelper.VNTimezone;
 
+        // Lấy từ DI, không dùng API tĩnh RecurringJob: API tĩnh cần JobStorage.Current mà chỉ được đặt khi có thứ lấy JobStorage
+        // trước (dashboard); Production tắt dashboard nên BE từng sập lúc khởi động (Epic 6C, 01/11/2026)
+        var recurringJobs = app.ApplicationServices.GetRequiredService<IRecurringJobManager>();
+
         //  Mỗi 30 phút — dọn OTP hết hạn
-        RecurringJob.AddOrUpdate<IAuthCleanupJob>(
+        recurringJobs.AddOrUpdate<IAuthCleanupJob>(
             "cleanup-expired-otp",
             job => job.CleanupExpiredOtpAsync(),
             "*/30 * * * *",
             new RecurringJobOptions { TimeZone = vnTimezone });
 
         // 3:00 AM VN time — dọn user chưa verify
-        RecurringJob.AddOrUpdate<IAuthCleanupJob>(
+        recurringJobs.AddOrUpdate<IAuthCleanupJob>(
             "cleanup-unverified-users",
             job => job.CleanupUnverifiedUsersAsync(),
             "0 3 * * *",
             new RecurringJobOptions { TimeZone = vnTimezone });
 
         // 3:00 AM VN time — dọn refresh token hết hạn
-        RecurringJob.AddOrUpdate<IAuthCleanupJob>(
+        recurringJobs.AddOrUpdate<IAuthCleanupJob>(
             "cleanup-expired-refresh-tokens",
             job => job.CleanupExpiredRefreshTokensAsync(),
             "0 3 * * *",
             new RecurringJobOptions { TimeZone = vnTimezone });
 
         // 00:00 AM VN time — cập nhật trạng thái promotion
-        RecurringJob.AddOrUpdate<IPromotionJob>(
+        recurringJobs.AddOrUpdate<IPromotionJob>(
             "update-promotion-status",
             job => job.UpdateStatusAsync(),
             "0 0 * * *",
             new RecurringJobOptions { TimeZone = vnTimezone });
 
         // Mỗi 1 phút — hủy PENDING hết hạn + xử lý booking hết giờ
-        RecurringJob.AddOrUpdate<IBookingJob>(
+        recurringJobs.AddOrUpdate<IBookingJob>(
             "cancel-expired-pending",
             job => job.CancelExpiredPendingBookingsAsync(),
             "* * * * *",
             new RecurringJobOptions { TimeZone = vnTimezone });
 
-        RecurringJob.AddOrUpdate<IBookingJob>(
+        recurringJobs.AddOrUpdate<IBookingJob>(
             "process-expired-bookings",
             job => job.ProcessExpiredActiveBookingsAsync(),
             "* * * * *",
             new RecurringJobOptions { TimeZone = vnTimezone });
 
         // Mỗi 1 phút — hủy đơn chờ duyệt quá hạn duyệt (không bao giờ tự duyệt)
-        RecurringJob.AddOrUpdate<IBookingApprovalJob>(
+        recurringJobs.AddOrUpdate<IBookingApprovalJob>(
             "expire-approvals",
             job => job.ExpireApprovalsAsync(),
             "* * * * *",
@@ -124,28 +128,28 @@ public static class HangfireExtensions
         // Mỗi 1 phút — xóa slot_locks hết hạn
         // Lưu ý: Hangfire chỉ hỗ trợ cron 5-field tiêu chuẩn (không có seconds field)
         // "*/30 * * * * *" (6-field) sẽ bị parse lỗi → phải dùng "* * * * *" (mỗi phút)
-        RecurringJob.AddOrUpdate<IBookingJob>(
+        recurringJobs.AddOrUpdate<IBookingJob>(
             "cleanup-slot-locks",
             job => job.CleanupExpiredSlotLocksAsync(),
             "* * * * *",
             new RecurringJobOptions { TimeZone = vnTimezone });
 
         // Mỗi 5 phút — phát hiện NO_SHOW
-        RecurringJob.AddOrUpdate<IBookingJob>(
+        recurringJobs.AddOrUpdate<IBookingJob>(
             "detect-no-show",
             job => job.DetectNoShowBookingsAsync(),
             "*/5 * * * *",
             new RecurringJobOptions { TimeZone = vnTimezone });
 
         // Mỗi 5 phút — báo kết quả đơn đã kết thúc về TADSS (tối đa 20 đơn, tuần tự; chạy cả khi tắt cờ đánh giá)
-        RecurringJob.AddOrUpdate<ITadssOutcomeJob>(
+        recurringJobs.AddOrUpdate<ITadssOutcomeJob>(
             "report-tadss-outcomes",
             job => job.ReportOutcomesAsync(),
             "*/5 * * * *",
             new RecurringJobOptions { TimeZone = vnTimezone });
 
         // Mỗi 1 giờ — xóa slot_interest hết hạn (interest hết hạn sau ngày đặt sân)
-        RecurringJob.AddOrUpdate<IBookingJob>(
+        recurringJobs.AddOrUpdate<IBookingJob>(
             "cleanup-slot-interests",
             job => job.CleanupExpiredSlotInterestsAsync(),
             "0 * * * *",

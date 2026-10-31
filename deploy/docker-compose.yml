@@ -1,0 +1,130 @@
+# Bản deploy của cả hệ thống SmashCourt trên máy (Epic 6C, gói 6C-2b). Không chạy trực tiếp: dùng deploy/deploy.sh.
+#   - Một bản duy nhất; push develop hoặc master đều triển khai vào đây (lần push gần nhất thắng).
+#   - Image từ GHCR (CI build sẵn, không build ở đây). Bí mật: MỘT file ~/.smashcourt-deploy/.env (mẫu: .env.example),
+#     mỗi service chỉ nhận đúng các khóa nó cần.
+#   - Dữ liệu: PostgreSQL trên máy (database smashcourt nạp từ Neon tadss-dev bằng seed-db.sh; database tadss do TADSS tự migrate).
+#     Không dùng Neon: gói miễn phí không đủ giờ chạy cho Hangfire chạy liên tục.
+#   - Công khai: chỉ BE, qua ngrok (domain cố định; FE trên Vercel và VNPay gọi vào). TADSS, AI chỉ nghe trong mạng Docker + 127.0.0.1.
+name: smashcourt-deploy
+
+services:
+  postgres:
+    image: postgres:17.6-alpine
+    container_name: smashcourt-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    ports:
+      - "127.0.0.1:15432:5432"   # xem DB bằng DBeaver…; app nối qua mạng Docker
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d postgres"]
+      interval: 5s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: smashcourt-redis
+    command: ["redis-server", "--save", "", "--appendonly", "no"]   # chỉ là cache của TADSS
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 20
+    restart: unless-stopped
+
+  be:
+    image: ghcr.io/nguyenthanhtrung-n2t/smashcourt-be:${BE_TAG:-develop}
+    container_name: smashcourt-be
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      DOTNET_SYSTEM_NET_DISABLEIPV6: "1"   # mạng Docker không có IPv6 mà smtp.gmail.com có AAAA
+      ConnectionStrings__DefaultConnection: Host=postgres;Database=smashcourt;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      Jwt__Key: ${JWT_KEY:?}
+      Jwt__Issuer: ${JWT_ISSUER:?}
+      Jwt__Audience: ${JWT_AUDIENCE:?}
+      Otp__HmacSecret: ${OTP_HMAC_SECRET:?}
+      Smtp__Host: smtp.gmail.com
+      Smtp__Port: "587"
+      Smtp__Username: ${SMTP_USERNAME}
+      Smtp__Password: ${SMTP_PASSWORD}
+      Smtp__From: ${SMTP_FROM}
+      VnPay__TmnCode: ${VNPAY_TMN_CODE}
+      VnPay__HashSecret: ${VNPAY_HASH_SECRET}
+      VnPay__CallbackUrl: ${VNPAY_CALLBACK_URL}
+      VnPay__IpnUrl: ${VNPAY_IPN_URL}
+      Cloudinary__CloudName: ${CLOUDINARY_CLOUD_NAME}
+      Cloudinary__ApiKey: ${CLOUDINARY_API_KEY}
+      Cloudinary__ApiSecret: ${CLOUDINARY_API_SECRET}
+      Google__ClientId: ${GOOGLE_CLIENT_ID}
+      Google__ClientSecret: ${GOOGLE_CLIENT_SECRET}
+      Google__RedirectUri: ${GOOGLE_REDIRECT_URI}
+      FrontendBaseUrl: https://smashcourt-ai.vercel.app
+      Cookie__Secure: "true"
+      Hangfire__Dashboard: "false"
+      AIService__BaseUrl: http://ai:8000
+      TadssConfig__BaseUrl: http://tadss:8080
+      TadssConfig__ApiKey: ${TADSS_API_KEY:?}
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  ngrok:
+    image: ngrok/ngrok:3.39.11-alpine
+    container_name: smashcourt-ngrok
+    command: ["http", "be:8080"]
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:?}
+    ports:
+      - "127.0.0.1:4040:4040"   # trang theo dõi request của ngrok
+    restart: unless-stopped
+
+  tadss:
+    image: ghcr.io/nguyenthanhtrung-n2t/tadss-runtime:${TADSS_TAG:-develop}
+    container_name: tadss-runtime
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__DefaultConnection: Host=postgres;Database=tadss;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      # Database trên máy nên cho tự migrate; compose gốc của TADSS vẫn "false" (không bao giờ tự migrate Neon, D-05)
+      Tadss__Database__ApplyMigrationsOnStartup: "true"
+      Tadss__Cache__RedisConnectionString: redis:6379
+      Tadss__Security__ApiKeys__0__ClientId: smashcourt-be
+      Tadss__Security__ApiKeys__0__KeySha256: ${TADSS_API_KEY_SHA256:?}
+    ports:
+      - "127.0.0.1:8081:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health/ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 15s
+    restart: unless-stopped
+
+  ai:
+    image: ghcr.io/nguyenthanhtrung-n2t/smashcourt-ai:${AI_TAG:-master}
+    container_name: smashcourt-ai
+    environment:
+      APP_ENV: production
+      GEMINI_API_KEY: ${GEMINI_API_KEY:?}
+      GEMINI_MODEL: ${GEMINI_MODEL}
+    ports:
+      - "127.0.0.1:8000:8000"   # SEC-AI-1: chỉ máy này
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 6
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+    name: smashcourt-deploy-pgdata
