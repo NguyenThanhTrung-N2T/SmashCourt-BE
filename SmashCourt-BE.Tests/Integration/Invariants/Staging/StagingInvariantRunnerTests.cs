@@ -278,6 +278,23 @@ public sealed class StagingInvariantRunnerTests(PostgreSqlIntegrationFixture fix
         Assert.Equal("INCONCLUSIVE", await WrittenStatusAsync());
     }
 
+    // ───────────────────────── Tài nguyên dùng lại giữa các lượt ─────────────────────────
+
+    // Hồi quy: mỗi data source mới là một service provider nội bộ của EF; quá 20 trong một tiến trình EF ném
+    // ManyServiceProvidersCreatedWarning và mọi DbContext sau đó hỏng (lỗi từng làm 449 test của cả suite đỏ, chỉ lộ khi chạy toàn bộ).
+    // 25 lượt liên tiếp vượt ngưỡng ngay trong lượt chạy riêng của lớp này, nên lỗi hiện ra mà không cần chạy cả suite
+    [Fact]
+    public async Task ManyRunsOnOneDatabase_ReuseOneDataSource_AndEveryRunPasses()
+    {
+        Assert.Same(StagingInvariantRunner.DataSourceFor(_connectionString), StagingInvariantRunner.DataSourceFor(_connectionString));
+
+        for (var run = 0; run < 25; run++)
+        {
+            var report = await StagingInvariantRunner.RunAsync(Options() with { OutputPath = null });
+            Assert.True(report.Status == StagingInvariantReport.Pass, $"lượt {run + 1}: {report.Status} {report.AbortReason}");
+        }
+    }
+
     // ───────────────────────── Quyết định mồ côi (chẩn đoán) ─────────────────────────
 
     [Fact]
