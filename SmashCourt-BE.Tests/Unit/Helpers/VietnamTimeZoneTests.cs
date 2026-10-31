@@ -12,10 +12,15 @@ namespace SmashCourt_BE.Tests.Unit.Helpers;
 [Trait("Catalog", "BE-UT-12")]
 public class VietnamTimeZoneTests
 {
+    // Không dùng SupportsDaylightSavingTime: trên Linux (dữ liệu IANA) nó là true vì có các lần đổi giờ chuẩn trước 1975 (CI đỏ 31/10),
+    // dù không rule nào là giờ mùa hè. Điều cần khóa: không rule nào có DaylightDelta, và không rule nào còn hiệu lực sau 1975.
     [Fact]
     public void VietnamTimeZone_HasNoDaylightSavingTime()
     {
-        Assert.False(DateTimeHelper.VNTimezone.SupportsDaylightSavingTime);
+        var rules = DateTimeHelper.VNTimezone.GetAdjustmentRules();
+
+        Assert.All(rules, rule => Assert.Equal(TimeSpan.Zero, rule.DaylightDelta));
+        Assert.All(rules, rule => Assert.True(rule.DateEnd.Year <= 1975, $"Rule {rule.DateStart:yyyy-MM-dd} → {rule.DateEnd:yyyy-MM-dd} còn hiệu lực sau 1975"));
         Assert.Equal(TimeSpan.FromHours(7), DateTimeHelper.VNTimezone.BaseUtcOffset);
     }
 
