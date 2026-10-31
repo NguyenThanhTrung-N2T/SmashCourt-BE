@@ -14,9 +14,14 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      # Bắt buộc: thiếu dòng này image tự tạo database trùng tên user (smashcourt) và init-db lỗi giữa chừng
+      POSTGRES_DB: postgres
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    # Nội dung ghi thẳng trong file này (không gắn file từ máy): compose chạy từ trong container runner vẫn đúng
+    configs:
+      - source: init-db
+        target: /docker-entrypoint-initdb.d/init-db.sql
     ports:
       - "127.0.0.1:15432:5432"   # xem DB bằng DBeaver…; app nối qua mạng Docker
     healthcheck:
@@ -128,3 +133,10 @@ services:
 volumes:
   pgdata:
     name: smashcourt-deploy-pgdata
+
+configs:
+  # Chạy MỘT lần khi volume PostgreSQL còn trống. smashcourt: dữ liệu BE (nạp bằng seed-db.sh). tadss: TADSS tự migrate khi khởi động.
+  init-db:
+    content: |
+      CREATE DATABASE smashcourt;
+      CREATE DATABASE tadss;

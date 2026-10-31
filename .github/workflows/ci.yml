@@ -91,3 +91,28 @@ jobs:
           GIT_SHA: ${{ github.sha }}
           BRANCH: ${{ github.head_ref || github.ref_name }}
         run: bash tools/ci/build-image.sh ghcr.io/nguyenthanhtrung-n2t/smashcourt-be ${{ github.event_name == 'push' && '--push' || '' }}
+
+  # Epic 6C (6C-2b): CD — push develop/master ⇒ runner trên máy deploy kéo đúng image sha-<7> vừa đẩy, kiểm (đúng commit, health, smoke
+  # chỉ đọc), hỏng thì tự quay về bản trước (SmashCourt-BE/deploy/cd.sh). Pull request không bao giờ chạy job này.
+  deploy:
+    name: Deploy (máy deploy)
+    if: github.event_name == 'push'
+    needs: image
+    runs-on: [self-hosted, smashcourt-deploy]
+    timeout-minutes: 15
+    concurrency:
+      group: deploy-be
+      cancel-in-progress: false
+
+    steps:
+      - name: Get deploy kit (SmashCourt-BE/deploy, nhánh develop)
+        uses: actions/checkout@v4
+        with:
+          repository: NguyenThanhTrung-N2T/SmashCourt-BE
+          ref: develop
+          sparse-checkout: deploy
+
+      - name: Deploy, verify, roll back on failure
+        env:
+          SHA: ${{ github.sha }}
+        run: bash deploy/cd.sh be "$SHA"

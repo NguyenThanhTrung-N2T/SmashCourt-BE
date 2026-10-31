@@ -1,0 +1,4 @@
+# Nhãn của runner tự host trên máy deploy (Epic 6C, 6C-2b): job deploy trong ci.yml chạy trên runner này
+self-hosted-runner:
+  labels:
+    - smashcourt-deploy
