@@ -1,0 +1,55 @@
+# 3 runner GitHub Actions (BE, TADSS, AI) chạy trong Docker cho CD (Epic 6C, gói 6C-2b).
+# Tự chạy khi Docker Desktop chạy (restart: unless-stopped): không cài gì vào Windows.
+# Mỗi runner chỉ thấy: Docker của máy (socket, để deploy) và file bí mật ~/.smashcourt-deploy/.env (chỉ đọc).
+# Bật lần đầu / sau khi sửa: docker compose -f deploy/runner/docker-compose.yml up -d --build
+# Đăng ký lại một runner (mất volume, đổi repo…): xem docs/guides/DOCKER_COMMANDS.md của TADSS-Runtime, mục CD.
+name: smashcourt-runner
+
+x-runner: &runner
+  build: .
+  image: smashcourt-runner:2.338.2
+  restart: unless-stopped
+  # Socket Docker Desktop thuộc nhóm root (gid 0, quyền 660): thêm nhóm này cho user runner (uid 1001), container KHÔNG chạy bằng root
+  group_add: ["0"]
+
+services:
+  runner-be:
+    <<: *runner
+    container_name: smashcourt-runner-be
+    environment:
+      RUNNER_URL: https://github.com/NguyenThanhTrung-N2T/SmashCourt-BE
+      RUNNER_NAME: smashcourt-deploy-be
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ~/.smashcourt-deploy/.env:/home/runner/.smashcourt-deploy/.env:ro
+      - runner-be:/runner-state
+
+  runner-tadss:
+    <<: *runner
+    container_name: smashcourt-runner-tadss
+    environment:
+      RUNNER_URL: https://github.com/NguyenThanhTrung-N2T/TrustworthyAdaptiveDecisionSupportSystem-TADSS
+      RUNNER_NAME: smashcourt-deploy-tadss
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ~/.smashcourt-deploy/.env:/home/runner/.smashcourt-deploy/.env:ro
+      - runner-tadss:/runner-state
+
+  runner-ai:
+    <<: *runner
+    container_name: smashcourt-runner-ai
+    environment:
+      RUNNER_URL: https://github.com/NguyenThanhTrung-N2T/SmashCourt-AI
+      RUNNER_NAME: smashcourt-deploy-ai
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ~/.smashcourt-deploy/.env:/home/runner/.smashcourt-deploy/.env:ro
+      - runner-ai:/runner-state
+
+volumes:
+  runner-be:
+    name: smashcourt-runner-be
+  runner-tadss:
+    name: smashcourt-runner-tadss
+  runner-ai:
+    name: smashcourt-runner-ai
