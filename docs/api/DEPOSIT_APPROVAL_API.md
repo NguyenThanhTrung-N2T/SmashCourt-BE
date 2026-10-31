@@ -119,6 +119,7 @@ Thêm vào `BookingDto` (mọi endpoint đang trả `BookingDto`) và `OnlineBoo
 | `cancelReason` | string \| null | Booking đã hủy | `PAYMENT_EXPIRED` \| `APPROVAL_EXPIRED` \| `APPROVAL_REJECTED` \| `POLICY_REJECTED` \| `CUSTOMER_CANCELLED` \| `STAFF_CANCELLED` \| `SYSTEM_CLEANUP` (P6-04). FE hiển thị lý do hủy theo giá trị này |
 | `cancelSource` | string \| null | Booking đã hủy | Ai hủy (P6-31): `CUSTOMER` (khách hủy trong app) \| `LINK` (link hủy trong email) \| `STAFF` (nhân viên hủy hoặc Manager từ chối) \| `SYSTEM` (job hết hạn, dọn đơn dở dang, TADSS từ chối lúc đặt). Có cả ở đơn hủy trước Phase 6 (khi đó `cancelReason` là `null`). FE hiển thị "ai hủy" theo trường này, không tự suy từ `cancelReason` |
 | `cancelledByName` | string \| null | Đơn do nhân viên hủy hoặc Manager từ chối, **chỉ endpoint nhân viên** | Họ tên người đã hủy / từ chối (cột `cancelled_by`), để tra cứu khi cần (P6-31). Endpoint của khách luôn `null`; đơn do khách, link hay job hủy luôn `null` (không ghi người hủy) |
+| `cancelledAt` | string \| null | Booking đã hủy | Thời điểm hủy (cột `cancelled_at`), giờ VN `dd/MM/yyyy HH:mm:ss` như mọi trường giờ của DTO (P6-31). Khách và nhân viên đều thấy. `null` khi chưa hủy hoặc đơn hủy rất cũ không ghi mốc |
 
 Quy tắc chung:
 
@@ -159,7 +160,8 @@ Ví dụ `BookingDto` (chỉ trích các trường liên quan; các trường kh
     "approvalReasons": ["Khách có 3 lần không đến (ngưỡng 2)."],
     "cancelReason": null,
     "cancelSource": null,
-    "cancelledByName": null
+    "cancelledByName": null,
+    "cancelledAt": null
   },
   "errors": null
 }
@@ -305,8 +307,8 @@ Không đổi route, request, policy; `BookingDto` thêm các trường ở 2.2.
 
 | Endpoint | Ai | Thay đổi |
 | :--- | :--- | :--- |
-| `GET /api/me/bookings`, `GET /api/me/bookings/{id}` | Khách | Thêm trường cọc, `cancelReason` và `cancelSource`; `approvalReasonCode`/`approvalReasons`/`cancelledByName` luôn `null`. Trang chờ duyệt của khách tải lại endpoint này khi nhận `BookingApprovalResolved` |
-| `GET /api/bookings`, `GET /api/bookings/{bookingId}`, `GET /api/bookings/details/{id}` | Nhân viên | Thêm trường cọc, lý do cần duyệt, `cancelReason`, `cancelSource` và `cancelledByName`; lọc được `status=PENDING_APPROVAL` |
+| `GET /api/me/bookings`, `GET /api/me/bookings/{id}` | Khách | Thêm trường cọc, `cancelReason`, `cancelSource` và `cancelledAt`; `approvalReasonCode`/`approvalReasons`/`cancelledByName` luôn `null`. Trang chờ duyệt của khách tải lại endpoint này khi nhận `BookingApprovalResolved` |
+| `GET /api/bookings`, `GET /api/bookings/{bookingId}`, `GET /api/bookings/details/{id}` | Nhân viên | Thêm trường cọc, lý do cần duyệt, `cancelReason`, `cancelSource`, `cancelledByName` và `cancelledAt`; lọc được `status=PENDING_APPROVAL` |
 | `POST /api/bookings/walk-in` | Nhân viên | Response `BookingDto` có trường cọc `null` (không gọi TADSS) |
 
 ### 3.3. `POST /api/me/bookings/{id}/retry-payment`
@@ -856,6 +858,6 @@ Sau khi lần theo luồng thực tế FE → BE trên mã hiện có, nhóm ch�
 | P6-24 | `NEED_APPROVAL` có hạn duyệt đã qua lúc BE ghi đơn hoặc sau giờ chơi ⇒ cọc 100 % như nhánh (d) (chốt 27/10/2026, 6A-5) | 3.1 (d) |
 | P6-27 | Link thanh toán có hạn theo hạn đơn (chốt 27/10/2026, 6A-6; đã thử sandbox VNPay 28/10) | 3.3, 3.6 |
 | P6-28 | `POST /api/payments/vnpay/confirm` trả thêm `bookingStatus`; FE rẽ nhánh theo trạng thái đơn, không theo `isSuccess` (chốt 29/10/2026, 6A-6) | 3.6 |
-| P6-31 | `BookingDto` thêm `cancelSource` (ai hủy, mọi endpoint) và `cancelledByName` (tên nhân viên hủy / Manager từ chối, chỉ endpoint nhân viên) để hiển thị và tra cứu rõ ràng (chốt 31/10/2026) | 2.2, 3.2 |
+| P6-31 | `BookingDto` thêm `cancelSource` (ai hủy, mọi endpoint), `cancelledByName` (tên nhân viên hủy / Manager từ chối, chỉ endpoint nhân viên) và `cancelledAt` (thời điểm hủy, mọi endpoint) để hiển thị và tra cứu rõ ràng (chốt 31/10/2026) | 2.2, 3.2 |
 
 Mã lỗi mới: `PAYMENT_HOLD_EXPIRED`, `BOOKING_ALREADY_STARTED` (Mục 5). Không đổi hợp đồng BE ↔ TADSS.

@@ -65,7 +65,7 @@ public sealed class HttpDepositDtoJsonTests(PostgreSqlIntegrationFixture databas
         foreach (var key in new[]
                  {
                      "depositRate", "depositAmount", "remainingAmount", "depositSource", "approvalExpiresAt", "approvalReasonCode",
-                     "approvalReasons", "cancelReason", "cancelSource", "cancelledByName"
+                     "approvalReasons", "cancelReason", "cancelSource", "cancelledByName", "cancelledAt"
                  })
             Assert.Equal(JsonValueKind.Null, data.GetProperty(key).ValueKind);
     }
@@ -78,7 +78,8 @@ public sealed class HttpDepositDtoJsonTests(PostgreSqlIntegrationFixture databas
             BookingCode = "BK", BranchName = "CN", Status = "PAID_ONLINE", Source = "ONLINE", PaymentStatus = "PARTIALLY_PAID",
             DepositRate = 0.3m, DepositAmount = 68_400m, RemainingAmount = 159_600m, DepositSource = "MANAGER",
             ApprovalReasonCode = "NO_SHOW_HISTORY_REVIEW", ApprovalReasons = ["Khách có 3 lần không đến (ngưỡng 2)."],
-            CancelReason = "APPROVAL_REJECTED", CancelSource = "STAFF", CancelledByName = "Trần Thị Quản Lý"
+            CancelReason = "APPROVAL_REJECTED", CancelSource = "STAFF", CancelledByName = "Trần Thị Quản Lý",
+            CancelledAt = new DateTime(2026, 11, 18, 3, 20, 15, DateTimeKind.Utc)
         });
 
         Assert.Equal(0.3m, data.GetProperty("depositRate").GetDecimal());
@@ -90,5 +91,6 @@ public sealed class HttpDepositDtoJsonTests(PostgreSqlIntegrationFixture databas
         Assert.Equal("APPROVAL_REJECTED", data.GetProperty("cancelReason").GetString());
         Assert.Equal("STAFF", data.GetProperty("cancelSource").GetString());
         Assert.Equal("Trần Thị Quản Lý", data.GetProperty("cancelledByName").GetString());
+        Assert.Equal("18/11/2026 10:20:15", data.GetProperty("cancelledAt").GetString()); // giờ VN như mọi trường giờ của BookingDto
     }
 }

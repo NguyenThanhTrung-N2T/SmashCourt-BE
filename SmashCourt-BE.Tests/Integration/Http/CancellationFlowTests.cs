@@ -110,6 +110,8 @@ public sealed class CancellationFlowTests(PostgreSqlIntegrationFixture database,
         var order = await BookPendingAsync();
         var staff = await SeedStaffAsync(order.Court.BranchId);
         await AssertApiStatusAsync(HttpStatusCode.OK, await StaffCancelAsync(staff, order.BookingId));
+        // API trả giờ VN dd/MM/yyyy HH:mm:ss (VietnamDateTimeConverter), đúng bằng cancelled_at trong DB
+        var cancelledAt = DateTimeHelper.ToVietnamTime((await RequireBookingAsync(order.BookingId)).CancelledAt!.Value).ToString("dd/MM/yyyy HH:mm:ss");
 
         // Người xem là nhân viên khác cùng chi nhánh: tên phải là của người đã hủy, không phải người đang xem
         var viewer = await SeedStaffAsync(order.Court.BranchId);
@@ -119,12 +121,14 @@ public sealed class CancellationFlowTests(PostgreSqlIntegrationFixture database,
             Assert.Equal("STAFF", view.GetProperty("cancelSource").GetString());
             Assert.Equal(staff.FullName, view.GetProperty("cancelledByName").GetString());
             Assert.Equal("STAFF_CANCELLED", view.GetProperty("cancelReason").GetString());
+            Assert.Equal(cancelledAt, view.GetProperty("cancelledAt").GetString());
         }
 
         foreach (var view in await CustomerViewsAsync(order.Customer, order.BookingId))
         {
             Assert.Equal("STAFF", view.GetProperty("cancelSource").GetString());
             Assert.Equal(JsonValueKind.Null, view.GetProperty("cancelledByName").ValueKind);
+            Assert.Equal(cancelledAt, view.GetProperty("cancelledAt").GetString());
         }
     }
 
@@ -187,6 +191,7 @@ public sealed class CancellationFlowTests(PostgreSqlIntegrationFixture database,
         {
             Assert.Equal(JsonValueKind.Null, view.GetProperty("cancelSource").ValueKind);
             Assert.Equal(JsonValueKind.Null, view.GetProperty("cancelledByName").ValueKind);
+            Assert.Equal(JsonValueKind.Null, view.GetProperty("cancelledAt").ValueKind);
         }
     }
 

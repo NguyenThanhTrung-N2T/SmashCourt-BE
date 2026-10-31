@@ -151,10 +151,13 @@ public class BookingServiceDepositDtoTests
 
     // ───────────────────────── Ai hủy (P6-31): nguồn hủy cho mọi người, tên người hủy chỉ cho nhân viên ─────────────────────────
 
+    private static readonly DateTime CancelledAtUtc = new(2026, 11, 18, 3, 20, 15, DateTimeKind.Utc);
+
     private static Booking CancelledBy(CancelSourceEnum source, BookingCancelReason? reason, User? cancelledBy = null, Guid? customerId = null)
     {
         var booking = Booking(BookingStatus.CANCELLED, cancelReason: reason, customerId: customerId);
         booking.CancelSource = source;
+        booking.CancelledAt = CancelledAtUtc;
         booking.CancelledBy = cancelledBy?.Id;
         booking.CancelledByUser = cancelledBy;
         return booking;
@@ -194,6 +197,43 @@ public class BookingServiceDepositDtoTests
 
         Assert.Null(dto.CancelSource);
         Assert.Null(dto.CancelledByName);
+        Assert.Null(dto.CancelledAt);
+    }
+
+    [Fact]
+    public async Task CancelledBooking_ShowsWhenItWasCancelled_ToStaffAndCustomer()
+    {
+        // Thời điểm hủy không nhạy cảm: khách và nhân viên đều thấy; giữ nguyên thời điểm UTC (JSON đổi sang giờ VN)
+        var customerId = Guid.NewGuid();
+        var staff = TestDataFactory.CreateUser(fullName: "Nguyễn Văn Nhân Viên", role: UserRole.STAFF);
+        var booking = CancelledBy(CancelSourceEnum.STAFF, BookingCancelReason.STAFF_CANCELLED, staff, customerId);
+        var builder = new BookingServiceTestBuilder();
+        builder.BookingRepository.Setup(x => x.GetByIdWithDetailsAsync(booking.Id)).ReturnsAsync(booking);
+        builder.BookingRepository.Setup(x => x.GetByCustomerIdAsync(customerId, It.IsAny<BookingListQuery>()))
+            .ReturnsAsync(new PagedResult<Booking> { Items = [booking], Page = 1, PageSize = 10, TotalItems = 1 });
+        var service = builder.Build();
+
+        var staffDto = await service.GetByIdAsync(booking.Id, Guid.NewGuid(), UserRole.OWNER.ToString());
+        var customerDto = await service.GetDetailsByIdAsync(booking.Id, customerId, UserRole.CUSTOMER.ToString());
+        var historyDto = Assert.Single((await service.GetMyBookingsAsync(customerId, new BookingListQuery())).Items);
+
+        Assert.All(new[] { staffDto, customerDto, historyDto }, dto =>
+        {
+            Assert.Equal(CancelledAtUtc, dto.CancelledAt);
+            Assert.Equal(DateTimeKind.Utc, dto.CancelledAt!.Value.Kind);
+        });
+    }
+
+    [Fact]
+    public async Task CancelledBeforeTheColumnWasFilled_HasNullCancelledAt()
+    {
+        var booking = CancelledBy(CancelSourceEnum.STAFF, BookingCancelReason.STAFF_CANCELLED);
+        booking.CancelledAt = null;
+
+        var dto = await StaffGetByIdAsync(booking);
+
+        Assert.Null(dto.CancelledAt);
+        Assert.Equal("STAFF", dto.CancelSource);
     }
 
     [Theory]

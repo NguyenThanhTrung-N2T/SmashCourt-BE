@@ -43,6 +43,8 @@ namespace SmashCourt_BE.DTOs.Booking
         public string? CancelSource { get; set; }
         // Tên nhân viên đã hủy hoặc từ chối (cột cancelled_by): chỉ endpoint của nhân viên; khách, link, job không ghi người hủy nên luôn null
         public string? CancelledByName { get; set; }
+        // Thời điểm hủy (cột cancelled_at, UTC; JSON trả giờ VN như các trường giờ khác): khách và nhân viên đều thấy; null khi chưa hủy
+        public DateTime? CancelledAt { get; set; }
 
         // Courts
         public List<BookingCourtDto> Courts { get; set; } = [];

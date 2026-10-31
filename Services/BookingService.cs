@@ -1965,7 +1965,7 @@ namespace SmashCourt_BE.Services
         // Lý do cần duyệt và tên người hủy chỉ hiện cho nhân viên; khách luôn nhận null
         private static bool IsStaffView(string userRole) => userRole != UserRole.CUSTOMER.ToString();
 
-        // Trường cọc, hạn duyệt, lý do cần duyệt, lý do / nguồn / người hủy dùng chung cho hai hàm map
+        // Trường cọc, hạn duyệt, lý do cần duyệt, lý do / nguồn / người / thời điểm hủy dùng chung cho hai hàm map
         private static BookingDto WithDepositFields(BookingDto dto, Booking b, bool includeStaffOnlyFields)
         {
             var deposit = DepositFieldsMapper.FromInvoice(b.Status, b.Invoice);
@@ -1979,6 +1979,7 @@ namespace SmashCourt_BE.Services
             dto.CancelReason = b.CancelReason?.ToString();
             dto.CancelSource = b.CancelSource?.ToString();
             dto.CancelledByName = includeStaffOnlyFields ? b.CancelledByUser?.FullName : null;
+            dto.CancelledAt = b.CancelledAt;
             return dto;
         }
 
