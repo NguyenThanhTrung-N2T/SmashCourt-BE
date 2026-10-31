@@ -16,6 +16,9 @@ services:
       - VnPay__HashSecret=${VNPAY_HASH_SECRET}
       - VnPay__CallbackUrl=${VNPAY_CALLBACK_URL}
       - VnPay__IpnUrl=${VNPAY_IPN_URL}
+      # TADSS: URL công khai (ngrok) của TADSS và khóa client smashcourt-be, đặt trong .env; chỉ bắt buộc khi bật TadssConfig:EnableTadssDecision
+      - TadssConfig__BaseUrl=${TADSS_BASE_URL}
+      - TadssConfig__ApiKey=${TADSS_API_KEY}
     networks:
       - smashcourt-network
     restart: unless-stopped
