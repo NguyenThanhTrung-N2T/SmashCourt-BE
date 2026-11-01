@@ -1,7 +1,7 @@
 """Dashboard + cảnh báo "Vận hành" trên Grafana Cloud (Epic 6C, gói 6C-3a). Chỉ dùng thư viện chuẩn Python.
 
     python deploy/grafana/grafana_cloud.py check      kiểm mọi panel đủ mô tả 6 ý, đúng metric (OB-BE-3); CI chạy lệnh này
-    python deploy/grafana/grafana_cloud.py push       đẩy 3 dashboard, điểm nhận email và 5 luật cảnh báo (ghi đè bản cũ cùng uid)
+    python deploy/grafana/grafana_cloud.py push       đẩy 3 dashboard, mẫu email tiếng Việt, điểm nhận email và 5 luật cảnh báo (ghi đè bản cũ cùng uid)
 
 push đọc GRAFANA_URL, GRAFANA_SA_TOKEN, ALERT_EMAIL_TO từ file bí mật smashcourt-deploy.env ở gốc workspace (hoặc SMASHCOURT_ENV_FILE); không in giá trị.
 Thử với Grafana local không cần token: GRAFANA_URL=http://127.0.0.1:3000 python deploy/grafana/grafana_cloud.py push --no-auth
@@ -211,7 +211,60 @@ def check() -> list[str]:
 
 # ── Cảnh báo ─────────────────────────────────────────────────────────────────
 
-def _rule(uid: str, title: str, expr: str, op: str, threshold: float, duration: str, no_data: str, summary: str) -> dict:
+# Email tiếng Việt thay khối mặc định tiếng Anh của Grafana (Gmail tự dịch ra chữ khó hiểu). Mỗi dòng của message là một dòng email.
+# Ca "mất số liệu" (máy deploy/Docker tắt, Alloy dừng) tách khỏi ca service lỗi thật; giờ hiện theo giờ Việt Nam.
+EMAIL_TEMPLATE_NAME = "smashcourt-email"
+EMAIL_TEMPLATE = """\
+{{ define "smashcourt.time" }}{{ . | tz "Asia/Ho_Chi_Minh" | date "15:04 02/01/2006" }}{{ end }}
+
+{{ define "smashcourt.service" }}{{ with .dich_vu }} ({{ . }}){{ else }}{{ with .job }} ({{ reReplaceAll "^integrations/blackbox/" "" . | toUpper }}){{ end }}{{ end }}{{ end }}
+
+{{ define "smashcourt.subject" -}}
+[SmashCourt] {{ if not .Alerts.Firing }}ĐÃ ỔN LẠI: {{ else if eq (index .Alerts.Firing 0).Annotations.grafana_state_reason "NoData" }}MẤT SỐ LIỆU: {{ else }}SỰ CỐ: {{ end -}}
+{{ .CommonLabels.alertname }}{{ template "smashcourt.service" .CommonLabels }}
+{{- end }}
+
+{{ define "smashcourt.alert" -}}
+▶ {{ .Labels.alertname }}{{ template "smashcourt.service" .Labels }}
+{{ if eq .Status "resolved" -}}
+• Bắt đầu {{ template "smashcourt.time" .StartsAt }}, hết lúc {{ template "smashcourt.time" .EndsAt }}.
+{{- else if eq .Annotations.grafana_state_reason "NoData" -}}
+• Tình trạng: Grafana Cloud KHÔNG NHẬN ĐƯỢC SỐ LIỆU từ máy deploy (chưa chắc service lỗi).
+• Thường do: Docker Desktop hoặc máy deploy đang tắt, mất mạng, hoặc container smashcourt-alloy dừng.
+• Cách xử lý: bật Docker Desktop (hệ thống tự chạy lại); vẫn báo thì chạy "bash deploy/deploy.sh obs" trong SmashCourt-BE.
+• Bắt đầu: {{ template "smashcourt.time" .StartsAt }}
+{{- else if eq .Annotations.grafana_state_reason "Error" -}}
+• Tình trạng: Grafana Cloud không chạy được truy vấn của luật cảnh báo (lỗi phía Grafana, không phải service).
+• Bắt đầu: {{ template "smashcourt.time" .StartsAt }}
+{{- else -}}
+• Tình trạng: {{ .Annotations.summary }}
+• Cách xử lý: {{ .Annotations.xu_ly }}
+• Bắt đầu: {{ template "smashcourt.time" .StartsAt }}
+{{- end }}
+{{ with .Annotations.dashboard_url }}• Dashboard: {{ . }}{{ end }}
+{{- end }}
+
+{{ define "smashcourt.message" -}}
+{{ if .Alerts.Firing -}}
+ĐANG CÓ SỰ CỐ ({{ len .Alerts.Firing }})
+{{ range .Alerts.Firing }}{{ template "smashcourt.alert" . }}
+{{ end }}{{ end -}}
+{{ if .Alerts.Resolved -}}
+ĐÃ ỔN LẠI ({{ len .Alerts.Resolved }})
+{{ range .Alerts.Resolved }}{{ template "smashcourt.alert" . }}
+{{ end }}{{ end -}}
+Giờ theo giờ Việt Nam. Email tự động từ Grafana Cloud, bản deploy SmashCourt; còn sự cố thì nhắc lại sau 4 giờ.
+{{- end }}
+"""
+
+_SERVICE_OF_BLACKBOX = '{{ reReplaceAll "^integrations/blackbox/" "" $labels.job | toUpper }}'
+
+
+def _rule(uid: str, title: str, expr: str, op: str, threshold: float, duration: str, no_data: str,
+          summary: str, action: str, dashboard: str, service: str | None = None) -> dict:
+    labels = {"he_thong": "smashcourt-deploy"}
+    if service:
+        labels["dich_vu"] = service
     return {
         "uid": uid,
         "title": title,
@@ -221,9 +274,10 @@ def _rule(uid: str, title: str, expr: str, op: str, threshold: float, duration: 
         "for": duration,
         "noDataState": no_data,
         "execErrState": "Error",
-        "labels": {"he_thong": "smashcourt-deploy"},
-        "annotations": {"summary": summary},
-        "notification_settings": {"receiver": CONTACT_POINT},
+        "labels": labels,
+        # dashboard_url: điền URL đầy đủ lúc push (Grafana chỉ nhận __dashboardUid__ khi kèm __panelId__)
+        "annotations": {"summary": summary, "xu_ly": action, "dashboard_url": dashboard},
+        "notification_settings": {"receiver": CONTACT_POINT, "repeat_interval": "4h"},
         "data": [
             {
                 "refId": "A",
@@ -245,30 +299,45 @@ def _rule(uid: str, title: str, expr: str, op: str, threshold: float, duration: 
     }
 
 
-def alert_rules(prometheus_uid: str) -> list[dict]:
+def alert_rules(prometheus_uid: str, grafana_url: str = "") -> list[dict]:
     def http_errors(job: str) -> str:
         return (
             f'(sum(rate(http_server_request_duration_seconds_count{{job="{job}",http_response_status_code=~"5.."}}[5m])) or vector(0))'
             f' / sum(rate(http_server_request_duration_seconds_count{{job="{job}"}}[5m]))'
         )
 
+    error_ratio = "{{ humanizePercentage $values.A.Value }}"
     rules = [
-        # Không có số liệu = máy deploy tắt, mất mạng hoặc Alloy dừng: cũng báo
-        _rule("smashcourt-down", "Service không sẵn sàng", "min by (job) (probe_success)", "lt", 1, "2m", "Alerting",
-              "{{ $labels.job }} không trả health 2xx trong 2 phút (hoặc máy deploy / Alloy mất số liệu)."),
+        # Không có số liệu = máy deploy tắt, mất mạng hoặc Alloy dừng: cũng báo (email ghi rõ là mất số liệu)
+        _rule("smashcourt-down", "Dịch vụ không phản hồi", "min by (job) (probe_success)", "lt", 1, "2m", "Alerting",
+              f"{_SERVICE_OF_BLACKBOX} không trả lời health (2xx) quá 2 phút.",
+              "xem container bằng \"docker ps\" và log bằng \"docker logs <tên container> --tail 100\"; "
+              "chạy lại bằng \"bash deploy/deploy.sh <be|tadss|ai>\" trong SmashCourt-BE.",
+              "smashcourt-van-hanh-be"),
         _rule("smashcourt-be-5xx", "BE lỗi 5xx > 5 %", http_errors("smashcourt-be"), "gt", 0.05, "5m", "OK",
-              "Hơn 5 % request vào BE trả 5xx trong 5 phút."),
+              f"{error_ratio} request vào BE trả lỗi 5xx trong 5 phút gần nhất (ngưỡng 5 %).",
+              "mở dashboard BE xem endpoint nào lỗi và hàng Log; nếu vừa deploy bản mới thì cân nhắc quay về bản trước.",
+              "smashcourt-van-hanh-be", "BE"),
         _rule("smashcourt-ai-5xx", "AI lỗi 5xx > 5 %", http_errors("smashcourt-ai"), "gt", 0.05, "5m", "OK",
-              "Hơn 5 % request vào AI trả 5xx trong 5 phút."),
-        _rule("smashcourt-tadss-fallback", "TADSS đường lùi > 20 %",
+              f"{error_ratio} request vào AI trả lỗi 5xx trong 5 phút gần nhất (ngưỡng 5 %).",
+              "mở dashboard AI xem lời gọi Gemini (lỗi, 429) và hàng Log.",
+              "smashcourt-van-hanh-ai", "AI"),
+        _rule("smashcourt-tadss-fallback", "TADSS dùng đường lùi > 20 %",
               '(sum(rate(tadss_fallbacks_total{job="tadss-runtime"}[10m])) or vector(0)) / sum(rate(tadss_decisions_total{job="tadss-runtime"}[10m]))',
-              "gt", 0.2, "10m", "OK", "Hơn 20 % quyết định TADSS dùng đường lùi (cọc 100 %) trong 10 phút."),
-        _rule("smashcourt-gemini-quota", "Gemini bị giới hạn (429) liên tục",
+              "gt", 0.2, "10m", "OK",
+              f"{error_ratio} quyết định TADSS phải dùng đường lùi (cọc 100 %) trong 10 phút (ngưỡng 20 %). Khách vẫn đặt được sân.",
+              "mở dashboard TADSS xem lý do đường lùi (strategy lỗi, quá thời gian); kiểm PostgreSQL và Redis của TADSS.",
+              "smashcourt-van-hanh-tadss", "TADSS"),
+        _rule("smashcourt-gemini-quota", "Gemini hết giới hạn (429) liên tục",
               'sum(rate(gemini_request_duration_seconds_count{job="smashcourt-ai",outcome="quota"}[5m]))',
-              "gt", 0, "10m", "OK", "Gemini trả 429 liên tục 10 phút: hết giới hạn gói miễn phí."),
+              "gt", 0, "10m", "OK",
+              "Gemini trả 429 (hết giới hạn gói miễn phí) liên tục 10 phút; chatbot và gợi ý AI đang lỗi.",
+              "đợi hạn mức hồi lại, hoặc đổi GEMINI_MODEL / khóa Gemini trong file bí mật rồi \"bash deploy/deploy.sh ai\".",
+              "smashcourt-van-hanh-ai", "AI"),
     ]
     for rule in rules:
         rule["data"][0]["datasourceUid"] = prometheus_uid
+        rule["annotations"]["dashboard_url"] = f"{grafana_url.rstrip('/')}/d/{rule['annotations']['dashboard_url']}"
     return rules
 
 
@@ -335,7 +404,11 @@ def push(no_auth: bool) -> None:
         grafana.call("POST", "/api/dashboards/db", {"dashboard": build(dashboard), "folderUid": FOLDER_UID, "overwrite": True})
         print(f"dashboard: {dashboard.title}")
 
-    contact = {"uid": CONTACT_POINT, "name": CONTACT_POINT, "type": "email", "settings": {"addresses": email, "singleEmail": True}}
+    grafana.call("PUT", f"/api/v1/provisioning/templates/{EMAIL_TEMPLATE_NAME}", {"template": EMAIL_TEMPLATE})
+    print(f"mẫu email: {EMAIL_TEMPLATE_NAME}")
+    contact = {"uid": CONTACT_POINT, "name": CONTACT_POINT, "type": "email", "settings": {
+        "addresses": email, "singleEmail": True,
+        "subject": '{{ template "smashcourt.subject" . }}', "message": '{{ template "smashcourt.message" . }}'}}
     existing = [c for c in grafana.call("GET", f"/api/v1/provisioning/contact-points?name={CONTACT_POINT}") or [] if c.get("uid") == CONTACT_POINT]
     if existing:
         grafana.call("PUT", f"/api/v1/provisioning/contact-points/{CONTACT_POINT}", contact)
@@ -344,7 +417,7 @@ def push(no_auth: bool) -> None:
     print(f"điểm nhận cảnh báo: {CONTACT_POINT} (email)")
 
     # Một lệnh PUT cả nhóm: tạo/cập nhật mọi luật theo uid, chu kỳ đánh giá 60 giây (khớp chu kỳ gửi số liệu)
-    rules = alert_rules(prometheus_uid)
+    rules = alert_rules(prometheus_uid, url)
     grafana.call("PUT", f"/api/v1/provisioning/folder/{FOLDER_UID}/rule-groups/{RULE_GROUP}",
                  {"title": RULE_GROUP, "folderUid": FOLDER_UID, "interval": 60, "rules": rules})
     for rule in rules:

@@ -39,8 +39,10 @@ jobs:
       - name: Build
         run: dotnet build --no-restore --configuration Release
 
-      # Chạy 236 tests xuất báo cáo TRX
+      # Chạy toàn bộ test, xuất TRX; SMASHCOURT_CATALOG_INDEX_DIR: chỉ mục test → mã vào artifact cho dashboard "Kiểm thử" (TADSS-Runtime/perf/board.py ci be)
       - name: Execute Tests
+        env:
+          SMASHCOURT_CATALOG_INDEX_DIR: ${{ github.workspace }}/TestResults
         run: >
           dotnet test 
           --no-build 
