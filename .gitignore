@@ -30,3 +30,7 @@ Thumbs.db
 # Kết quả chạy test sinh ra (coverage, hang dump của --blame-hang...): không commit
 SmashCourt-BE.Tests/TestResults/
 *.dmp
+
+# Bytecode Python (deploy/grafana/*.py): máy tự sinh, không commit
+__pycache__/
+*.pyc

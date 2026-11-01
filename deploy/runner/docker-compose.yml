@@ -1,6 +1,6 @@
 # 3 runner GitHub Actions (BE, TADSS, AI) chạy trong Docker cho CD (Epic 6C, gói 6C-2b).
 # Tự chạy khi Docker Desktop chạy (restart: unless-stopped): không cài gì vào Windows.
-# Mỗi runner chỉ thấy: Docker của máy (socket, để deploy) và file bí mật ~/.smashcourt-deploy/.env (chỉ đọc).
+# Mỗi runner chỉ thấy: Docker của máy (socket, để deploy) và file bí mật smashcourt-deploy.env ở gốc workspace (chỉ đọc, gắn vào ~/.smashcourt-deploy/.env trong container).
 # Bật lần đầu / sau khi sửa: docker compose -f deploy/runner/docker-compose.yml up -d --build
 # Đăng ký lại một runner (mất volume, đổi repo…): xem docs/guides/DOCKER_COMMANDS.md của TADSS-Runtime, mục CD.
 name: smashcourt-runner
@@ -21,7 +21,7 @@ services:
       RUNNER_NAME: smashcourt-deploy-be
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ~/.smashcourt-deploy/.env:/home/runner/.smashcourt-deploy/.env:ro
+      - ../../../smashcourt-deploy.env:/home/runner/.smashcourt-deploy/.env:ro
       - runner-be:/runner-state
 
   runner-tadss:
@@ -32,7 +32,7 @@ services:
       RUNNER_NAME: smashcourt-deploy-tadss
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ~/.smashcourt-deploy/.env:/home/runner/.smashcourt-deploy/.env:ro
+      - ../../../smashcourt-deploy.env:/home/runner/.smashcourt-deploy/.env:ro
       - runner-tadss:/runner-state
 
   runner-ai:
@@ -43,7 +43,7 @@ services:
       RUNNER_NAME: smashcourt-deploy-ai
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ~/.smashcourt-deploy/.env:/home/runner/.smashcourt-deploy/.env:ro
+      - ../../../smashcourt-deploy.env:/home/runner/.smashcourt-deploy/.env:ro
       - runner-ai:/runner-state
 
 volumes:

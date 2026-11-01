@@ -1,6 +1,12 @@
 # Dashboard "Vận hành" của bản deploy (Epic 6C, gói 6C-3a; P6-49): 3 dashboard BE / TADSS / AI nối với nhau bằng link như 3 tab.
 # Nguồn chuẩn là file này (không sửa JSON trên Grafana rồi quên đưa về); grafana_cloud.py dựng JSON, kiểm và đẩy lên Grafana Cloud.
 # Mỗi panel có mô tả 6 ý (P6-49, plan 6C Mục 5.1): đo gì, đơn vị, cách đọc, ngưỡng + nguồn ngưỡng, metric nguồn, mã test.
+#
+# Bố cục chung của cả 3 tab (đọc từ trên xuống, chuyển tab vẫn cùng thứ tự):
+#   1. Hàng KPI (luôn hiện): 6 ô bằng nhau — Sẵn sàng, Phiên bản, Khởi động, rồi 3 con số chính của service, có đường xu hướng.
+#   2. Các nhóm chi tiết có tiêu đề (hàng chia đều độ rộng): lưu lượng/độ trễ, nghiệp vụ hoặc phụ thuộc, tài nguyên.
+#   3. "Log" và "Cách đọc" thu gọn mặc định, bấm mới mở.
+# Request và độ trễ bỏ /health (Docker và Alloy gọi liên tục, không phải người dùng).
 from dataclasses import dataclass, field
 
 TAG = "smashcourt-van-hanh"
@@ -36,6 +42,10 @@ KNOWN_METRICS = {
     "probe_duration_seconds": "blackbox (health)",
 }
 
+NOT_HEALTH = 'http_route!~"/health.*"'
+NO_REQUESTS = "Chưa có request"
+TADSS_OFF = "Chưa có quyết định (cờ TADSS đang tắt)"
+
 
 @dataclass
 class Description:
@@ -60,27 +70,47 @@ class Description:
 @dataclass
 class Panel:
     title: str
-    kind: str  # stat | timeseries | logs
+    kind: str  # stat | timeseries | state-timeline | logs
     targets: list[tuple[str, str]]  # (biểu thức, nhãn chú giải)
     unit: str
     description: Description
     width: int = 8
-    height: int = 7
-    thresholds: list[tuple[float, str]] = field(default_factory=list)  # (từ giá trị, màu)
-    text_mode: str = "value"  # stat: value | name (hiện nhãn, vd phiên bản image)
+    height: int = 8
+    thresholds: list[tuple[float, str]] = field(default_factory=list)  # (từ giá trị, màu); có ⇒ ô KPI tô màu theo ngưỡng
+    text_mode: str = "value"  # stat: value | name (hiện nhãn, vd tag image) | value_and_name
     mappings: list[dict] = field(default_factory=list)
+    soft_max: float | None = None  # trục Y từ 0 tới giá trị này (tự giãn khi vượt): tỉ lệ 0 % không bị vẽ trục vô nghĩa
+    sparkline: bool = False  # stat: vẽ đường xu hướng mờ phía sau con số
+    no_value: str = ""  # chữ hiện khi chưa có số liệu (thay "No data"), nói rõ vì sao
+
+
+@dataclass
+class Section:
+    title: str | None  # None: hàng KPI đầu trang, không có tiêu đề nhóm
+    panels: list[Panel]
+    collapsed: bool = False
 
 
 @dataclass
 class Dashboard:
     uid: str
     title: str
-    guide: str  # panel chữ "Cách đọc tab này"
-    panels: list[Panel]
+    guide: str  # nội dung nhóm thu gọn "Cách đọc tab này"
+    sections: list[Section]
+
+    @property
+    def panels(self) -> list[Panel]:
+        return [panel for section in self.sections for panel in section.panels]
 
 
-def _up_panel(job: str, container: str, tests: str) -> list[Panel]:
-    """3 panel tổng quan giống nhau ở mọi tab: sẵn sàng, phiên bản đang chạy, lần khởi động gần nhất"""
+# ── Khối dùng chung ──────────────────────────────────────────────────────────
+
+KPI_WIDTH = 4
+KPI_HEIGHT = 4
+
+
+def _kpi_identity(job: str, container: str) -> list[Panel]:
+    """3 ô đầu hàng KPI, giống nhau ở mọi tab: sẵn sàng, phiên bản, khởi động"""
     return [
         Panel(
             "Sẵn sàng",
@@ -89,54 +119,179 @@ def _up_panel(job: str, container: str, tests: str) -> list[Panel]:
             "none",
             Description(
                 what="Alloy gọi endpoint health của service từ trong mạng Docker mỗi 60 giây (không qua ngrok).",
-                unit="1 = sẵn sàng, 0 = không trả 2xx trong 5 giây.",
-                read="Xanh SẴN SÀNG là bình thường. Đỏ = service dừng hoặc DB của nó mất. Không có số = máy deploy tắt hoặc Alloy dừng.",
-                threshold="0 trong 2 phút ⇒ cảnh báo email 'không sẵn sàng' (luật smashcourt-down-*).",
+                unit="SẴN SÀNG = trả 2xx; LỖI = không trả 2xx trong 5 giây.",
+                read="Xanh là bình thường. Đỏ = service dừng hoặc DB của nó mất. 'Mất số liệu' = máy deploy tắt hoặc Alloy dừng.",
+                threshold="Lỗi trong 2 phút ⇒ email 'Service không sẵn sàng' (luật smashcourt-down).",
                 source="probe_success (Alloy prometheus.exporter.blackbox)",
-                tests=tests,
+                tests="OPS-04",
             ),
-            width=4,
-            height=5,
+            width=KPI_WIDTH,
+            height=KPI_HEIGHT,
             thresholds=[(0, "red"), (1, "green")],
-            mappings=[{"type": "value", "options": {"0": {"text": "KHÔNG SẴN SÀNG"}, "1": {"text": "SẴN SÀNG"}}}],
+            mappings=[{"type": "value", "options": {"0": {"text": "LỖI"}, "1": {"text": "SẴN SÀNG"}}}],
+            no_value="Mất số liệu",
         ),
         Panel(
-            "Image đang chạy",
+            "Phiên bản",
             "stat",
-            [(f'max by (image) (container_start_time_seconds{{name="{container}"}})', "{{image}}")],
+            # Chỉ hiện tag (sha-<7>): tách phần sau dấu ':' của nhãn image
+            [(f'label_replace(max by (image) (container_start_time_seconds{{name="{container}"}}), "tag", "$1", "image", ".*:(.*)")', "{{tag}}")],
             "none",
             Description(
-                what="Image của container đang chạy (đọc từ Docker, không do app tự báo).",
-                unit="Tên image kèm tag; tag sha-<7> là commit đã build.",
-                read="So tag với commit mới nhất của nhánh trên GitHub: lệch nghĩa là CD chưa chạy hoặc đã quay về bản trước.",
-                threshold="Không có ngưỡng; CD tự quay về nếu bản mới hỏng (deploy/cd.sh).",
+                what="Tag image của container đang chạy (đọc từ Docker, không do app tự báo).",
+                unit="sha-<7> = 7 ký tự đầu của commit đã build.",
+                read="So với commit mới nhất của nhánh trên GitHub: lệch nghĩa là CD chưa chạy xong hoặc đã quay về bản trước.",
+                threshold="Không có ngưỡng; CD tự quay về khi bản mới hỏng (deploy/cd.sh).",
                 source="container_start_time_seconds, nhãn image (Alloy prometheus.exporter.cadvisor)",
                 tests="OPS-05, OPS-08",
             ),
-            width=6,
-            height=5,
+            width=KPI_WIDTH,
+            height=KPI_HEIGHT,
             text_mode="name",
+            no_value="Container không chạy",
         ),
         Panel(
-            "Khởi động lúc",
+            "Khởi động",
             "stat",
             [(f'max(container_start_time_seconds{{name="{container}"}}) * 1000', "")],
             "dateTimeFromNow",
             Description(
-                what="Thời điểm container khởi động gần nhất (mỗi lần CD triển khai hoặc Docker khởi động lại).",
-                unit="Thời gian tương đối (vd '5 phút trước').",
-                read="Khởi động lại liên tục mà không có lần push nào ⇒ service bị sập rồi Docker bật lại (xem log).",
+                what="Lần container khởi động gần nhất (mỗi lần CD triển khai hoặc Docker khởi động lại).",
+                unit="Thời gian tương đối.",
+                read="Khởi động lại liên tục mà không có lần push nào ⇒ service sập rồi Docker bật lại (mở nhóm Log).",
                 threshold="Không có ngưỡng.",
                 source="container_start_time_seconds (cAdvisor)",
                 tests="OPS-09",
             ),
-            width=4,
-            height=5,
+            width=KPI_WIDTH,
+            height=KPI_HEIGHT,
+            no_value="Container không chạy",
         ),
     ]
 
 
-def _resource_panels(container: str, tests: str) -> list[Panel]:
+def _kpi_http(job: str, tests: str, p95_thresholds: list[tuple[float, str]], p95_source: str) -> list[Panel]:
+    """3 ô KPI lưu lượng của service HTTP (BE, AI): request/phút, lỗi 5xx, p95"""
+    sel = f'job="{job}",{NOT_HEALTH}'
+    return [
+        Panel(
+            "Request / phút",
+            "stat",
+            [(f"sum(rate(http_server_request_duration_seconds_count{{{sel}}}[5m])) * 60", "")],
+            "reqpm",
+            Description(
+                what="Số request người dùng gửi tới service, trung bình 5 phút (không tính /health).",
+                unit="Request mỗi phút.",
+                read="Cho biết có ai đang dùng; lỗi và độ trễ chỉ có nghĩa khi con số này khác 0.",
+                threshold="Không có ngưỡng.",
+                source="http_server_request_duration_seconds_count",
+                tests=tests,
+            ),
+            width=KPI_WIDTH,
+            height=KPI_HEIGHT,
+            sparkline=True,
+            no_value="0",
+        ),
+        Panel(
+            "Lỗi 5xx",
+            "stat",
+            [(
+                f'(sum(rate(http_server_request_duration_seconds_count{{{sel},http_response_status_code=~"5.."}}[5m])) or vector(0))'
+                f" / clamp_min(sum(rate(http_server_request_duration_seconds_count{{{sel}}}[5m])), 1e-9)",
+                "",
+            )],
+            "percentunit",
+            Description(
+                what="Phần trăm request trả lỗi 5xx (lỗi phía server), cửa sổ 5 phút.",
+                unit="Phần trăm.",
+                read="0 % là bình thường. Tăng ⇒ xem 'Lỗi theo mã' rồi mở nhóm Log.",
+                threshold="Vàng > 1 %; đỏ > 5 % và > 5 % trong 5 phút ⇒ email (plan 6C Mục 5.2).",
+                source="http_server_request_duration_seconds_count, nhãn http_response_status_code",
+                tests=tests,
+            ),
+            width=KPI_WIDTH,
+            height=KPI_HEIGHT,
+            thresholds=[(0, "green"), (0.01, "yellow"), (0.05, "red")],
+            sparkline=True,
+            no_value="0 %",
+        ),
+        Panel(
+            "Độ trễ p95",
+            "stat",
+            [(f"histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket{{{sel}}}[5m])))", "")],
+            "s",
+            Description(
+                what="95 % request (mọi endpoint, trừ /health) xong trong thời gian này, đo ở server (không gồm mạng/ngrok).",
+                unit="Giây; ước lượng từ bucket histogram.",
+                read="Ít request thì p95 dao động mạnh; xem 'Độ trễ p95 theo endpoint' để biết endpoint nào chậm.",
+                threshold=p95_source,
+                source="http_server_request_duration_seconds_bucket",
+                tests=tests,
+            ),
+            width=KPI_WIDTH,
+            height=KPI_HEIGHT,
+            thresholds=p95_thresholds,
+            sparkline=True,
+            no_value="Chưa có",
+        ),
+    ]
+
+
+def _traffic_section(job: str, tests: str) -> Section:
+    sel = f'job="{job}",{NOT_HEALTH}'
+    return Section("Lưu lượng và độ trễ theo endpoint", [
+        Panel(
+            "Request theo endpoint",
+            "timeseries",
+            [(f"sum by (http_route) (rate(http_server_request_duration_seconds_count{{{sel}}}[5m])) * 60", "{{http_route}}")],
+            "reqpm",
+            Description(
+                what="Số request mỗi endpoint, trung bình 5 phút (không tính /health).",
+                unit="Request mỗi phút.",
+                read="Biết endpoint nào được dùng nhiều nhất; dòng không tên là request tới đường dẫn không tồn tại (404).",
+                threshold="Không có ngưỡng.",
+                source="http_server_request_duration_seconds_count, nhãn http_route",
+                tests=tests,
+            ),
+            no_value=NO_REQUESTS,
+        ),
+        Panel(
+            "Độ trễ p95 theo endpoint",
+            "timeseries",
+            [(f"histogram_quantile(0.95, sum by (le, http_route) (rate(http_server_request_duration_seconds_bucket{{{sel}}}[5m])))", "{{http_route}}")],
+            "s",
+            Description(
+                what="p95 thời gian xử lý của từng endpoint, đo ở server.",
+                unit="Giây.",
+                read="Một endpoint vọt lên ⇒ xem trace của endpoint đó (Explore › Tempo).",
+                threshold="Như ô 'Độ trễ p95' của hàng KPI.",
+                source="http_server_request_duration_seconds_bucket, nhãn http_route",
+                tests=tests,
+            ),
+            no_value=NO_REQUESTS,
+        ),
+        Panel(
+            "Lỗi theo mã",
+            "timeseries",
+            [(
+                f'sum by (http_response_status_code) (rate(http_server_request_duration_seconds_count{{{sel},http_response_status_code=~"4..|5.."}}[5m])) * 60',
+                "{{http_response_status_code}}",
+            )],
+            "reqpm",
+            Description(
+                what="Request trả 4xx (lỗi phía người gọi: chưa đăng nhập, sai dữ liệu) và 5xx (lỗi server), theo mã.",
+                unit="Request mỗi phút.",
+                read="401/400 rải rác là bình thường (hết phiên, nhập sai); 5xx là lỗi cần xem log.",
+                threshold="5xx: như ô 'Lỗi 5xx'.",
+                source="http_server_request_duration_seconds_count, nhãn http_response_status_code",
+                tests=tests,
+            ),
+            no_value="Không có lỗi",
+        ),
+    ])
+
+
+def _resource_panels(container: str, tests: str, width: int) -> list[Panel]:
     return [
         Panel(
             "CPU",
@@ -146,12 +301,13 @@ def _resource_panels(container: str, tests: str) -> list[Panel]:
             Description(
                 what="CPU container dùng, trung bình 5 phút.",
                 unit="Số lõi (1 = một lõi chạy hết công suất).",
-                read="Tăng theo lượng request là bình thường; cao kéo dài khi không có request ⇒ vòng lặp hoặc job nặng.",
+                read="Tăng theo request là bình thường; cao kéo dài khi không có request ⇒ vòng lặp hoặc job nặng.",
                 threshold="Theo dõi; > 1 lõi kéo dài là bất thường với tải demo.",
                 source="container_cpu_usage_seconds_total (cAdvisor)",
                 tests=tests,
             ),
-            width=6,
+            width=width,
+            height=6,
         ),
         Panel(
             "RAM",
@@ -166,384 +322,430 @@ def _resource_panels(container: str, tests: str) -> list[Panel]:
                 source="container_memory_working_set_bytes (cAdvisor)",
                 tests=tests,
             ),
-            width=6,
+            width=width,
+            height=6,
         ),
     ]
 
 
-def _logs_panel(service: str, tests: str) -> Panel:
-    return Panel(
-        "Log Warning / Error",
-        "logs",
-        [(f'{{service_name="{service}"}} | detected_level=~"warn|error|fatal|critical"', "")],
-        "none",
-        Description(
-            what="Log mức Warning trở lên của service, gửi qua OTLP.",
-            unit="Dòng log.",
-            read="Bấm một dòng để xem đủ thuộc tính (trace_id: mở trace tương ứng). Toàn bộ log: Explore ⇒ Loki ⇒ service_name.",
-            threshold="Không có ngưỡng; dùng khi panel khác báo bất thường.",
-            source=f'Loki, service_name="{service}"',
-            tests=tests,
-        ),
-        width=24,
-        height=10,
-    )
-
-
-def _red_panels(job: str, tests: str, slo: str) -> list[Panel]:
-    sel = f'job="{job}"'
-    return [
+def _logs_section(service: str, tests: str) -> Section:
+    return Section("Log Warning / Error", [
         Panel(
-            "Request mỗi giây",
-            "timeseries",
-            [(f"sum(rate(http_server_request_duration_seconds_count{{{sel}}}[5m]))", "request/giây")],
-            "reqps",
+            "Log Warning / Error",
+            "logs",
+            [(f'{{service_name="{service}"}} | detected_level=~"warn|error|fatal|critical"', "")],
+            "none",
             Description(
-                what="Số request HTTP service nhận, trung bình 5 phút (BE tính cả /health do Docker và Alloy gọi; AI không tính /health).",
-                unit="Request/giây.",
-                read="Cho biết có ai đang dùng; các panel lỗi, độ trễ chỉ có nghĩa khi có request.",
-                threshold="Không có ngưỡng.",
-                source="http_server_request_duration_seconds_count",
-                tests=tests,
-            ),
-        ),
-        Panel(
-            "Tỉ lệ lỗi 5xx",
-            "timeseries",
-            [(
-                f'(sum(rate(http_server_request_duration_seconds_count{{{sel},http_response_status_code=~"5.."}}[5m])) or vector(0))'
-                f" / sum(rate(http_server_request_duration_seconds_count{{{sel}}}[5m]))",
-                "5xx",
-            )],
-            "percentunit",
-            Description(
-                what="Phần trăm request trả lỗi 5xx, cửa sổ 5 phút.",
-                unit="Phần trăm.",
-                read="0 % là bình thường. Tăng ⇒ mở panel log bên dưới tìm lỗi.",
-                threshold="> 5 % trong 5 phút ⇒ cảnh báo email (plan 6C Mục 5.2).",
-                source="http_server_request_duration_seconds_count, nhãn http_response_status_code",
-                tests=tests,
-            ),
-            thresholds=[(0, "green"), (0.05, "red")],
-        ),
-        Panel(
-            "Độ trễ p95 theo endpoint",
-            "timeseries",
-            [(
-                f"histogram_quantile(0.95, sum by (le, http_route) (rate(http_server_request_duration_seconds_bucket{{{sel}}}[5m])))",
-                "{{http_route}}",
-            )],
-            "s",
-            Description(
-                what="95 % request của mỗi endpoint xong trong thời gian này (đo ở server, không gồm mạng/ngrok).",
-                unit="Giây; ước lượng từ bucket histogram nên chỉ chính xác tới biên bucket gần nhất.",
-                read="So các endpoint với nhau; một endpoint vọt lên ⇒ xem trace của endpoint đó. Ít request thì p95 dao động mạnh.",
-                threshold=slo,
-                source="http_server_request_duration_seconds_bucket, nhãn http_route",
+                what="Log mức Warning trở lên của service, gửi qua OTLP.",
+                unit="Dòng log.",
+                read="Bấm một dòng để xem đủ thuộc tính (trace_id: mở trace tương ứng). Toàn bộ log: Explore › Loki › service_name.",
+                threshold="Không có ngưỡng; dùng khi ô KPI báo bất thường.",
+                source=f'Loki, service_name="{service}"',
                 tests=tests,
             ),
             width=24,
-            height=8,
+            height=12,
         ),
-    ]
+    ], collapsed=True)
 
+
+# ── BE ───────────────────────────────────────────────────────────────────────
 
 BE = Dashboard(
     uid="smashcourt-van-hanh-be",
     title="SmashCourt Vận hành - BE",
     guide=(
-        "### Cách đọc tab BE\n"
-        "1. Hàng đầu: **Sẵn sàng** phải xanh, **Image đang chạy** phải đúng commit mới nhất.\n"
-        "2. **Request / lỗi / độ trễ**: chỉ có ý nghĩa khi có người dùng.\n"
-        "3. **Phụ thuộc**: BE gọi TADSS và AI chậm hoặc lỗi thì đặt sân vẫn chạy (cọc 100 %), gợi ý AI báo lỗi.\n"
-        "4. Số liệu gửi 60 giây một lần nên trễ tối đa khoảng 1–2 phút.\n"
-        "Request ngrok trong tháng (giới hạn 20.000): xem trang dashboard.ngrok.com, ngrok không có metric để đưa vào đây."
+        "1. **Hàng KPI**: Sẵn sàng phải xanh, Phiên bản phải đúng commit mới nhất; 3 ô sau chỉ có ý nghĩa khi có người dùng.\n"
+        "2. **Lưu lượng**: endpoint nào được dùng, chậm hay lỗi.\n"
+        "3. **Phụ thuộc**: BE gọi TADSS và AI chậm hoặc lỗi thì đặt sân vẫn chạy (cọc 100 %), gợi ý AI báo lỗi; pool PostgreSQL đầy thì mọi request chậm.\n"
+        "4. Số liệu gửi 60 giây một lần nên trễ 1–2 phút. Rê chuột vào ⓘ cạnh tên panel để đọc mô tả đầy đủ.\n"
+        "5. Request ngrok trong tháng (giới hạn 20.000): xem dashboard.ngrok.com (ngrok không có metric)."
     ),
-    panels=[
-        *_up_panel("be", "smashcourt-be", "OPS-04"),
-        *_red_panels("smashcourt-be", "OB-BE-1", "SLO BE ở task 2.18 (P6-52), chưa chốt; dùng để so sánh tương đối."),
-        Panel(
-            "BE gọi TADSS / AI: p95",
-            "timeseries",
-            [(
-                'histogram_quantile(0.95, sum by (le, server_address) (rate(http_client_request_duration_seconds_bucket{job="smashcourt-be",server_address=~"tadss|ai"}[5m])))',
-                "{{server_address}}",
-            )],
-            "s",
-            Description(
-                what="Thời gian BE chờ TADSS (quyết định cọc) và AI (gợi ý, chat) trả lời, p95.",
-                unit="Giây.",
-                read="TADSS > 0,8 giây ⇒ BE hết thời gian chờ và cọc 100 %. AI chậm chủ yếu do Gemini (xem tab AI).",
-                threshold="TADSS: TadssConfig:TimeoutMs = 800 ms (BE tự chuyển sang cọc 100 %).",
-                source="http_client_request_duration_seconds_bucket, nhãn server_address",
-                tests="OB-BE-1, OB-BE-2",
+    sections=[
+        Section(None, [
+            *_kpi_identity("be", "smashcourt-be"),
+            *_kpi_http(
+                "smashcourt-be", "OB-BE-1",
+                [(0, "green"), (0.5, "yellow"), (1, "red")],
+                "Vàng > 0,5 s, đỏ > 1 s: mức tham khảo tới khi chốt SLO BE (task 2.18, P6-52).",
             ),
-            width=12,
-        ),
-        Panel(
-            "BE gọi TADSS / AI: lỗi",
-            "timeseries",
-            [(
-                'sum by (server_address) (rate(http_client_request_duration_seconds_count{job="smashcourt-be",server_address=~"tadss|ai",error_type!=""}[5m]))',
-                "{{server_address}}",
-            )],
-            "reqps",
-            Description(
-                what="Lời gọi TADSS / AI thất bại (không kết nối được, hết thời gian, trả 5xx).",
-                unit="Lần/giây.",
-                read="Khác 0 ⇒ xem tab TADSS hoặc AI cùng thời điểm.",
-                threshold="Khác 0 kéo dài ⇒ kiểm service đó; cảnh báo 'không sẵn sàng' bắt trường hợp service dừng hẳn.",
-                source="http_client_request_duration_seconds_count, nhãn error_type",
-                tests="OB-BE-1",
+        ]),
+        _traffic_section("smashcourt-be", "OB-BE-1"),
+        Section("Phụ thuộc: TADSS, AI, PostgreSQL", [
+            Panel(
+                "BE chờ TADSS / AI (p95)",
+                "timeseries",
+                [(
+                    'histogram_quantile(0.95, sum by (le, server_address) (rate(http_client_request_duration_seconds_bucket{job="smashcourt-be",server_address=~"tadss|ai"}[5m])))',
+                    "{{server_address}}",
+                )],
+                "s",
+                Description(
+                    what="Thời gian BE chờ TADSS (quyết định cọc) và AI (chat, gợi ý) trả lời, p95.",
+                    unit="Giây.",
+                    read="TADSS > 0,8 giây ⇒ BE hết thời gian chờ và cọc 100 %. AI chậm chủ yếu do Gemini (tab AI).",
+                    threshold="TADSS: TadssConfig:TimeoutMs = 800 ms (BE tự chuyển sang cọc 100 %).",
+                    source="http_client_request_duration_seconds_bucket, nhãn server_address",
+                    tests="OB-BE-1, OB-BE-2",
+                ),
+                no_value="Chưa có lời gọi (TADSS chỉ được gọi khi bật cờ)",
             ),
-            width=12,
-        ),
-        Panel(
-            "Kết nối PostgreSQL",
-            "timeseries",
-            [
-                ('sum by (state) (db_client_connections_usage{job="smashcourt-be"})', "{{state}}"),
-                ('max(db_client_connections_max{job="smashcourt-be"})', "tối đa"),
-            ],
-            "short",
-            Description(
-                what="Số kết nối trong pool Npgsql của BE: đang dùng (used) và rảnh (idle).",
-                unit="Kết nối.",
-                read="used chạm 'tối đa' ⇒ request phải chờ kết nối, độ trễ tăng.",
-                threshold="used gần tối đa (mặc định 100) là dấu hiệu nghẽn.",
-                source="db_client_connections_usage, db_client_connections_max",
-                tests="OB-BE-1",
+            Panel(
+                "Lời gọi TADSS / AI thất bại",
+                "timeseries",
+                [(
+                    'sum by (server_address) (rate(http_client_request_duration_seconds_count{job="smashcourt-be",server_address=~"tadss|ai",error_type!=""}[5m])) * 60',
+                    "{{server_address}}",
+                )],
+                "reqpm",
+                Description(
+                    what="Lời gọi TADSS / AI thất bại (không kết nối được, hết thời gian, trả 5xx).",
+                    unit="Lần mỗi phút.",
+                    read="Khác 0 ⇒ xem tab TADSS hoặc AI cùng thời điểm.",
+                    threshold="Khác 0 kéo dài ⇒ kiểm service đó; service dừng hẳn thì có email 'không sẵn sàng'.",
+                    source="http_client_request_duration_seconds_count, nhãn error_type",
+                    tests="OB-BE-1",
+                ),
+                no_value="Không có lỗi",
             ),
-            width=8,
-        ),
-        Panel(
-            "Heap .NET",
-            "timeseries",
-            [
-                ('sum(process_runtime_dotnet_gc_heap_size_bytes{job="smashcourt-be"})', "heap"),
-            ],
-            "bytes",
-            Description(
-                what="Bộ nhớ heap .NET của BE sau lần GC gần nhất.",
-                unit="Byte.",
-                read="Tăng đều không giảm sau GC ⇒ nghi rò bộ nhớ (so với panel RAM).",
-                threshold="Theo dõi.",
-                source="process_runtime_dotnet_gc_heap_size_bytes",
-                tests="OB-BE-1",
+            Panel(
+                "Kết nối PostgreSQL",
+                "timeseries",
+                [
+                    ('sum by (state) (db_client_connections_usage{job="smashcourt-be"})', "{{state}}"),
+                    ('max(db_client_connections_max{job="smashcourt-be"})', "tối đa"),
+                ],
+                "short",
+                Description(
+                    what="Kết nối trong pool Npgsql của BE: đang dùng (used), rảnh (idle) và mức tối đa.",
+                    unit="Kết nối.",
+                    read="used chạm 'tối đa' ⇒ request phải chờ kết nối, độ trễ tăng.",
+                    threshold="used gần tối đa (mặc định 100) là dấu hiệu nghẽn.",
+                    source="db_client_connections_usage, db_client_connections_max",
+                    tests="OB-BE-1",
+                ),
             ),
-            width=8,
-        ),
-        Panel(
-            "Hàng đợi thread pool",
-            "timeseries",
-            [('max(process_runtime_dotnet_thread_pool_queue_length{job="smashcourt-be"})', "hàng đợi")],
-            "short",
-            Description(
-                what="Số việc chờ thread của .NET.",
-                unit="Việc.",
-                read="Khác 0 kéo dài ⇒ thiếu thread (thường do chờ đồng bộ), request chậm dần.",
-                threshold="> 0 kéo dài là bất thường.",
-                source="process_runtime_dotnet_thread_pool_queue_length",
-                tests="OB-BE-1",
+        ]),
+        Section("Tài nguyên", [
+            *_resource_panels("smashcourt-be", "OB-BE-1", 6),
+            Panel(
+                "Heap .NET",
+                "timeseries",
+                [('sum(process_runtime_dotnet_gc_heap_size_bytes{job="smashcourt-be"})', "heap")],
+                "bytes",
+                Description(
+                    what="Bộ nhớ heap .NET của BE sau lần GC gần nhất.",
+                    unit="Byte.",
+                    read="Tăng đều không giảm sau GC ⇒ nghi rò bộ nhớ (so với RAM).",
+                    threshold="Theo dõi.",
+                    source="process_runtime_dotnet_gc_heap_size_bytes",
+                    tests="OB-BE-1",
+                ),
+                width=6,
+                height=6,
             ),
-            width=8,
-        ),
-        *_resource_panels("smashcourt-be", "OB-BE-1"),
-        _logs_panel("smashcourt-be", "OB-BE-1"),
+            Panel(
+                "Hàng đợi thread pool",
+                "timeseries",
+                [('max(process_runtime_dotnet_thread_pool_queue_length{job="smashcourt-be"})', "hàng đợi")],
+                "short",
+                Description(
+                    what="Số việc đang chờ thread của .NET.",
+                    unit="Việc.",
+                    read="Khác 0 kéo dài ⇒ thiếu thread (thường do chờ đồng bộ), request chậm dần.",
+                    threshold="> 0 kéo dài là bất thường.",
+                    source="process_runtime_dotnet_thread_pool_queue_length",
+                    tests="OB-BE-1",
+                ),
+                width=6,
+                height=6,
+                soft_max=10,
+            ),
+        ]),
+        _logs_section("smashcourt-be", "OB-BE-1"),
     ],
 )
+
+# ── TADSS ────────────────────────────────────────────────────────────────────
+
+_TADSS = 'job="tadss-runtime"'
+_DECISIONS = f'{_TADSS},endpoint="POST api/v2/decisions"'
 
 TADSS = Dashboard(
     uid="smashcourt-van-hanh-tadss",
     title="SmashCourt Vận hành - TADSS",
     guide=(
-        "### Cách đọc tab TADSS\n"
-        "1. Chỉ có số liệu quyết định khi BE bật `TadssConfig:EnableTadssDecision` (đang **tắt**); khi tắt, chỉ hàng đầu và tài nguyên có số.\n"
+        "1. Số liệu quyết định chỉ có khi BE bật `TadssConfig:EnableTadssDecision` (đang **tắt**); khi tắt, chỉ hàng KPI đầu, breaker và tài nguyên có số.\n"
         "2. **Đường lùi** cao nghĩa là strategy lỗi/chậm và TADSS trả cọc 100 %.\n"
         "3. SLO của TADSS: SC1 p95 < 150 ms, SC2 p99 ≤ 700 ms (P6-52).\n"
-        "Dashboard chi tiết hơn (shadow, override, k6) chạy local: `docker compose up -d` trong TADSS-Runtime."
+        "4. Dashboard chi tiết hơn (shadow, override, k6) chạy local: `docker compose up -d` trong TADSS-Runtime."
     ),
-    panels=[
-        *_up_panel("tadss", "tadss-runtime", "OPS-04"),
-        Panel(
-            "Quyết định theo trạng thái",
-            "timeseries",
-            [('sum by (status) (rate(tadss_decisions_total{job="tadss-runtime"}[5m]))', "{{status}}")],
-            "ops",
-            Description(
-                what="Số quyết định TADSS trả mỗi giây, theo trạng thái (APPROVED, NEED_APPROVAL…).",
-                unit="Quyết định/giây.",
-                read="NEED_APPROVAL tăng ⇒ Manager có thêm đơn phải duyệt (xem panel hàng chờ).",
-                threshold="Không có ngưỡng.",
-                source="tadss_decisions_total, nhãn status",
-                tests="OB-1",
+    sections=[
+        Section(None, [
+            *_kpi_identity("tadss", "tadss-runtime"),
+            Panel(
+                "Quyết định / phút",
+                "stat",
+                [(f"sum(rate(tadss_decisions_total{{{_TADSS}}}[5m])) * 60", "")],
+                "short",
+                Description(
+                    what="Số quyết định cọc TADSS trả, trung bình 5 phút.",
+                    unit="Quyết định mỗi phút.",
+                    read="0 khi cờ TADSS tắt hoặc không có ai đặt sân online.",
+                    threshold="Không có ngưỡng.",
+                    source="tadss_decisions_total",
+                    tests="OB-1",
+                ),
+                width=KPI_WIDTH,
+                height=KPI_HEIGHT,
+                sparkline=True,
+                no_value="Cờ tắt",
             ),
-        ),
-        Panel(
-            "Tỉ lệ đường lùi (cọc 100 %)",
-            "timeseries",
-            [(
-                '(sum(rate(tadss_fallbacks_total{job="tadss-runtime"}[10m])) or vector(0)) / sum(rate(tadss_decisions_total{job="tadss-runtime"}[10m]))',
-                "đường lùi",
-            )],
-            "percentunit",
-            Description(
-                what="Phần trăm quyết định phải dùng đường lùi (strategy lỗi, quá ngân sách 500 ms, breaker mở).",
-                unit="Phần trăm, cửa sổ 10 phút.",
-                read="Gần 0 % là bình thường; tăng ⇒ xem panel breaker và log.",
-                threshold="> 20 % trong 10 phút ⇒ cảnh báo email (plan 6C Mục 5.2).",
-                source="tadss_fallbacks_total / tadss_decisions_total",
-                tests="OB-1, FI-01…10",
+            Panel(
+                "Đường lùi",
+                "stat",
+                [(
+                    f"(sum(rate(tadss_fallbacks_total{{{_TADSS}}}[10m])) or vector(0)) / clamp_min(sum(rate(tadss_decisions_total{{{_TADSS}}}[10m])), 1e-9)",
+                    "",
+                )],
+                "percentunit",
+                Description(
+                    what="Phần trăm quyết định phải dùng đường lùi cọc 100 % (strategy lỗi, quá ngân sách 500 ms, breaker mở).",
+                    unit="Phần trăm, cửa sổ 10 phút.",
+                    read="Gần 0 % là bình thường; tăng ⇒ xem nhóm 'Chịu lỗi'.",
+                    threshold="Vàng > 5 %; đỏ > 20 % và > 20 % trong 10 phút ⇒ email (plan 6C Mục 5.2).",
+                    source="tadss_fallbacks_total / tadss_decisions_total",
+                    tests="OB-1, FI-01…10",
+                ),
+                width=KPI_WIDTH,
+                height=KPI_HEIGHT,
+                thresholds=[(0, "green"), (0.05, "yellow"), (0.2, "red")],
+                sparkline=True,
+                no_value="Cờ tắt",
             ),
-            thresholds=[(0, "green"), (0.2, "red")],
-        ),
-        Panel(
-            "Độ trễ quyết định p95 / p99",
-            "timeseries",
-            [
-                ('histogram_quantile(0.95, sum by (le) (rate(tadss_decision_duration_milliseconds_bucket{job="tadss-runtime",endpoint="POST api/v2/decisions"}[5m])))', "p95"),
-                ('histogram_quantile(0.99, sum by (le) (rate(tadss_decision_duration_milliseconds_bucket{job="tadss-runtime",endpoint="POST api/v2/decisions"}[5m])))', "p99"),
-            ],
-            "ms",
-            Description(
-                what="Thời gian TADSS xử lý POST /api/v2/decisions (đo trong TADSS).",
-                unit="Mili giây.",
-                read="p95 dưới 150 ms là đạt SC1; p99 dưới 700 ms là đạt SC2.",
-                threshold="SC1 p95 < 150 ms; SC2 p99 ≤ 700 ms (P6-52, methodology).",
-                source="tadss_decision_duration_milliseconds_bucket",
-                tests="SC1, SC2, OB-1",
+            Panel(
+                "Độ trễ p95",
+                "stat",
+                [(f"histogram_quantile(0.95, sum by (le) (rate(tadss_decision_duration_milliseconds_bucket{{{_DECISIONS}}}[5m])))", "")],
+                "ms",
+                Description(
+                    what="95 % lần gọi POST /api/v2/decisions xong trong thời gian này (đo trong TADSS).",
+                    unit="Mili giây.",
+                    read="Dưới 150 ms là đạt SC1.",
+                    threshold="SC1: p95 < 150 ms (P6-52, methodology).",
+                    source="tadss_decision_duration_milliseconds_bucket",
+                    tests="SC1, OB-1",
+                ),
+                width=KPI_WIDTH,
+                height=KPI_HEIGHT,
+                thresholds=[(0, "green"), (150, "red")],
+                sparkline=True,
+                no_value="Cờ tắt",
             ),
-            thresholds=[(0, "green"), (150, "yellow"), (700, "red")],
-        ),
-        Panel(
-            "Circuit breaker của strategy",
-            "timeseries",
-            [('max by (strategy) (tadss_circuit_state{job="tadss-runtime"})', "{{strategy}}")],
-            "short",
-            Description(
-                what="Trạng thái breaker của từng strategy.",
-                unit="0 = đóng (bình thường), 1 = mở (bỏ qua strategy, dùng đường lùi), 2 = nửa mở (đang thử lại).",
-                read="Mở kéo dài ⇒ strategy lỗi liên tục, mọi quyết định cọc 100 %.",
-                threshold="Khác 0 là bất thường.",
-                source="tadss_circuit_state",
-                tests="FI-03, OB-1",
+        ]),
+        Section("Quyết định", [
+            Panel(
+                "Quyết định theo trạng thái",
+                "timeseries",
+                [(f"sum by (status) (rate(tadss_decisions_total{{{_TADSS}}}[5m])) * 60", "{{status}}")],
+                "short",
+                Description(
+                    what="Số quyết định mỗi phút theo trạng thái (APPROVED, NEED_APPROVAL…).",
+                    unit="Quyết định mỗi phút.",
+                    read="NEED_APPROVAL tăng ⇒ Manager có thêm đơn phải duyệt (panel bên phải).",
+                    threshold="Không có ngưỡng.",
+                    source="tadss_decisions_total, nhãn status",
+                    tests="OB-1",
+                ),
+                no_value=TADSS_OFF,
             ),
-        ),
-        Panel(
-            "Tỉ lệ cache hit",
-            "timeseries",
-            [(
-                '(sum(rate(tadss_cache_requests_total{job="tadss-runtime",result="hit"}[10m])) or vector(0)) / sum(rate(tadss_cache_requests_total{job="tadss-runtime"}[10m]))',
-                "hit",
-            )],
-            "percentunit",
-            Description(
-                what="Phần trăm lần tra cache Redis có sẵn kết quả strategy.",
-                unit="Phần trăm, cửa sổ 10 phút.",
-                read="Thấp khi mỗi đơn khác nhau là bình thường; tụt về 0 đột ngột ⇒ Redis mất (TADSS vẫn chạy).",
-                threshold="Không có ngưỡng.",
-                source="tadss_cache_requests_total, nhãn result",
-                tests="OB-1",
+            Panel(
+                "Độ trễ p95 / p99",
+                "timeseries",
+                [
+                    (f"histogram_quantile(0.95, sum by (le) (rate(tadss_decision_duration_milliseconds_bucket{{{_DECISIONS}}}[5m])))", "p95"),
+                    (f"histogram_quantile(0.99, sum by (le) (rate(tadss_decision_duration_milliseconds_bucket{{{_DECISIONS}}}[5m])))", "p99"),
+                ],
+                "ms",
+                Description(
+                    what="Thời gian TADSS xử lý POST /api/v2/decisions, p95 và p99.",
+                    unit="Mili giây.",
+                    read="p95 dưới 150 ms là đạt SC1; p99 dưới 700 ms là đạt SC2.",
+                    threshold="SC1 p95 < 150 ms; SC2 p99 ≤ 700 ms (P6-52, methodology).",
+                    source="tadss_decision_duration_milliseconds_bucket",
+                    tests="SC1, SC2, OB-1",
+                ),
+                no_value=TADSS_OFF,
             ),
-        ),
-        Panel(
-            "Đơn chờ Manager duyệt",
-            "timeseries",
-            [('max by (branch) (tadss_pending_approvals{job="tadss-runtime"})', "{{branch}}")],
-            "short",
-            Description(
-                what="Số quyết định NEED_APPROVAL chưa được duyệt, theo chi nhánh.",
-                unit="Đơn.",
-                read="Tăng mà không giảm ⇒ Manager chưa xử lý; hết hạn duyệt thì đơn cọc 100 %.",
-                threshold="Không có ngưỡng.",
-                source="tadss_pending_approvals",
-                tests="OB-1",
+            Panel(
+                "Đơn chờ Manager duyệt",
+                "timeseries",
+                [(f"max by (branch) (tadss_pending_approvals{{{_TADSS}}})", "{{branch}}")],
+                "short",
+                Description(
+                    what="Số quyết định NEED_APPROVAL chưa được duyệt, theo chi nhánh.",
+                    unit="Đơn.",
+                    read="Tăng mà không giảm ⇒ Manager chưa xử lý; hết hạn duyệt thì đơn cọc 100 %.",
+                    threshold="Không có ngưỡng.",
+                    source="tadss_pending_approvals",
+                    tests="OB-1",
+                ),
+                no_value="Không có đơn chờ duyệt",
             ),
-        ),
-        *_resource_panels("tadss-runtime", "OB-1"),
-        _logs_panel("tadss-runtime", "OB-1"),
+        ]),
+        Section("Chịu lỗi và cache", [
+            Panel(
+                "Circuit breaker của strategy",
+                "state-timeline",
+                [(f"max by (strategy) (tadss_circuit_state{{{_TADSS}}})", "{{strategy}}")],
+                "none",
+                Description(
+                    what="Trạng thái breaker của từng strategy theo thời gian.",
+                    unit="Đóng = bình thường; Mở = bỏ qua strategy, dùng đường lùi; Nửa mở = đang thử lại.",
+                    read="Dải đỏ (Mở) kéo dài ⇒ strategy lỗi liên tục, mọi quyết định cọc 100 %.",
+                    threshold="Khác 'Đóng' là bất thường.",
+                    source="tadss_circuit_state",
+                    tests="FI-03, OB-1",
+                ),
+                mappings=[{"type": "value", "options": {
+                    "0": {"text": "Đóng", "color": "green"},
+                    "1": {"text": "Mở", "color": "red"},
+                    "2": {"text": "Nửa mở", "color": "yellow"},
+                }}],
+            ),
+            Panel(
+                "Đường lùi theo lý do",
+                "timeseries",
+                [(f"sum by (reason) (rate(tadss_fallbacks_total{{{_TADSS}}}[5m])) * 60", "{{reason}}")],
+                "short",
+                Description(
+                    what="Số lần dùng đường lùi mỗi phút, theo lý do (lỗi strategy, quá ngân sách thời gian, breaker mở…).",
+                    unit="Lần mỗi phút.",
+                    read="Cho biết vì sao ô 'Đường lùi' tăng.",
+                    threshold="Như ô 'Đường lùi'.",
+                    source="tadss_fallbacks_total, nhãn reason",
+                    tests="OB-1, FI-01…10",
+                ),
+                no_value="Không có đường lùi",
+            ),
+            Panel(
+                "Tỉ lệ cache hit",
+                "timeseries",
+                [(
+                    f'(sum(rate(tadss_cache_requests_total{{{_TADSS},result="hit"}}[10m])) or vector(0)) / sum(rate(tadss_cache_requests_total{{{_TADSS}}}[10m]))',
+                    "hit",
+                )],
+                "percentunit",
+                Description(
+                    what="Phần trăm lần tra cache Redis có sẵn kết quả strategy.",
+                    unit="Phần trăm, cửa sổ 10 phút.",
+                    read="Thấp khi mỗi đơn khác nhau là bình thường; tụt về 0 đột ngột ⇒ Redis mất (TADSS vẫn chạy).",
+                    threshold="Không có ngưỡng.",
+                    source="tadss_cache_requests_total, nhãn result",
+                    tests="OB-1",
+                ),
+                soft_max=1,
+                no_value=TADSS_OFF,
+            ),
+        ]),
+        Section("Tài nguyên", _resource_panels("tadss-runtime", "OB-1", 12)),
+        _logs_section("tadss-runtime", "OB-1"),
     ],
 )
+
+# ── AI ───────────────────────────────────────────────────────────────────────
+
+_AI = 'job="smashcourt-ai"'
 
 AI = Dashboard(
     uid="smashcourt-van-hanh-ai",
     title="SmashCourt Vận hành - AI",
     guide=(
-        "### Cách đọc tab AI\n"
         "1. AI chỉ nhận request từ BE (chat, gợi ý, phân tích); mỗi request gọi Gemini một lần.\n"
         "2. **Gemini** chiếm gần hết thời gian xử lý; 'quota' là bị Google giới hạn (429), người dùng thấy AI tạm không khả dụng.\n"
-        "3. Giới hạn gói miễn phí Gemini xem ở AI Studio; panel token cho biết đã dùng bao nhiêu."
+        "3. Giới hạn gói miễn phí Gemini xem ở AI Studio; ô token cho biết đã dùng bao nhiêu trong 24 giờ."
     ),
-    panels=[
-        *_up_panel("ai", "smashcourt-ai", "OPS-04"),
-        *_red_panels("smashcourt-ai", "OB-AI-1", "AI đề xuất p95 < 300 ms cho phần xử lý của AI, không gồm Gemini (P6-52, chốt ở 2.18)."),
-        Panel(
-            "Lời gọi Gemini theo kết quả",
-            "timeseries",
-            [('sum by (outcome) (rate(gemini_request_duration_seconds_count{job="smashcourt-ai"}[5m]))', "{{outcome}}")],
-            "ops",
-            Description(
-                what="Số lời gọi Gemini mỗi giây theo kết quả: ok, quota (bị giới hạn 429), error (lỗi khác).",
-                unit="Lời gọi/giây.",
-                read="quota xuất hiện ⇒ đã chạm giới hạn gói miễn phí, chờ vài phút hoặc đổi model.",
-                threshold="quota liên tục 10 phút ⇒ cảnh báo email (plan 6C Mục 5.2).",
-                source="gemini_request_duration_seconds_count, nhãn outcome",
-                tests="OB-AI-1",
+    sections=[
+        Section(None, [
+            *_kpi_identity("ai", "smashcourt-ai"),
+            *_kpi_http(
+                "smashcourt-ai", "OB-AI-1",
+                [(0, "green"), (10, "yellow"), (30, "red")],
+                "Vàng > 10 s, đỏ > 30 s (gồm cả thời gian chờ Gemini). SLO phần xử lý riêng của AI (p95 < 300 ms, P6-52) đo ở bộ test với LLM giả.",
             ),
-            width=12,
-        ),
-        Panel(
-            "Độ trễ Gemini p95",
-            "timeseries",
-            [(
-                'histogram_quantile(0.95, sum by (le, gemini_operation) (rate(gemini_request_duration_seconds_bucket{job="smashcourt-ai",outcome="ok"}[15m])))',
-                "{{gemini_operation}}",
-            )],
-            "s",
-            Description(
-                what="Thời gian Gemini trả lời các lời gọi thành công, p95, theo kiểu gọi (structured = JSON, text).",
-                unit="Giây.",
-                read="Vài giây là bình thường với LLM; tăng mạnh ⇒ phía Google chậm, không phải lỗi của AI.",
-                threshold="Không có ngưỡng (phụ thuộc Google).",
-                source="gemini_request_duration_seconds_bucket",
-                tests="OB-AI-1",
+        ]),
+        _traffic_section("smashcourt-ai", "OB-AI-1"),
+        Section("Gemini", [
+            Panel(
+                "Lời gọi Gemini theo kết quả",
+                "timeseries",
+                [(f"sum by (outcome) (rate(gemini_request_duration_seconds_count{{{_AI}}}[5m])) * 60", "{{outcome}}")],
+                "short",
+                Description(
+                    what="Số lời gọi Gemini mỗi phút theo kết quả: ok, quota (bị giới hạn 429), error (lỗi khác).",
+                    unit="Lời gọi mỗi phút.",
+                    read="quota xuất hiện ⇒ đã chạm giới hạn gói miễn phí, chờ vài phút hoặc đổi model.",
+                    threshold="quota liên tục 10 phút ⇒ email (plan 6C Mục 5.2).",
+                    source="gemini_request_duration_seconds_count, nhãn outcome",
+                    tests="OB-AI-1",
+                ),
+                no_value="Chưa có lời gọi Gemini",
             ),
-            width=12,
-        ),
-        Panel(
-            "Token Gemini trong 24 giờ",
-            "stat",
-            [('sum by (token_type) (increase(gemini_tokens_total{job="smashcourt-ai"}[24h]))', "{{token_type}}")],
-            "short",
-            Description(
-                what="Số token đã gửi (input) và nhận (output) trong 24 giờ qua.",
-                unit="Token.",
-                read="So với giới hạn ngày của model trong AI Studio để biết còn bao nhiêu.",
-                threshold="Giới hạn gói miễn phí theo model (xem AI Studio).",
-                source="gemini_tokens_total, nhãn token_type",
-                tests="OB-AI-1",
+            Panel(
+                "Độ trễ Gemini p95",
+                "timeseries",
+                [(
+                    f'histogram_quantile(0.95, sum by (le, gemini_operation) (rate(gemini_request_duration_seconds_bucket{{{_AI},outcome="ok"}}[15m])))',
+                    "{{gemini_operation}}",
+                )],
+                "s",
+                Description(
+                    what="Thời gian Gemini trả lời các lời gọi thành công, p95, theo kiểu gọi (structured = JSON, text).",
+                    unit="Giây.",
+                    read="Vài giây là bình thường với LLM; tăng mạnh ⇒ phía Google chậm, không phải lỗi của AI.",
+                    threshold="Không có ngưỡng (phụ thuộc Google).",
+                    source="gemini_request_duration_seconds_bucket",
+                    tests="OB-AI-1",
+                ),
+                no_value="Chưa có lời gọi Gemini",
             ),
-            width=12,
-            text_mode="value_and_name",
-        ),
-        Panel(
-            "Model đang dùng",
-            "stat",
-            [('sum by (gemini_model) (increase(gemini_request_duration_seconds_count{job="smashcourt-ai"}[24h]))', "{{gemini_model}}")],
-            "short",
-            Description(
-                what="Model Gemini được gọi trong 24 giờ qua và số lời gọi.",
-                unit="Lời gọi.",
-                read="Đổi model trong file bí mật (GEMINI_MODEL) rồi triển khai lại AI; panel đổi theo.",
-                threshold="Không có ngưỡng.",
-                source="gemini_request_duration_seconds_count, nhãn gemini_model",
-                tests="OB-AI-1",
+            Panel(
+                "Token 24 giờ",
+                "stat",
+                [(f"sum by (token_type) (increase(gemini_tokens_total{{{_AI}}}[24h]))", "{{token_type}}")],
+                "short",
+                Description(
+                    what="Số token đã gửi (input) và nhận (output) trong 24 giờ qua.",
+                    unit="Token.",
+                    read="So với giới hạn ngày của model trong AI Studio để biết còn bao nhiêu.",
+                    threshold="Giới hạn gói miễn phí theo model (AI Studio).",
+                    source="gemini_tokens_total, nhãn token_type",
+                    tests="OB-AI-1",
+                ),
+                width=4,
+                text_mode="value_and_name",
+                no_value="0",
             ),
-            width=12,
-            text_mode="value_and_name",
-        ),
-        *_resource_panels("smashcourt-ai", "OB-AI-1"),
-        _logs_panel("smashcourt-ai", "OB-AI-1"),
+            Panel(
+                "Model (24 giờ)",
+                "stat",
+                [(f"sum by (gemini_model) (increase(gemini_request_duration_seconds_count{{{_AI}}}[24h]))", "{{gemini_model}}")],
+                "short",
+                Description(
+                    what="Model Gemini được gọi trong 24 giờ qua và số lời gọi.",
+                    unit="Lời gọi.",
+                    read="Đổi model ở GEMINI_MODEL trong file bí mật rồi triển khai lại AI; ô đổi theo.",
+                    threshold="Không có ngưỡng.",
+                    source="gemini_request_duration_seconds_count, nhãn gemini_model",
+                    tests="OB-AI-1",
+                ),
+                width=4,
+                text_mode="value_and_name",
+                no_value="Chưa có lời gọi",
+            ),
+        ]),
+        Section("Tài nguyên", _resource_panels("smashcourt-ai", "OB-AI-1", 12)),
+        _logs_section("smashcourt-ai", "OB-AI-1"),
     ],
 )
 

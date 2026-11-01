@@ -3,7 +3,7 @@
     python deploy/grafana/grafana_cloud.py check      kiểm mọi panel đủ mô tả 6 ý, đúng metric (OB-BE-3); CI chạy lệnh này
     python deploy/grafana/grafana_cloud.py push       đẩy 3 dashboard, điểm nhận email và 5 luật cảnh báo (ghi đè bản cũ cùng uid)
 
-push đọc GRAFANA_URL, GRAFANA_SA_TOKEN, ALERT_EMAIL_TO từ file bí mật (SMASHCOURT_ENV_FILE, mặc định ~/.smashcourt-deploy/.env); không in giá trị.
+push đọc GRAFANA_URL, GRAFANA_SA_TOKEN, ALERT_EMAIL_TO từ file bí mật smashcourt-deploy.env ở gốc workspace (hoặc SMASHCOURT_ENV_FILE); không in giá trị.
 Thử với Grafana local không cần token: GRAFANA_URL=http://127.0.0.1:3000 python deploy/grafana/grafana_cloud.py push --no-auth
 """
 import json
@@ -14,14 +14,17 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+sys.dont_write_bytecode = True  # không sinh __pycache__ trong repo khi import dashboards.py
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from dashboards import DASHBOARDS, FOLDER_TITLE, KNOWN_METRICS, TAG, Dashboard, Panel  # noqa: E402
 
 FOLDER_UID = "smashcourt-van-hanh"
 CONTACT_POINT = "smashcourt-email"
 RULE_GROUP = "smashcourt-van-hanh"
+# Grafana Cloud có thêm datasource phụ cùng loại (grafanacloud-usage, alert-state-history): ẩn để biến tự chọn đúng kho chính
+DATASOURCE_REGEX = "/^(?!.*(usage|alert-state)).*$/"
 METRIC_PATTERN = re.compile(r"\b([a-z][a-z0-9_]*?)(?:_bucket|_count|_sum)?\s*[{\[(]")
-PROMQL_WORDS = {"sum", "max", "min", "rate", "increase", "histogram_quantile", "by", "vector", "or", "and", "on", "count"}
+PROMQL_WORDS = {"sum", "max", "min", "rate", "increase", "histogram_quantile", "by", "vector", "or", "and", "on", "count", "label_replace", "clamp_min"}
 
 
 # ── Dựng JSON ────────────────────────────────────────────────────────────────
@@ -31,9 +34,31 @@ def _target(expr: str, legend: str, ref: str, logs: bool) -> dict:
     return {"refId": ref, "datasource": datasource, "expr": expr, "legendFormat": legend}
 
 
+_TIMESERIES_STYLE = {"lineWidth": 2, "fillOpacity": 0, "showPoints": "never", "spanNulls": True, "axisSoftMin": 0}
+
+
 def _panel_json(panel: Panel, panel_id: int, x: int, y: int) -> dict:
     logs = panel.kind == "logs"
-    steps = [{"value": None if i == 0 else value, "color": color} for i, (value, color) in enumerate(panel.thresholds)]
+    # Bậc gốc trong suốt: ô chưa có số liệu không bị tô màu "tốt" (xanh); màu chỉ bắt đầu từ ngưỡng đầu tiên trở lên
+    steps = [{"value": None, "color": "transparent"}] + [{"value": value, "color": color} for value, color in panel.thresholds]
+    mappings = list(panel.mappings)
+    if panel.kind == "stat" and panel.no_value:
+        # p95 khi không có request là NaN (không phải "không có chuỗi"): hiện cùng chữ với noValue
+        mappings.append({"type": "special", "options": {"match": "null+nan", "result": {"text": panel.no_value}}})
+    defaults: dict = {
+        "unit": panel.unit,
+        "mappings": mappings,
+        "thresholds": {"mode": "absolute", "steps": steps if panel.thresholds else [{"value": None, "color": "green"}]},
+    }
+    if panel.no_value:
+        defaults["noValue"] = panel.no_value
+    if panel.kind == "timeseries":
+        defaults["custom"] = dict(_TIMESERIES_STYLE)
+        defaults["color"] = {"mode": "palette-classic"}
+    if panel.soft_max is not None:
+        defaults["min"] = 0
+        defaults.setdefault("custom", {})["axisSoftMax"] = panel.soft_max
+
     body = {
         "id": panel_id,
         "type": panel.kind,
@@ -42,42 +67,82 @@ def _panel_json(panel: Panel, panel_id: int, x: int, y: int) -> dict:
         "gridPos": {"x": x, "y": y, "w": panel.width, "h": panel.height},
         "datasource": {"type": "loki", "uid": "${logs}"} if logs else {"type": "prometheus", "uid": "${datasource}"},
         "targets": [_target(expr, legend, chr(ord("A") + i), logs) for i, (expr, legend) in enumerate(panel.targets)],
-        "fieldConfig": {
-            "defaults": {
-                "unit": panel.unit,
-                "mappings": panel.mappings,
-                "thresholds": {"mode": "absolute", "steps": steps or [{"value": None, "color": "green"}]},
-            },
-            "overrides": [],
-        },
+        "fieldConfig": {"defaults": defaults, "overrides": []},
     }
     if panel.kind == "stat":
         body["options"] = {
             "textMode": panel.text_mode,
             "colorMode": "background" if panel.thresholds else "none",
+            "graphMode": "area" if panel.sparkline else "none",
+            "justifyMode": "center",
+            # Cỡ chữ cố định để các ô KPI đều nhau (tự co giãn làm tag image to gấp đôi ô bên cạnh)
+            "text": {"titleSize": 13, "valueSize": 26},
             "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": False},
         }
+    elif panel.kind == "timeseries":
+        body["options"] = {
+            "legend": {"displayMode": "list", "placement": "bottom", "showLegend": True},
+            "tooltip": {"mode": "multi", "sort": "desc"},
+        }
+    elif panel.kind == "state-timeline":
+        body["options"] = {"showValue": "always", "mergeValues": True, "rowHeight": 0.7, "alignValue": "center", "legend": {"showLegend": False}}
     elif logs:
         body["options"] = {"showTime": True, "wrapLogMessage": True, "sortOrder": "Descending", "enableLogDetails": True}
     return body
 
 
+def _row(row_id: int, title: str, y: int, collapsed: bool, children: list[dict]) -> dict:
+    return {
+        "id": row_id,
+        "type": "row",
+        "title": title,
+        "collapsed": collapsed,
+        "gridPos": {"x": 0, "y": y, "w": 24, "h": 1},
+        # Grafana: nhóm đang đóng giữ panel con bên trong; nhóm mở thì panel con nằm ngay sau nó ở mảng ngoài
+        "panels": children if collapsed else [],
+    }
+
+
+def _layout(panels: list[Panel], start_id: int, y: int) -> tuple[list[dict], int]:
+    """xếp panel trái ⇒ phải, hết 24 cột thì xuống hàng; trả về JSON và y kế tiếp"""
+    result: list[dict] = []
+    x, row_height = 0, 0
+    for offset, panel in enumerate(panels):
+        if x + panel.width > 24:
+            x, y, row_height = 0, y + row_height, 0
+        result.append(_panel_json(panel, start_id + offset, x, y))
+        x += panel.width
+        row_height = max(row_height, panel.height)
+    return result, y + row_height
+
+
 def build(dashboard: Dashboard) -> dict:
-    panels = [{
-        "id": 1,
+    # Grafana coi mọi panel đứng SAU một row là thuộc row đó: hàng KPI (không row) phải đứng đầu, nhóm thu gọn để cuối
+    panels: list[dict] = []
+    y, next_id = 0, 10
+    for section in dashboard.sections:
+        if section.title is None:
+            children, y = _layout(section.panels, next_id, y)
+            panels.extend(children)
+        else:
+            row_id, row_y = next_id, y
+            children, end_y = _layout(section.panels, next_id + 1, y + 1)
+            panels.append(_row(row_id, section.title, row_y, section.collapsed, children))
+            if section.collapsed:
+                y = row_y + 1  # nhóm đóng chỉ chiếm một dòng
+            else:
+                panels.extend(children)
+                y = end_y
+        next_id += len(section.panels) + 1
+    guide = {
+        "id": 2,
         "type": "text",
         "title": "Cách đọc tab này",
         "description": "Hướng dẫn đọc dashboard; không có số liệu.",
-        "gridPos": {"x": 0, "y": 0, "w": 24, "h": 5},
+        "gridPos": {"x": 0, "y": y + 1, "w": 24, "h": 6},
         "options": {"mode": "markdown", "content": dashboard.guide},
-    }]
-    x, y, row_height = 0, 5, 0
-    for index, panel in enumerate(dashboard.panels, start=2):
-        if x + panel.width > 24:
-            x, y, row_height = 0, y + row_height, 0
-        panels.append(_panel_json(panel, index, x, y))
-        x += panel.width
-        row_height = max(row_height, panel.height)
+    }
+    panels.append(_row(1, "ℹ Cách đọc tab này", y, True, [guide]))
 
     return {
         "uid": dashboard.uid,
@@ -87,11 +152,12 @@ def build(dashboard: Dashboard) -> dict:
         "refresh": "1m",
         "time": {"from": "now-6h", "to": "now"},
         "schemaVersion": 39,
+        "graphTooltip": 1,  # rê chuột trên một biểu đồ thì mọi biểu đồ cùng hiện mốc thời gian đó
         # 3 dashboard cùng tag hiện thành hàng nút ở đầu trang, dùng như 3 tab BE / TADSS / AI
         "links": [{"type": "dashboards", "tags": [TAG], "asDropdown": False, "includeVars": True, "keepTime": True, "title": "Vận hành"}],
         "templating": {"list": [
-            {"name": "datasource", "label": "Prometheus", "type": "datasource", "query": "prometheus", "current": {}, "hide": 0},
-            {"name": "logs", "label": "Loki", "type": "datasource", "query": "loki", "current": {}, "hide": 0},
+            {"name": "datasource", "label": "Prometheus", "type": "datasource", "query": "prometheus", "regex": DATASOURCE_REGEX, "current": {}, "hide": 2},
+            {"name": "logs", "label": "Loki", "type": "datasource", "query": "loki", "regex": DATASOURCE_REGEX, "current": {}, "hide": 2},
         ]},
         "panels": panels,
     }
@@ -123,10 +189,14 @@ def check() -> list[str]:
                 errors.append(f"{where}: mô tả thiếu mã test")
             if panel.kind != "logs" and not panel.unit:
                 errors.append(f"{where}: thiếu đơn vị")
-            if panel.kind not in {"stat", "timeseries", "logs"}:
+            if panel.kind not in {"stat", "timeseries", "state-timeline", "logs"}:
                 errors.append(f"{where}: loại panel '{panel.kind}' không hỗ trợ")
             if panel.width < 1 or panel.width > 24:
                 errors.append(f"{where}: độ rộng phải trong 1..24")
+        for section in dashboard.sections:
+            widths = sum(panel.width for panel in section.panels)
+            if widths % 24:
+                errors.append(f"{dashboard.title} / nhóm '{section.title or 'KPI'}': tổng độ rộng {widths} không chia hết cho 24 (hàng bị hở)")
             if panel.kind == "logs":
                 continue
             for expr, _ in panel.targets:
@@ -205,7 +275,10 @@ def alert_rules(prometheus_uid: str) -> list[dict]:
 # ── Đẩy lên Grafana ──────────────────────────────────────────────────────────
 
 def read_env() -> dict[str, str]:
-    path = Path(os.environ.get("SMASHCOURT_ENV_FILE", Path.home() / ".smashcourt-deploy" / ".env"))
+    # Cùng thứ tự với deploy/env-file.sh: SMASHCOURT_ENV_FILE ⇒ smashcourt-deploy.env ở gốc workspace ⇒ ~/.smashcourt-deploy/.env (trong runner)
+    root_file = Path(__file__).resolve().parents[3] / "smashcourt-deploy.env"
+    default = root_file if root_file.is_file() else Path.home() / ".smashcourt-deploy" / ".env"
+    path = Path(os.environ.get("SMASHCOURT_ENV_FILE") or default)
     values: dict[str, str] = {}
     if path.is_file():
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -253,8 +326,8 @@ def push(no_auth: bool) -> None:
     prometheus = [d for d in datasources if d.get("type") == "prometheus"]
     if not prometheus:
         raise SystemExit("grafana_cloud.py: Grafana không có datasource Prometheus")
-    # Grafana Cloud có sẵn grafanacloud-<stack>-prom; ưu tiên nó nếu có nhiều datasource
-    prometheus_uid = next((d["uid"] for d in prometheus if d.get("name", "").startswith("grafanacloud-")), prometheus[0]["uid"])
+    # Grafana Cloud: kho chính là grafanacloud-<stack>-prom (grafanacloud-usage là số liệu tính phí, không phải của app)
+    prometheus_uid = next((d["uid"] for d in prometheus if d.get("name", "").endswith("-prom")), prometheus[0]["uid"])
 
     if grafana.call("GET", f"/api/folders/{FOLDER_UID}", ok_missing=True) is None:
         grafana.call("POST", "/api/folders", {"uid": FOLDER_UID, "title": FOLDER_TITLE})

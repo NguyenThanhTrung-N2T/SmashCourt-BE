@@ -1,6 +1,6 @@
 # Bản deploy của cả hệ thống SmashCourt trên máy (Epic 6C, gói 6C-2b). Không chạy trực tiếp: dùng deploy/deploy.sh.
 #   - Một bản duy nhất; push develop hoặc master đều triển khai vào đây (lần push gần nhất thắng).
-#   - Image từ GHCR (CI build sẵn, không build ở đây). Bí mật: MỘT file ~/.smashcourt-deploy/.env (mẫu: .env.example),
+#   - Image từ GHCR (CI build sẵn, không build ở đây). Bí mật: MỘT file smashcourt-deploy.env ở gốc workspace (mẫu: .env.example),
 #     mỗi service chỉ nhận đúng các khóa nó cần.
 #   - Dữ liệu: PostgreSQL trên máy (database smashcourt nạp từ Neon tadss-dev bằng seed-db.sh; database tadss do TADSS tự migrate).
 #     Không dùng Neon: gói miễn phí không đủ giờ chạy cho Hangfire chạy liên tục.

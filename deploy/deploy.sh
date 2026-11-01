@@ -3,7 +3,7 @@
 # Cách dùng: bash deploy/deploy.sh <be|tadss|ai|all|obs> [tag]
 #   tag mặc định: be, tadss = develop; ai = master. Chạy bản master: deploy.sh be master. Quay về bản cũ: deploy.sh be sha-xxxxxxx
 #   obs: bật/cập nhật alloy (gửi số liệu lên Grafana Cloud, gói 6C-3a); cần 3 khóa GRAFANA_CLOUD_* trong file bí mật.
-#   Bí mật: SMASHCOURT_ENV_FILE (mặc định ~/.smashcourt-deploy/.env), mẫu deploy/.env.example.
+#   Bí mật: smashcourt-deploy.env ở thư mục gốc workspace (ngoài mọi repo), mẫu deploy/.env.example; đổi chỗ bằng SMASHCOURT_ENV_FILE.
 # Chỉ khởi động lại đúng service đó (be kèm ngrok); PostgreSQL, Redis tự bật nếu chưa chạy.
 set -euo pipefail
 
@@ -20,7 +20,7 @@ case "$service" in
   *) echo "deploy.sh: service phải là be, tadss, ai, all hoặc obs (nhận: ${service})" >&2; exit 1 ;;
 esac
 
-env_file="${SMASHCOURT_ENV_FILE:-$HOME/.smashcourt-deploy/.env}"
+env_file="$(bash "$(dirname "$0")/env-file.sh")"
 [ -f "$env_file" ] || { echo "deploy.sh: thiếu $env_file (mẫu: deploy/.env.example)" >&2; exit 1; }
 command -v cygpath >/dev/null 2>&1 && env_file="$(cygpath -m "$env_file")"
 

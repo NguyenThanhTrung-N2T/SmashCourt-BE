@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Nạp (hoặc nạp lại) database `smashcourt` của bản deploy từ Neon DB TEST tadss-dev (Epic 6C, gói 6C-2b, task 1.28).
-# Cách dùng: bash deploy/seed-db.sh        (bí mật: SMASHCOURT_ENV_FILE, mặc định ~/.smashcourt-deploy/.env)
+# Cách dùng: bash deploy/seed-db.sh        (bí mật: smashcourt-deploy.env ở thư mục gốc workspace, xem env-file.sh)
 #
 # Chép schema `public` (cấu trúc + dữ liệu). KHÔNG chép `hangfire` (BE tự tạo khi khởi động; chép job cũ có thể làm job chạy lại).
 # Neon chỉ bị ĐỌC (phiên chỉ đọc). Nạp lại = XÓA SẠCH database smashcourt trên máy rồi chép mới.
@@ -11,7 +11,7 @@
 # Sau khi nạp: đếm chính xác từng bảng ở nguồn và đích, lệch thì báo lỗi. Không in chuỗi kết nối hay mật khẩu.
 set -euo pipefail
 
-env_file="${SMASHCOURT_ENV_FILE:-$HOME/.smashcourt-deploy/.env}"
+env_file="$(bash "$(dirname "$0")/env-file.sh")"
 [ -f "$env_file" ] || { echo "seed-db: thiếu $env_file" >&2; exit 1; }
 # Đọc đúng các khóa cần dùng như văn bản (không `source`: giá trị khác như SMTP_FROM="Tên <email>" không phải cú pháp bash)
 env_get() { sed -n "s/^$1=//p" "$env_file" | tail -n 1; }
