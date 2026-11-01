@@ -5,6 +5,8 @@
 #   - Dữ liệu: PostgreSQL trên máy (database smashcourt nạp từ Neon tadss-dev bằng seed-db.sh; database tadss do TADSS tự migrate).
 #     Không dùng Neon: gói miễn phí không đủ giờ chạy cho Hangfire chạy liên tục.
 #   - Công khai: chỉ BE, qua ngrok (domain cố định; FE trên Vercel và VNPay gọi vào). TADSS, AI chỉ nghe trong mạng Docker + 127.0.0.1.
+#   - Quan sát (gói 6C-3a): BE, TADSS, AI gửi metric/trace/log OTLP tới alloy; alloy đo thêm container (cAdvisor) và health (blackbox) rồi đẩy
+#     tất cả lên Grafana Cloud. Chu kỳ 60 giây vì gói miễn phí tính theo số điểm mỗi phút. alloy chạy riêng: bash deploy/deploy.sh obs.
 name: smashcourt-deploy
 
 services:
@@ -72,6 +74,12 @@ services:
       AIService__BaseUrl: http://ai:8000
       TadssConfig__BaseUrl: http://tadss:8080
       TadssConfig__ApiKey: ${TADSS_API_KEY:?}
+      Telemetry__Enabled: "true"
+      Telemetry__OtlpEndpoint: http://alloy:4317
+      Telemetry__MetricExportIntervalMs: "60000"
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment.name=deploy
+      # Câu SQL của EF ở mức Information làm log phình (console và Grafana Cloud): chỉ giữ cảnh báo
+      Logging__LogLevel__Microsoft.EntityFrameworkCore: Warning
     ports:
       - "127.0.0.1:8080:8080"
     healthcheck:
@@ -103,6 +111,11 @@ services:
       Tadss__Cache__RedisConnectionString: redis:6379
       Tadss__Security__ApiKeys__0__ClientId: smashcourt-be
       Tadss__Security__ApiKeys__0__KeySha256: ${TADSS_API_KEY_SHA256:?}
+      Tadss__Telemetry__Enabled: "true"
+      Tadss__Telemetry__OtlpEndpoint: http://alloy:4317
+      Tadss__Telemetry__ServiceInstanceId: deploy
+      Tadss__Telemetry__MetricExportIntervalMs: "60000"
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment.name=deploy
     ports:
       - "127.0.0.1:8081:8080"
     healthcheck:
@@ -120,6 +133,10 @@ services:
       APP_ENV: production
       GEMINI_API_KEY: ${GEMINI_API_KEY:?}
       GEMINI_MODEL: ${GEMINI_MODEL}
+      OTEL_ENABLED: "true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4318
+      OTEL_METRIC_EXPORT_INTERVAL: "60000"
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment.name=deploy
     ports:
       - "127.0.0.1:8000:8000"   # SEC-AI-1: chỉ máy này
     healthcheck:
@@ -130,9 +147,34 @@ services:
       retries: 6
     restart: unless-stopped
 
+  alloy:
+    image: grafana/alloy:v1.21.3
+    container_name: smashcourt-alloy
+    command: ["run", "--server.http.listen-addr=0.0.0.0:12345", "--storage.path=/var/lib/alloy/data", "/etc/alloy/config.alloy"]
+    # Không bắt buộc (:-): CD và các service khác chạy được khi chưa có tài khoản Grafana Cloud; deploy.sh obs kiểm đủ khóa trước khi bật
+    environment:
+      GRAFANA_CLOUD_OTLP_ENDPOINT: ${GRAFANA_CLOUD_OTLP_ENDPOINT:-}
+      GRAFANA_CLOUD_INSTANCE_ID: ${GRAFANA_CLOUD_INSTANCE_ID:-}
+      GRAFANA_CLOUD_API_TOKEN: ${GRAFANA_CLOUD_API_TOKEN:-}
+    configs:
+      - source: alloy
+        target: /etc/alloy/config.alloy
+    # cAdvisor đọc cgroup và Docker của máy (chỉ đọc); đường dẫn là của Docker daemon nên chạy compose trong container runner vẫn đúng
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /run/containerd/containerd.sock:/run/containerd/containerd.sock:ro   # cAdvisor đọc container Docker qua containerd
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - alloy-data:/var/lib/alloy/data
+    ports:
+      - "127.0.0.1:12345:12345"   # giao diện Alloy: xem pipeline có lỗi không
+    restart: unless-stopped
+
 volumes:
   pgdata:
     name: smashcourt-deploy-pgdata
+  alloy-data:
+    name: smashcourt-deploy-alloy-data
 
 configs:
   # Chạy MỘT lần khi volume PostgreSQL còn trống. smashcourt: dữ liệu BE (nạp bằng seed-db.sh). tadss: TADSS tự migrate khi khởi động.
@@ -140,3 +182,139 @@ configs:
     content: |
       CREATE DATABASE smashcourt;
       CREATE DATABASE tadss;
+
+  # Cấu hình Alloy (cú pháp Alloy; không dùng ký tự $ vì compose sẽ thay biến). Luồng:
+  #   BE, TADSS, AI ──OTLP──► otelcol.receiver.otlp ─► filter, redact ─┐
+  #   cAdvisor (CPU/RAM, image đang chạy) ─┐         ├─► batch ─► Grafana Cloud (OTLP, xác thực basic)
+  #   blackbox (health 3 service) ─────────┴─ scrape ┘
+  alloy:
+    content: |
+      otelcol.receiver.otlp "apps" {
+        grpc {
+          endpoint = "0.0.0.0:4317"
+        }
+        http {
+          endpoint = "0.0.0.0:4318"
+        }
+        output {
+          metrics = [otelcol.processor.filter.trim.input]
+          logs    = [otelcol.processor.batch.cloud.input]
+          traces  = [otelcol.processor.batch.cloud.input]
+        }
+      }
+
+      // Bỏ metric dashboard không dùng (gói miễn phí giới hạn số chuỗi) và lời gọi của chính exporter tới alloy
+      otelcol.processor.filter "trim" {
+        error_mode = "ignore"
+        metrics {
+          metric = [
+            `name == "dns.lookup.duration"`,
+            `IsMatch(name, "^kestrel[.](connection[.]duration|queued_connections)")`,
+            `IsMatch(name, "^http[.]client[.](request[.]time_in_queue|open_connections|active_requests)")`,
+            `IsMatch(name, "^http[.](server|client)[.](request|response)[.]body[.]size")`,
+            `name == "http.server.active_requests"`,
+            `IsMatch(name, "^db[.]client[.](commands|connections[.]create_time)")`,
+            `IsMatch(name, "^process[.]runtime[.]dotnet[.](jit|assemblies|timer)")`,
+          ]
+          datapoint = [
+            `attributes["server.address"] == "alloy"`,
+          ]
+        }
+        output {
+          metrics = [otelcol.processor.transform.redact.input]
+        }
+      }
+
+      // Tên pool Npgsql là chuỗi kết nối (host, database, user): không đưa lên cloud
+      otelcol.processor.transform "redact" {
+        error_mode = "ignore"
+        metric_statements {
+          context    = "datapoint"
+          statements = [`delete_key(attributes, "pool.name")`]
+        }
+        output {
+          metrics = [otelcol.processor.batch.cloud.input]
+        }
+      }
+
+      prometheus.exporter.cadvisor "docker" {
+        docker_host            = "unix:///var/run/docker.sock"
+        docker_only            = true
+        store_container_labels = false
+        allowlisted_container_labels = [
+          "com.docker.compose.project",
+          "com.docker.compose.service",
+          "org.opencontainers.image.revision",
+        ]
+      }
+
+      // Health từ trong mạng Docker (không qua ngrok: không tốn quota)
+      prometheus.exporter.blackbox "health" {
+        config = "{ modules: { http_2xx: { prober: http, timeout: 5s } } }"
+        target {
+          name    = "be"
+          address = "http://be:8080/health/ready"
+          module  = "http_2xx"
+        }
+        target {
+          name    = "tadss"
+          address = "http://tadss:8080/health/ready"
+          module  = "http_2xx"
+        }
+        target {
+          name    = "ai"
+          address = "http://ai:8000/health"
+          module  = "http_2xx"
+        }
+      }
+
+      prometheus.scrape "local" {
+        targets         = array.concat(prometheus.exporter.cadvisor.docker.targets, prometheus.exporter.blackbox.health.targets)
+        scrape_interval = "60s"
+        forward_to      = [prometheus.relabel.trim.receiver]
+      }
+
+      // Chỉ giữ số liệu dashboard dùng, chỉ container của SmashCourt: gói miễn phí giới hạn số chuỗi
+      prometheus.relabel "trim" {
+        rule {
+          source_labels = ["__name__"]
+          regex         = "probe_success|probe_duration_seconds|container_cpu_usage_seconds_total|container_memory_working_set_bytes|container_start_time_seconds"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__name__", "container_label_com_docker_compose_project"]
+          regex         = "probe_.*;.*|container_.*;smashcourt-(deploy|runner)"
+          action        = "keep"
+        }
+        rule {
+          regex  = "id|container_label_com_docker_compose_project"
+          action = "labeldrop"
+        }
+        forward_to = [otelcol.receiver.prometheus.local.receiver]
+      }
+
+      otelcol.receiver.prometheus "local" {
+        output {
+          metrics = [otelcol.processor.batch.cloud.input]
+        }
+      }
+
+      otelcol.processor.batch "cloud" {
+        output {
+          metrics = [otelcol.exporter.otlphttp.cloud.input]
+          logs    = [otelcol.exporter.otlphttp.cloud.input]
+          traces  = [otelcol.exporter.otlphttp.cloud.input]
+        }
+      }
+
+      otelcol.auth.basic "cloud" {
+        username = sys.env("GRAFANA_CLOUD_INSTANCE_ID")
+        password = sys.env("GRAFANA_CLOUD_API_TOKEN")
+      }
+
+      otelcol.exporter.otlphttp "cloud" {
+        client {
+          endpoint = sys.env("GRAFANA_CLOUD_OTLP_ENDPOINT")
+          auth     = otelcol.auth.basic.cloud.handler
+        }
+      }

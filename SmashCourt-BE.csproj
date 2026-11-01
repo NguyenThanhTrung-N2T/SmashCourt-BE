@@ -28,6 +28,13 @@
     <PackageReference Include="Microsoft.Extensions.Http.Polly" Version="10.0.8" />
     <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.23.0" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.11" />
+    <!-- OpenTelemetry (Epic 6C, gói 6C-3a): cùng bộ 1.15.x với TADSS (≤ 1.15.2 dính GHSA-g94r-2vxg-569j, GHSA-4625-4j76-fww9); Npgsql.OpenTelemetry khớp Npgsql 8.0.6 -->
+    <PackageReference Include="Npgsql.OpenTelemetry" Version="8.0.6" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.15.3" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.2" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.15.1" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.15.1" />
     <PackageReference Include="Polly" Version="8.6.6" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.16.0" />

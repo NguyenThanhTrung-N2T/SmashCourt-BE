@@ -32,6 +32,10 @@ jobs:
       - name: Check Vulnerable Packages
         run: bash tools/ci/check-vulnerable-packages.sh
 
+      # OB-BE-3 (Epic 6C, gói 6C-3a): mọi panel dashboard "Vận hành" có mô tả 6 ý, mã test và chỉ dùng metric có thật (chỉ thư viện chuẩn Python)
+      - name: Check operations dashboards
+        run: python3 deploy/grafana/grafana_cloud.py check
+
       - name: Build
         run: dotnet build --no-restore --configuration Release
 

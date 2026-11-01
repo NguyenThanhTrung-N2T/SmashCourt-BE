@@ -190,6 +190,8 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddTadssIntegration(builder.Configuration);
 // /health/live, /health/ready, /health/dependencies cho Docker healthcheck và CD (Epic 6C, OPS-04)
 builder.Services.AddSmashCourtHealthChecks();
+// Metric, trace, log qua OTLP (Epic 6C, OB-BE-1); tắt mặc định, bản deploy bật bằng Telemetry__Enabled
+builder.AddSmashCourtTelemetry();
 builder.Services.AddScoped<IBookingDepositService, BookingDepositService>();
 builder.Services.AddScoped<ISlotInterestNotificationService, SlotInterestNotificationService>();
 builder.Services.AddScoped<IBookingApprovalService, BookingApprovalService>();
