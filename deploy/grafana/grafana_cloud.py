@@ -29,9 +29,12 @@ PROMQL_WORDS = {"sum", "max", "min", "rate", "increase", "histogram_quantile", "
 
 # ── Dựng JSON ────────────────────────────────────────────────────────────────
 
-def _target(expr: str, legend: str, ref: str, logs: bool) -> dict:
+def _target(expr: str, legend: str, ref: str, logs: bool, instant: bool = False) -> dict:
     datasource = {"type": "loki", "uid": "${logs}"} if logs else {"type": "prometheus", "uid": "${datasource}"}
-    return {"refId": ref, "datasource": datasource, "expr": expr, "legendFormat": legend}
+    target = {"refId": ref, "datasource": datasource, "expr": expr, "legendFormat": legend}
+    if instant:
+        target.update(instant=True, range=False)
+    return target
 
 
 _TIMESERIES_STYLE = {"lineWidth": 2, "fillOpacity": 0, "showPoints": "never", "spanNulls": True, "axisSoftMin": 0}
@@ -66,7 +69,7 @@ def _panel_json(panel: Panel, panel_id: int, x: int, y: int) -> dict:
         "description": panel.description.render(),
         "gridPos": {"x": x, "y": y, "w": panel.width, "h": panel.height},
         "datasource": {"type": "loki", "uid": "${logs}"} if logs else {"type": "prometheus", "uid": "${datasource}"},
-        "targets": [_target(expr, legend, chr(ord("A") + i), logs) for i, (expr, legend) in enumerate(panel.targets)],
+        "targets": [_target(expr, legend, chr(ord("A") + i), logs, panel.instant) for i, (expr, legend) in enumerate(panel.targets)],
         "fieldConfig": {"defaults": defaults, "overrides": []},
     }
     if panel.kind == "stat":

@@ -82,6 +82,7 @@ class Panel:
     soft_max: float | None = None  # trục Y từ 0 tới giá trị này (tự giãn khi vượt): tỉ lệ 0 % không bị vẽ trục vô nghĩa
     sparkline: bool = False  # stat: vẽ đường xu hướng mờ phía sau con số
     no_value: str = ""  # chữ hiện khi chưa có số liệu (thay "No data"), nói rõ vì sao
+    instant: bool = False  # stat: truy vấn tức thời (chỉ chuỗi còn sống lúc xem), không cả khoảng thời gian của dashboard
 
 
 @dataclass
@@ -134,8 +135,10 @@ def _kpi_identity(job: str, container: str) -> list[Panel]:
         Panel(
             "Phiên bản",
             "stat",
-            # Chỉ hiện tag (sha-<7>): tách phần sau dấu ':' của nhãn image
-            [(f'label_replace(max by (image) (container_start_time_seconds{{name="{container}"}}), "tag", "$1", "image", ".*:(.*)")', "{{tag}}")],
+            # Chỉ hiện tag (sha-<7>): tách phần sau dấu ':' của nhãn image. Tức thời + topk(1) theo lúc khởi động: sau một lần CD, khoảng
+            # thời gian của dashboard còn chuỗi của container cũ (image khác) ⇒ ô từng hiện hai tag (TADSS 04/11: sha-3b38baf sha-c5cc1a7)
+            [(f'label_replace(topk(1, max by (image) (container_start_time_seconds{{name="{container}"}})), "tag", "$1", "image", ".*:(.*)")',
+              "{{tag}}")],
             "none",
             Description(
                 what="Tag image của container đang chạy (đọc từ Docker, không do app tự báo).",
@@ -148,6 +151,7 @@ def _kpi_identity(job: str, container: str) -> list[Panel]:
             width=KPI_WIDTH,
             height=KPI_HEIGHT,
             text_mode="name",
+            instant=True,
             no_value="Container không chạy",
         ),
         Panel(
