@@ -777,7 +777,7 @@ public class BookingServiceTests
         builder.BookingRepository.Setup(x => x.UpdateWithStatusCheckAsync(
                 booking.Id, BookingStatus.COMPLETED, BookingStatus.IN_PROGRESS))
             .ReturnsAsync(1);
-        builder.InvoiceRepository.Setup(x => x.GetByBookingIdAsync(booking.Id)).ReturnsAsync(invoice);
+        builder.InvoiceRepository.Setup(x => x.GetCurrentByBookingIdAsync(booking.Id)).ReturnsAsync(invoice);
 
         await builder.Build().CheckoutAsync(booking.Id, Guid.NewGuid(), UserRole.OWNER.ToString());
 
@@ -809,7 +809,7 @@ public class BookingServiceTests
         builder.BookingRepository.Setup(x => x.UpdateWithStatusCheckAsync(
                 booking.Id, BookingStatus.COMPLETED, BookingStatus.IN_PROGRESS))
             .ReturnsAsync(1);
-        builder.InvoiceRepository.Setup(x => x.GetByBookingIdAsync(booking.Id)).ReturnsAsync(invoice);
+        builder.InvoiceRepository.Setup(x => x.GetCurrentByBookingIdAsync(booking.Id)).ReturnsAsync(invoice);
         var customerId = booking.CustomerId ?? throw new InvalidOperationException("Booking mẫu phải có CustomerId");
         builder.LoyaltyRepository.Setup(x => x.GetByUserIdAsync(customerId))
             .ReturnsAsync(new CustomerLoyalty { UserId = customerId, TierId = silverId });
@@ -868,7 +868,7 @@ public class BookingServiceTests
         builder.BookingRepository.Setup(x => x.UpdateWithStatusCheckAsync(
                 booking.Id, BookingStatus.COMPLETED, BookingStatus.IN_PROGRESS))
             .ReturnsAsync(1);
-        builder.InvoiceRepository.Setup(x => x.GetByBookingIdAsync(booking.Id)).ReturnsAsync(invoice);
+        builder.InvoiceRepository.Setup(x => x.GetCurrentByBookingIdAsync(booking.Id)).ReturnsAsync(invoice);
         builder.PaymentRepository.Setup(x => x.GetCollectedAmountAsync(invoice.Id)).ReturnsAsync(invoice.FinalTotal);
 
         await builder.Build().CheckoutAsync(booking.Id, Guid.NewGuid(), UserRole.OWNER.ToString());
@@ -918,7 +918,7 @@ public class BookingServiceTests
         builder.BookingRepository.Setup(x => x.UpdateWithStatusCheckAsync(
                 booking.Id, BookingStatus.COMPLETED, BookingStatus.IN_PROGRESS))
             .ReturnsAsync(1);
-        builder.InvoiceRepository.Setup(x => x.GetByBookingIdAsync(booking.Id)).ReturnsAsync(invoice);
+        builder.InvoiceRepository.Setup(x => x.GetCurrentByBookingIdAsync(booking.Id)).ReturnsAsync(invoice);
 
         await builder.Build().CheckoutAsync(booking.Id, Guid.NewGuid(), UserRole.OWNER.ToString());
 
@@ -1057,7 +1057,7 @@ public class BookingServiceTests
         builder.BookingRepository.Setup(x => x.UpdateWithStatusCheckAsync(
                 booking.Id, BookingStatus.COMPLETED, BookingStatus.PENDING_PAYMENT))
             .ReturnsAsync(1);
-        builder.InvoiceRepository.Setup(x => x.GetByBookingIdAsync(booking.Id)).ReturnsAsync(invoice);
+        builder.InvoiceRepository.Setup(x => x.GetCurrentByBookingIdAsync(booking.Id)).ReturnsAsync(invoice);
         builder.PaymentRepository.Setup(x => x.GetCollectedAmountAsync(invoice.Id)).ReturnsAsync(200_000m);
 
         await builder.Build().CollectPaymentAsync(booking.Id, Guid.NewGuid(), UserRole.OWNER.ToString());
@@ -1083,7 +1083,7 @@ public class BookingServiceTests
         builder.BookingRepository.Setup(x => x.UpdateWithStatusCheckAsync(
                 booking.Id, BookingStatus.COMPLETED, BookingStatus.IN_PROGRESS))
             .ReturnsAsync(1);
-        builder.InvoiceRepository.Setup(x => x.GetByBookingIdAsync(booking.Id)).ReturnsAsync(invoice);
+        builder.InvoiceRepository.Setup(x => x.GetCurrentByBookingIdAsync(booking.Id)).ReturnsAsync(invoice);
 
         await builder.Build().CheckoutAsync(booking.Id, Guid.NewGuid(), UserRole.OWNER.ToString());
 

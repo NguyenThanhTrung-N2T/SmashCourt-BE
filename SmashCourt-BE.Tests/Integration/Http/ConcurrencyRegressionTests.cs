@@ -1,9 +1,12 @@
 using System.Net;
 using System.Net.Http.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
+using SmashCourt_BE.Repositories.IRepository;
+using SmashCourt_BE.Services.IService;
 
 namespace SmashCourt_BE.Tests.Integration.Http;
 
@@ -173,8 +176,36 @@ public sealed class ConcurrencyRegressionTests(PostgreSqlIntegrationFixture data
             Assert.Equal(InvoicePaymentStatus.PAID, booking.Invoice.PaymentStatus);
             // Dịch vụ vào trước check-out thì được thu; vào sau thì bị từ chối. Không có trường hợp thứ ba
             Assert.Equal(booking.Invoice.FinalTotal, collected);
-            Assert.Equal(add.Status == HttpStatusCode.OK ? 30_000m : 0m, booking.Invoice.ServiceFee);
+            // POST dịch vụ thành công trả 201 (trước 05/11 so với 200 nên vòng "dịch vụ thắng" luôn bị chấm sai)
+            Assert.Equal(add.Status == HttpStatusCode.Created ? 30_000m : 0m, booking.Invoice.ServiceFee);
         }
+    }
+
+    // Vòng đua trên một cách tất định (CI 04/11 run 41892105829, lượt AddServiceRacingCheckout đỏ: tổng 230000, thu 200000): request check-out
+    // nạp đơn trước, dịch vụ commit sau đó, rồi check-out mới lấy khóa. Hóa đơn đã nằm trong DbContext của request check-out từ lần nạp đầu,
+    // nên lần "đọc lại" trong transaction phải lấy giá trị mới từ DB chứ không phải object EF đang theo dõi
+    [Fact]
+    public async Task Checkout_WhenServiceIsCommittedAfterTheOrderWasLoaded_CollectsTheNewTotal()
+    {
+        var order = await BookPaidAsync();
+        await StartPlayingAsync(order.BookingId);
+        var serviceId = await SeedBranchServiceAsync(order.Court.BranchId, 15_000m);
+        var staff = await SeedStaffAsync(order.Court.BranchId);
+        var factory = await GetFactoryAsync();
+        using var checkoutRequest = factory.Services.CreateScope();
+        await checkoutRequest.ServiceProvider.GetRequiredService<IBookingRepository>().GetByIdWithDetailsAsync(order.BookingId);
+
+        var add = await (await CreateClientForAsync(staff)).PostAsJsonAsync(
+            $"/api/bookings/{order.BookingId}/services", new { serviceId, quantity = 2 });
+        Assert.Equal(HttpStatusCode.Created, add.StatusCode);
+
+        await checkoutRequest.ServiceProvider.GetRequiredService<IBookingService>()
+            .CheckoutAsync(order.BookingId, staff.Id, staff.Role.ToString());
+
+        var booking = await RequireBookingAsync(order.BookingId);
+        Assert.Equal(InvoicePaymentStatus.PAID, booking.Invoice!.PaymentStatus);
+        Assert.Equal(30_000m, booking.Invoice.ServiceFee);
+        Assert.Equal(booking.Invoice.FinalTotal, booking.Invoice.Payments.Where(p => p.Status == PaymentTxStatus.SUCCESS).Sum(p => p.Amount));
     }
 
     private Task<Guid> SeedBranchServiceAsync(Guid branchId, decimal price) =>

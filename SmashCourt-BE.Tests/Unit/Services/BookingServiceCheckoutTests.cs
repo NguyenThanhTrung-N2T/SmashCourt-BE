@@ -35,7 +35,7 @@ public class BookingServiceCheckoutTests
             StartTime = new TimeOnly(0, 0), EndTime = new TimeOnly(0, 1), IsActive = true
         });
         builder.BookingRepository.Setup(x => x.GetByIdWithDetailsAsync(booking.Id)).ReturnsAsync(booking);
-        builder.InvoiceRepository.Setup(x => x.GetByBookingIdAsync(booking.Id)).ReturnsAsync(invoice);
+        builder.InvoiceRepository.Setup(x => x.GetCurrentByBookingIdAsync(booking.Id)).ReturnsAsync(invoice);
         builder.PaymentRepository.Setup(x => x.GetCollectedAmountAsync(invoice.Id)).ReturnsAsync(collected);
         return new Checkout(builder, booking, invoice);
     }

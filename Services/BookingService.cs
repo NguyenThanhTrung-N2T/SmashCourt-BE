@@ -1100,9 +1100,10 @@ namespace SmashCourt_BE.Services
                 booking.Status = BookingStatus.COMPLETED;
                 booking.UpdatedAt = now;
 
-                // 1.5. Query lại invoice FinalTotal từ DB để đảm bảo có service mới nhất
-                // Tránh race condition: Staff B add service sau khi Staff A đã load invoice
-                var latestInvoice = await _invoiceRepo.GetByBookingIdAsync(booking.Id);
+                // 1.5. Đọc lại hóa đơn từ DB sau khi đã khóa dòng booking để có dịch vụ mới nhất (Staff B thêm dịch vụ sau khi Staff A nạp đơn).
+                //      Phải đọc không track: hóa đơn đã nằm trong DbContext từ GetByIdWithDetailsAsync ở đầu hàm, đọc có track sẽ trả lại object cũ
+                //      ⇒ thu thiếu phần dịch vụ mà hóa đơn vẫn PAID (CI 04/11, ConcurrencyRegressionTests)
+                var latestInvoice = await _invoiceRepo.GetCurrentByBookingIdAsync(booking.Id);
                 if (latestInvoice == null)
                     throw new AppException(500, "Không tìm thấy hóa đơn", ErrorCodes.InternalError);
 

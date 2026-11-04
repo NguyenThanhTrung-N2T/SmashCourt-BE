@@ -21,6 +21,14 @@ namespace SmashCourt_BE.Repositories
                 .FirstOrDefaultAsync(i => i.BookingId == bookingId);
         }
 
+        // AsNoTracking: luôn đọc giá trị mới từ DB, kể cả khi DbContext đã theo dõi hóa đơn này từ lần nạp đơn trước khi lấy khóa
+        public async Task<Invoice?> GetCurrentByBookingIdAsync(Guid bookingId)
+        {
+            return await _context.Invoices
+                .AsNoTracking()
+                .FirstOrDefaultAsync(i => i.BookingId == bookingId);
+        }
+
         // Tạo mới invoice, trả về invoice đã được tạo (có id)
         public async Task<Invoice> CreateAsync(Invoice invoice)
         {

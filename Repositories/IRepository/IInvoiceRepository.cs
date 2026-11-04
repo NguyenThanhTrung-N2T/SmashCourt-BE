@@ -7,6 +7,9 @@ namespace SmashCourt_BE.Repositories.IRepository
     {
         Task<Invoice?> GetByBookingIdAsync(Guid bookingId);
 
+        // Hóa đơn hiện tại trong DB (không track): GetByBookingIdAsync trả lại object EF đang theo dõi nếu đơn đã nạp trước đó, giữ giá trị cũ
+        Task<Invoice?> GetCurrentByBookingIdAsync(Guid bookingId);
+
         // Trạng thái thanh toán hiện tại trong DB (đọc thẳng, không qua entity đang track); null khi đơn không có hóa đơn
         Task<InvoicePaymentStatus?> GetPaymentStatusByBookingIdAsync(Guid bookingId);
 
