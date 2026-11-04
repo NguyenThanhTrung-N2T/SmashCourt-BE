@@ -21,11 +21,14 @@ public abstract class IntegrationTestBase : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _scope = Fixture.CreateScope();
+        _scope = CreateScope();
         DbContext = _scope.ServiceProvider.GetRequiredService<SmashCourtContext>();
         Seeder = new TestDataSeeder(DbContext);
         _transaction = await DbContext.Database.BeginTransactionAsync();
     }
+
+    // Lớp test cần cấu hình kết nối khác (VD auto-prepare của perf) đổi scope ở đây; mặc định là cấu hình của bản deploy
+    protected virtual IServiceScope CreateScope() => Fixture.CreateScope();
 
     public async Task DisposeAsync()
     {

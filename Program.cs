@@ -45,6 +45,9 @@ var dataSourceBuilder = new NpgsqlDataSourceBuilder(
 // Tự động map enum C# sang enum type của PostgreSQL (danh sách ở NpgsqlEnumMappingExtensions)
 dataSourceBuilder.MapSmashCourtEnums();
 
+// Auto-prepare theo Database:MaxAutoPrepare (mặc định tắt; chỉ môi trường kiểm thử, đánh giá perf bật, bản deploy không bật, P6-54) — điều kiện và rủi ro ở NpgsqlAutoPrepareExtensions
+dataSourceBuilder.UseSmashCourtAutoPrepare(builder.Configuration);
+
 var dataSource = dataSourceBuilder.Build();
 
 // Đăng ký DbContext

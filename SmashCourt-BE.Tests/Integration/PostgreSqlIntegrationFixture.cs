@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using System.Text.RegularExpressions;
 using Npgsql;
@@ -27,12 +28,41 @@ public sealed class PostgreSqlIntegrationFixture : IAsyncLifetime
 
     private NpgsqlDataSource? _dataSource;
     private ServiceProvider? _serviceProvider;
+    private NpgsqlDataSource? _evaluationDataSource;
+    private ServiceProvider? _evaluationServiceProvider;
 
     static PostgreSqlIntegrationFixture()
     {
         // Giống Program.cs: ghi timestamptz bắt buộc DateTime Kind = Utc
         AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", false);
     }
+
+    /// <summary>
+    /// Số câu tự prepare của môi trường kiểm thử và đánh giá hiệu năng (perf, P6-54). Bản deploy KHÔNG bật (người dùng chốt 05/11):
+    /// test chung chạy đúng cấu hình deploy (tắt), chỉ test về auto-prepare dùng giá trị này.
+    /// </summary>
+    public const string EvaluationMaxAutoPrepare = "50";
+
+    /// <summary>
+    /// Biến môi trường cho phép chạy CẢ bộ integration + HTTP với auto-prepare bật (VD <c>50</c>): bước kiểm bắt buộc trước khi bật P6-54
+    /// ở môi trường nào (plan 6C Mục 10). Không đặt ⇒ bộ test chung chạy đúng cấu hình bản deploy (tắt).
+    /// </summary>
+    public const string AutoPrepareOverrideVariable = "SMASHCOURT_TEST_DB_MAX_AUTO_PREPARE";
+
+    /// <summary>Giá trị Database:MaxAutoPrepare của bộ test chung: biến <see cref="AutoPrepareOverrideVariable"/> nếu có, không thì không đặt (= tắt như deploy).</summary>
+    public static string? SharedSuiteMaxAutoPrepare => Environment.GetEnvironmentVariable(AutoPrepareOverrideVariable) is { Length: > 0 } value ? value : null;
+
+    /// <summary>Cấu hình kết nối của bộ test chung: như bản deploy (tắt), trừ khi đặt <see cref="AutoPrepareOverrideVariable"/>.</summary>
+    public static IConfiguration DeployDatabaseSettings { get; } = new ConfigurationBuilder()
+        .AddInMemoryCollection(SharedSuiteMaxAutoPrepare is { } value
+            ? new Dictionary<string, string?> { [NpgsqlAutoPrepareExtensions.ConfigKey] = value }
+            : new Dictionary<string, string?>())
+        .Build();
+
+    /// <summary>Cấu hình kết nối của perf (auto-prepare bật), cho test về auto-prepare.</summary>
+    public static IConfiguration EvaluationDatabaseSettings { get; } = new ConfigurationBuilder()
+        .AddInMemoryCollection(new Dictionary<string, string?> { [NpgsqlAutoPrepareExtensions.ConfigKey] = EvaluationMaxAutoPrepare })
+        .Build();
 
     /// <summary>Chuỗi kết nối tới DB test (dùng khi test cần chạy SQL thô).</summary>
     public string ConnectionString => _container.GetConnectionString();
@@ -45,6 +75,15 @@ public sealed class PostgreSqlIntegrationFixture : IAsyncLifetime
         return _serviceProvider.CreateScope();
     }
 
+    /// <summary>Scope có DbContext dùng cấu hình kết nối của perf (auto-prepare bật), cùng database test.</summary>
+    public IServiceScope CreateEvaluationScope()
+    {
+        if (_evaluationServiceProvider == null)
+            throw new InvalidOperationException("The PostgreSQL fixture has not been initialized.");
+
+        return _evaluationServiceProvider.CreateScope();
+    }
+
     public async Task InitializeAsync()
     {
         await _container.StartAsync();
@@ -52,11 +91,20 @@ public sealed class PostgreSqlIntegrationFixture : IAsyncLifetime
 
         _dataSource = new NpgsqlDataSourceBuilder(_container.GetConnectionString())
             .MapSmashCourtEnums()
+            .UseSmashCourtAutoPrepare(DeployDatabaseSettings)
             .Build();
 
         var services = new ServiceCollection();
         services.AddDbContext<SmashCourtContext>(options => options.UseNpgsql(_dataSource));
         _serviceProvider = services.BuildServiceProvider();
+
+        _evaluationDataSource = new NpgsqlDataSourceBuilder(_container.GetConnectionString())
+            .MapSmashCourtEnums()
+            .UseSmashCourtAutoPrepare(EvaluationDatabaseSettings)
+            .Build();
+        var evaluationServices = new ServiceCollection();
+        evaluationServices.AddDbContext<SmashCourtContext>(options => options.UseNpgsql(_evaluationDataSource));
+        _evaluationServiceProvider = evaluationServices.BuildServiceProvider();
     }
 
     public async Task DisposeAsync()
@@ -65,6 +113,10 @@ public sealed class PostgreSqlIntegrationFixture : IAsyncLifetime
             await _serviceProvider.DisposeAsync();
         if (_dataSource != null)
             await _dataSource.DisposeAsync();
+        if (_evaluationServiceProvider != null)
+            await _evaluationServiceProvider.DisposeAsync();
+        if (_evaluationDataSource != null)
+            await _evaluationDataSource.DisposeAsync();
         await _container.DisposeAsync();
     }
 

@@ -69,6 +69,9 @@ public sealed class SmashCourtWebApplicationFactory : WebApplicationFactory<Prog
         // Bộ test gửi rất nhiều request nên mặc định không bị giới hạn tốc độ; test về rate limit tự hạ giới hạn bằng SetSetting (B1/D9)
         foreach (var policy in new[] { "Login", "Booking", "Sensitive", "AiPublic", "AiUser", "AiManagement" })
             settings[$"RateLimiting__{policy}__PermitLimit"] = DefaultRateLimit.ToString();
+        // Bộ HTTP chạy auto-prepare khi đặt biến kiểm trước khi bật P6-54; mặc định không đặt = như bản deploy
+        if (PostgreSqlIntegrationFixture.SharedSuiteMaxAutoPrepare is { } maxAutoPrepare)
+            settings["Database__MaxAutoPrepare"] = maxAutoPrepare;
         if (extraSettings != null)
             foreach (var (key, value) in extraSettings)
                 settings[key] = value;

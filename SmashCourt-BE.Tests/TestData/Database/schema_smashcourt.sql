@@ -2221,13 +2221,6 @@ CREATE INDEX idx_bookings_pending_approval ON public.bookings USING btree (appro
 
 
 --
--- Name: idx_bookings_status_date; Type: INDEX; Schema: public; Owner: neondb_owner
---
-
-CREATE INDEX idx_bookings_status_date ON public.bookings USING btree (status, booking_date);
-
-
---
 -- Name: idx_branch_court_types_active; Type: INDEX; Schema: public; Owner: neondb_owner
 --
 
