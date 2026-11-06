@@ -500,7 +500,7 @@ public class BookingServiceTests
             booking.Id, serviceId, Guid.NewGuid(), UserRole.OWNER.ToString()));
 
         exception.ShouldBeAppException(400, ErrorCodes.BadRequest);
-        builder.BookingRepository.Verify(x => x.RemoveServiceAsync(It.IsAny<SmashCourt_BE.Models.Entities.BookingService>()), Times.Never);
+        builder.BookingRepository.Verify(x => x.RemoveServiceLineAsync(It.IsAny<Guid>(), It.IsAny<Guid>()), Times.Never);
         builder.InvoiceRepository.Verify(x => x.UpdateAsync(It.IsAny<Invoice>()), Times.Never);
     }
 
@@ -578,6 +578,9 @@ public class BookingServiceTests
         builder.BranchServiceRepository.Setup(x => x.GetByBranchServiceAsync(branch.Id, service.Id)).ReturnsAsync(branchService);
         builder.InvoiceRepository.Setup(x => x.GetByBookingIdAsync(booking.Id)).ReturnsAsync(booking.Invoice);
         builder.BookingRepository.Setup(x => x.CalculateServiceFeeAsync(booking.Id)).ReturnsAsync(150_000m);
+        // Dòng dịch vụ đọc lại từ DB sau khi khóa đơn (N-39, N-41), không lấy từ booking.BookingServices
+        builder.BookingRepository.Setup(x => x.GetServiceLineIdAsync(booking.Id, service.Id))
+            .ReturnsAsync(booking.BookingServices.Single().Id);
 
         await builder.Build().AddServiceAsync(
             booking.Id, new AddBookingServiceDto { ServiceId = service.Id, Quantity = 3 },
@@ -762,8 +765,7 @@ public class BookingServiceTests
             booking.Id, Guid.NewGuid(), Guid.NewGuid(), UserRole.OWNER.ToString());
 
         Assert.Equal(booking.Id, result.Id);
-        builder.BookingRepository.Verify(x => x.RemoveServiceAsync(
-            It.IsAny<SmashCourt_BE.Models.Entities.BookingService>()), Times.Never);
+        builder.BookingRepository.Verify(x => x.RemoveServiceLineAsync(It.IsAny<Guid>(), It.IsAny<Guid>()), Times.Never);
         builder.InvoiceRepository.Verify(x => x.UpdateAsync(It.IsAny<Invoice>()), Times.Never);
     }
 

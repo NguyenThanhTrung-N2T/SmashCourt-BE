@@ -16,5 +16,6 @@ public static class InvariantRules
     public const string NoDoubleBooking = "SC6-4b";
     public const string DecisionExistsInTadss = "SC6-5"; // chỉ ở lượt kiểm staging (gọi GET /api/v2/decisions/{id})
     public const string CancelledHasReason = "SC6-6"; // nâng từ điều phụ 31/10: lý do hủy là đầu vào của TADSS (lịch sử khách, outcome)
+    public const string PaidInvoiceIsCollected = "SC6-7"; // thêm 06/11 sau N-38: hóa đơn PAID thu đủ FinalTotal (thực thu = SUCCESS − đã hoàn)
     public const string PendingHasHoldDeadline = "PHU-2";
 }

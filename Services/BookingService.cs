@@ -1246,17 +1246,17 @@ namespace SmashCourt_BE.Services
                 // Consolidated validation: Double protection (Status + PaymentStatus)
                 EnsureBookingModifiable(currentStatus, latestInvoice.PaymentStatus);
 
-                // Check duplicate service - nếu đã tồn tại thì tăng quantity thay vì tạo mới
-                var existingService = booking.BookingServices
-                    .FirstOrDefault(bs => bs.ServiceId == dto.ServiceId);
+                // Check duplicate service - nếu đã tồn tại thì tăng quantity thay vì tạo mới.
+                // Đọc dòng dịch vụ từ DB SAU khi khóa, không dùng booking.BookingServices nạp trước khóa: nhân viên khác có thể vừa thêm
+                // (chèn lần hai vi phạm ux_booking_service_unique) hoặc vừa xóa dòng này (cộng vào dòng đã xóa thì mất lần thêm)
+                var existingServiceId = await _bookingRepo.GetServiceLineIdAsync(booking.Id, dto.ServiceId);
 
-                if (existingService != null)
+                if (existingServiceId is { } lineId)
                 {
                     // UX tốt hơn: Merge quantity bằng atomic update (tránh race condition)
                     // Dùng ExecuteUpdateAsync: UPDATE SET quantity = quantity + @delta
                     // → Không bị lost update khi 2 staff add cùng lúc
-                    await _bookingRepo.UpdateServiceQuantityAtomicAsync(
-                        existingService.Id, dto.Quantity);
+                    await _bookingRepo.UpdateServiceQuantityAtomicAsync(lineId, dto.Quantity);
                 }
                 else
                 {
@@ -1302,7 +1302,9 @@ namespace SmashCourt_BE.Services
                     invoice.FinalTotal, latestInvoice.FinalTotal);
             }
 
-            // Query lại booking với details để trả về
+            // Query lại booking với details để trả về. Bỏ object EF đang theo dõi trước: số lượng cộng bằng ExecuteUpdate không đi qua
+            // change tracker, đọc lại có theo dõi sẽ trả dòng dịch vụ cũ cho phản hồi và payload SignalR
+            _unitOfWork.ClearChangeTracker();
             var result = await _bookingRepo.GetByIdWithDetailsAsync(booking.Id);
 
             // Broadcast SignalR notification - BookingUpdated
@@ -1398,8 +1400,9 @@ namespace SmashCourt_BE.Services
                 // Consolidated validation: Double protection (Status + PaymentStatus)
                 EnsureBookingModifiable(currentStatus, latestInvoice.PaymentStatus);
 
-                // Xóa service
-                await _bookingRepo.RemoveServiceAsync(bookingService);
+                // Xóa service theo khóa (đơn, dịch vụ) bằng một câu DELETE, không xóa qua object nạp trước khóa: nhân viên khác vừa xóa
+                // thì 0 dòng, vẫn là thành công như nhánh idempotent ở trên (xóa qua object EF sẽ ném DbUpdateConcurrencyException)
+                var removedLines = await _bookingRepo.RemoveServiceLineAsync(booking.Id, serviceId);
 
                 // Tính lại service_fee từ DB (không dùng memory collection)
                 // Dùng SumAsync để tối ưu performance (không load list vào memory)
@@ -1423,14 +1426,17 @@ namespace SmashCourt_BE.Services
                     "SERVICE_MODIFICATION | Action={Action} | BookingId={BookingId} | ServiceId={ServiceId} | " +
                     "ServiceName={ServiceName} | Quantity={Quantity} | UnitPrice={UnitPrice} | " +
                     "UserId={UserId} | BookingStatus={BookingStatus} | PaymentStatus={PaymentStatus} | " +
-                    "OldTotal={OldTotal} | NewTotal={NewTotal}",
+                    "OldTotal={OldTotal} | NewTotal={NewTotal} | Result={Result}",
                     "REMOVE", booking.Id, bookingService.ServiceId, bookingService.ServiceName,
                     bookingService.Quantity, bookingService.UnitPrice,
                     currentUserId, currentStatus, latestInvoice.PaymentStatus,
-                    invoice.FinalTotal, latestInvoice.FinalTotal);
+                    invoice.FinalTotal, latestInvoice.FinalTotal,
+                    removedLines == 0 ? "IDEMPOTENT_SUCCESS" : "REMOVED");
             }
 
-            // Query lại booking với details để trả về
+            // Query lại booking với details để trả về. Bỏ object EF đang theo dõi trước: dòng xóa bằng ExecuteDelete vẫn nằm trong
+            // booking.BookingServices đã theo dõi, đọc lại có theo dõi sẽ trả cả dòng đã xóa
+            _unitOfWork.ClearChangeTracker();
             var result = await _bookingRepo.GetByIdWithDetailsAsync(booking.Id);
 
             // Broadcast SignalR notification - BookingUpdated

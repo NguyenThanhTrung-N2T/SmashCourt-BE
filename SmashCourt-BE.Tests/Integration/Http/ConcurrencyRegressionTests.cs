@@ -207,25 +207,6 @@ public sealed class ConcurrencyRegressionTests(PostgreSqlIntegrationFixture data
         Assert.Equal(30_000m, booking.Invoice.ServiceFee);
         Assert.Equal(booking.Invoice.FinalTotal, booking.Invoice.Payments.Where(p => p.Status == PaymentTxStatus.SUCCESS).Sum(p => p.Amount));
     }
-
-    private Task<Guid> SeedBranchServiceAsync(Guid branchId, decimal price) =>
-        WithDbAsync(async db =>
-        {
-            var now = DateTime.UtcNow;
-            var service = new Service
-            {
-                Id = Guid.NewGuid(), Name = $"Nước {Guid.NewGuid():N}"[..16], Unit = "chai", DefaultPrice = price,
-                Status = ServiceStatus.ACTIVE, CreatedAt = now, UpdatedAt = now
-            };
-            db.Services.Add(service);
-            db.BranchServices.Add(new BranchService
-            {
-                Id = Guid.NewGuid(), BranchId = branchId, ServiceId = service.Id, Price = price,
-                Status = BranchServiceStatus.ENABLED, CreatedAt = now, UpdatedAt = now
-            });
-            await db.SaveChangesAsync();
-            return service.Id;
-        });
 }
 
 internal static class ConcurrentCalls

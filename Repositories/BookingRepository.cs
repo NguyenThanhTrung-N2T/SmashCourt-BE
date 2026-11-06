@@ -752,11 +752,22 @@ namespace SmashCourt_BE.Repositories
                 .SumAsync(s => s.UnitPrice * s.Quantity);
         }
 
-        // Xóa dịch vụ khỏi booking
-        public async Task RemoveServiceAsync(BookingService service)
+        // Id dòng dịch vụ của đơn (mỗi đơn tối đa một dòng cho mỗi dịch vụ: ux_booking_service_unique). Đọc thẳng từ DB, không qua object
+        // EF đang theo dõi: gọi sau khi khóa đơn thì thấy cả dòng nhân viên khác vừa thêm hoặc vừa xóa
+        public async Task<Guid?> GetServiceLineIdAsync(Guid bookingId, Guid serviceId)
         {
-            _context.BookingServices.Remove(service);
-            await _context.SaveChangesAsync();
+            return await _context.BookingServices
+                .Where(s => s.BookingId == bookingId && s.ServiceId == serviceId)
+                .Select(s => (Guid?)s.Id)
+                .FirstOrDefaultAsync();
+        }
+
+        // Xóa dòng dịch vụ của đơn, trả số dòng đã xóa (0 khi dòng đã bị xóa trước đó)
+        public async Task<int> RemoveServiceLineAsync(Guid bookingId, Guid serviceId)
+        {
+            return await _context.BookingServices
+                .Where(s => s.BookingId == bookingId && s.ServiceId == serviceId)
+                .ExecuteDeleteAsync();
         }
 
         // Cập nhật trạng thái active của booking court (dùng để check-in/check-out)

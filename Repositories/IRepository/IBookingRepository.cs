@@ -64,8 +64,11 @@ namespace SmashCourt_BE.Repositories.IRepository
         // Tính tổng service fee của booking (query từ DB, không dùng memory)
         Task<decimal> CalculateServiceFeeAsync(Guid bookingId);
 
-        // Xóa dịch vụ khỏi booking
-        Task RemoveServiceAsync(BookingService service);
+        // Id dòng dịch vụ của đơn, đọc thẳng từ DB (dùng sau khi khóa đơn)
+        Task<Guid?> GetServiceLineIdAsync(Guid bookingId, Guid serviceId);
+
+        // Xóa dòng dịch vụ của đơn, trả số dòng đã xóa (0 khi đã bị xóa trước đó)
+        Task<int> RemoveServiceLineAsync(Guid bookingId, Guid serviceId);
 
         // Cập nhật trạng thái active của booking court (dùng để check-in/check-out)
         Task UpdateCourtActiveStatusAsync(Guid bookingId, bool isActive);

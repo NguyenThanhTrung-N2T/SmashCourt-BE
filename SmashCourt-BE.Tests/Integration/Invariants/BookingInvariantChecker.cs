@@ -77,8 +77,12 @@ public static class BookingInvariantChecker
                 i.DepositSource,
                 i.DepositAmount,
                 i.HoldDeadline,
+                i.PaymentStatus,
+                i.FinalTotal,
                 // Chỉ Payment SUCCESS của chính hóa đơn này
-                Paid = i.Payments.Where(p => p.Status == PaymentTxStatus.SUCCESS).Sum(p => p.Amount)
+                Paid = i.Payments.Where(p => p.Status == PaymentTxStatus.SUCCESS).Sum(p => p.Amount),
+                // Thực thu, cùng công thức với RecalculatePaymentStatusAsync của BE
+                Collected = i.Payments.Where(p => p.Status == PaymentTxStatus.SUCCESS).Sum(p => p.Amount - p.RefundedAmount)
             })
             .ToDictionaryAsync(i => i.BookingId, ct);
         var lines = await db.BookingCourts.AsNoTracking()
@@ -109,6 +113,11 @@ public static class BookingInvariantChecker
                 && invoice.Paid < (invoice.DepositAmount ?? 0m))
                 Report(InvariantRules.ConfirmedIsPaid,
                     $"{booking.Status}, cọc {invoice.DepositAmount:0} đ nhưng Payment SUCCESS của hóa đơn chỉ {invoice.Paid:0} đ");
+
+            // SC6-7 (thêm 06/11 sau N-38): hóa đơn PAID phải thu đủ FinalTotal; thu thừa không vi phạm (khoản thêm được hoàn tại chi nhánh)
+            if (invoice is { PaymentStatus: InvoicePaymentStatus.PAID } && invoice.Collected < invoice.FinalTotal)
+                Report(InvariantRules.PaidInvoiceIsCollected,
+                    $"hóa đơn PAID tổng {invoice.FinalTotal:0} đ nhưng thực thu (SUCCESS − đã hoàn) chỉ {invoice.Collected:0} đ");
 
             // SC6-2: đơn còn trong hạn duyệt phải giữ slot lock còn hạn khớp từng dòng sân
             if (booking.Status == BookingStatus.PENDING_APPROVAL && booking.ApprovalExpiresAt > now)

@@ -255,4 +255,24 @@ public abstract class PaymentCancellationTestBase(PostgreSqlIntegrationFixture d
     protected Task<List<Refund>> ReadRefundsAsync(Guid bookingId) =>
         WithDbAsync(db => db.Refunds.AsNoTracking().Include(r => r.Payment)
             .Where(r => r.Payment.Invoice.BookingId == bookingId).ToListAsync());
+
+    /// <summary>Dịch vụ mới đang bán ở chi nhánh với giá cho trước; trả id dịch vụ.</summary>
+    protected Task<Guid> SeedBranchServiceAsync(Guid branchId, decimal price) =>
+        WithDbAsync(async db =>
+        {
+            var now = DateTime.UtcNow;
+            var service = new Service
+            {
+                Id = Guid.NewGuid(), Name = $"Nước {Guid.NewGuid():N}"[..16], Unit = "chai", DefaultPrice = price,
+                Status = ServiceStatus.ACTIVE, CreatedAt = now, UpdatedAt = now
+            };
+            db.Services.Add(service);
+            db.BranchServices.Add(new BranchService
+            {
+                Id = Guid.NewGuid(), BranchId = branchId, ServiceId = service.Id, Price = price,
+                Status = BranchServiceStatus.ENABLED, CreatedAt = now, UpdatedAt = now
+            });
+            await db.SaveChangesAsync();
+            return service.Id;
+        });
 }
