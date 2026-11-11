@@ -35,7 +35,8 @@ fi
 cd "$(dirname "$0")"
 compose() { docker compose --env-file "$env_file" "$@"; }
 compose up -d --wait postgres redis
-compose pull --quiet "${targets[@]}"
+# Tag sha-<7> bất biến (CD, quay về): đã có trên máy thì không tới GHCR; tag nhánh (develop, master, chạy tay không tag) luôn kéo bản mới
+if [[ "$tag" == sha-* ]]; then compose pull --quiet --policy missing "${targets[@]}"; else compose pull --quiet "${targets[@]}"; fi
 compose up -d --no-deps --wait "${recreate[@]}" "${targets[@]}"
 
 declare -A containers=([be]=smashcourt-be [tadss]=tadss-runtime [ai]=smashcourt-ai)

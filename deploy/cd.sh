@@ -6,6 +6,7 @@
 #        1 = bản mới hỏng, đã quay về bản trước và bản trước kiểm đạt
 #        2 = UNSAFE: bản mới hỏng và quay về cũng hỏng (hoặc không có bản trước) — cần người xử lý
 #        3 = từ chối, chưa đụng gì: sha sai dạng hoặc image sha-<7> không có trên GHCR
+#        4 = chưa đụng gì: không tới được GHCR sau vài lần thử (mạng của máy deploy), chạy lại job khi mạng ổn
 # Kiểm tra = container chạy đúng commit (nhãn org.opencontainers.image.revision) + health + smoke chỉ đọc (không tạo dữ liệu).
 set -uo pipefail
 
@@ -21,7 +22,21 @@ esac
 tag="sha-${sha:0:7}"
 cd "$(dirname "$0")" || exit 3
 
-docker manifest inspect "${image}:${tag}" >/dev/null 2>&1 || { echo "cd.sh: không có image ${image}:${tag} trên GHCR, không triển khai" >&2; exit 3; }
+# Kéo image trước khi đụng container: tách "image không có" (3) khỏi "không tới được GHCR" (4) — 11/11 mạng của máy deploy chập chờn tới
+# ghcr.io làm bước kiểm báo nhầm là không có image. Kéo xong thì deploy.sh không cần tới GHCR nữa (tag sha bất biến).
+pull_image() {
+  local attempt out
+  for attempt in 1 2 3 4 5; do
+    out="$(docker pull --quiet "${image}:${tag}" 2>&1)" && return 0
+    if grep -qiE "manifest unknown|not found|name unknown" <<<"$out"; then
+      echo "cd.sh: không có image ${image}:${tag} trên GHCR, không triển khai" >&2; exit 3
+    fi
+    echo "   chưa tới được GHCR (lần ${attempt}/5): $(tail -n 1 <<<"$out" | cut -c1-200)"
+    [ "$attempt" -lt 5 ] && sleep $((attempt * 15))
+  done
+  echo "cd.sh: không tới được GHCR sau 5 lần thử, chưa đụng gì — chạy lại job khi mạng ổn" >&2; exit 4
+}
+pull_image
 
 revision_of() { docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$container" 2>/dev/null; }
 
