@@ -123,7 +123,7 @@ public class AuthService : IAuthService
             if (existingUser.IsEmailVerified)
                 throw new AppException(409, "Email đã được sử dụng", ErrorCodes.EmailExists);
             // VERIFY_MAIL = FALSE 
-            existingUser.PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password, 12);
+            existingUser.PasswordHash = PasswordHelper.HashPassword(dto.Password);
             existingUser.FullName = dto.FullName.Trim();
             existingUser.FullNameNormalized = StringHelper.NormalizeVietnamese(dto.FullName.Trim());
             existingUser.Phone = dto.Phone?.Trim();
@@ -139,7 +139,7 @@ public class AuthService : IAuthService
         var user = new User
         {
             Email = email,
-            PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password,12),
+            PasswordHash = PasswordHelper.HashPassword(dto.Password),
             FullName = dto.FullName.Trim(),
             FullNameNormalized = StringHelper.NormalizeVietnamese(dto.FullName.Trim()),
             Phone = dto.Phone?.Trim(),
@@ -908,7 +908,7 @@ public class AuthService : IAuthService
             throw new AppException(403, "Tài khoản của bạn đã bị khóa, vui lòng liên hệ hỗ trợ", ErrorCodes.AccountLocked);
 
         // 4. Hash password mới + update
-        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.NewPassword, 12);
+        user.PasswordHash = PasswordHelper.HashPassword(dto.NewPassword);
         user.FailedLoginCount = 0;
         user.LockedUntil = null;
         user.LastFailedLoginAt = null;
@@ -945,7 +945,7 @@ public class AuthService : IAuthService
         // Có thể thêm validation phức tạp hơn ở đây nếu cần
 
         // 6. Update password và clear flag MustChangePassword
-        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.NewPassword, 12);
+        user.PasswordHash = PasswordHelper.HashPassword(dto.NewPassword);
         user.MustChangePassword = false; // ← QUAN TRỌNG: Clear flag
         user.FailedLoginCount = 0;
         user.LockedUntil = null;

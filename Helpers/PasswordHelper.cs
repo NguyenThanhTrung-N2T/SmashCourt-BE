@@ -4,10 +4,21 @@ using System.Text;
 namespace SmashCourt_BE.Helpers;
 
 /// <summary>
-/// Helper để tạo password ngẫu nhiên
+/// Helper để tạo password ngẫu nhiên và băm mật khẩu
 /// </summary>
 public static class PasswordHelper
 {
+    /// <summary>
+    /// Hệ số bcrypt cho mọi hash mới. Đăng nhập là phần tốn CPU nhất của BE ở tải danh nghĩa nên giữ ở 11 (mức tối thiểu khuyến nghị là 10).
+    /// Hệ số nằm trong chính chuỗi hash nên hash cũ với hệ số khác vẫn kiểm được bằng <c>BCrypt.Verify</c>.
+    /// </summary>
+    public const int BcryptWorkFactor = 11;
+
+    /// <summary>
+    /// Băm mật khẩu bằng bcrypt với <see cref="BcryptWorkFactor"/>
+    /// </summary>
+    public static string HashPassword(string password) => BCrypt.Net.BCrypt.HashPassword(password, BcryptWorkFactor);
+
     private const string UppercaseChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     private const string LowercaseChars = "abcdefghijklmnopqrstuvwxyz";
     private const string DigitChars = "0123456789";

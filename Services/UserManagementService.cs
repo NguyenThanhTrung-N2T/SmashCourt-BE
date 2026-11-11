@@ -280,7 +280,7 @@ public class UserManagementService : IUserManagementService
         var user = new User
         {
             Email = normalizedEmail,
-            PasswordHash = BCrypt.Net.BCrypt.HashPassword(password, 12),
+            PasswordHash = PasswordHelper.HashPassword(password),
             FullName = dto.FullName.Trim(),
             FullNameNormalized = StringHelper.NormalizeVietnamese(dto.FullName.Trim()),
             Phone = dto.Phone?.Trim(),
@@ -603,7 +603,7 @@ public class UserManagementService : IUserManagementService
             : dto.NewPassword;
 
         // Update password
-        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(newPassword, 12);
+        user.PasswordHash = PasswordHelper.HashPassword(newPassword);
         user.MustChangePassword = true; // Bắt buộc đổi password lần đầu đăng nhập
         user.UpdatedAt = DateTime.UtcNow;
 

@@ -1,5 +1,4 @@
 using BCrypt.Net;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using SmashCourt_BE.Common;
 using SmashCourt_BE.DTOs.Loyalty;
@@ -21,7 +20,6 @@ public class ProfileService : IProfileService
     private readonly ICustomerLoyaltyRepository _customerLoyaltyRepo;
     private readonly IUserBranchRepository _userBranchRepo;
     private readonly ILoyaltyTierRepository _loyaltyTierRepo;
-    private readonly IConfiguration _configuration;
     private readonly ILogger<ProfileService> _logger;
 
     public ProfileService(
@@ -30,7 +28,6 @@ public class ProfileService : IProfileService
         ICustomerLoyaltyRepository customerLoyaltyRepo,
         IUserBranchRepository userBranchRepo,
         ILoyaltyTierRepository loyaltyTierRepo,
-        IConfiguration configuration,
         ILogger<ProfileService> logger)
     {
         _userRepo = userRepo;
@@ -38,7 +35,6 @@ public class ProfileService : IProfileService
         _customerLoyaltyRepo = customerLoyaltyRepo;
         _userBranchRepo = userBranchRepo;
         _loyaltyTierRepo = loyaltyTierRepo;
-        _configuration = configuration;
         _logger = logger;
     }
 
@@ -158,11 +154,8 @@ public class ProfileService : IProfileService
         if (BCrypt.Net.BCrypt.Verify(dto.NewPassword, user.PasswordHash))
             throw new AppException(400, "Mật khẩu mới phải khác mật khẩu hiện tại", ErrorCodes.PasswordMustBeDifferent);
 
-        // Lấy work factor từ configuration (mặc định 12)
-        var workFactor = _configuration.GetValue<int>("BCrypt:WorkFactor", 12);
-
         // Hash mật khẩu mới
-        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.NewPassword, workFactor);
+        user.PasswordHash = PasswordHelper.HashPassword(dto.NewPassword);
         user.MustChangePassword = false;
         user.UpdatedAt = DateTime.UtcNow;
 
