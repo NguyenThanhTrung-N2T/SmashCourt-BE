@@ -43,6 +43,10 @@ ARG BUILD_VERSION="local"
 LABEL org.opencontainers.image.revision="${GIT_SHA}"       org.opencontainers.image.version="${BUILD_VERSION}"       org.opencontainers.image.source="https://github.com/NguyenThanhTrung-N2T/SmashCourt-BE"       org.opencontainers.image.title="smashcourt-be"
 ENV APP_REVISION="${GIT_SHA}"     APP_VERSION="${BUILD_VERSION}"
 
+# Thư mục cờ đổi lúc chạy (Extensions/RuntimeConfigExtensions): bản deploy gắn volume vào đây, volume mới nhận quyền của thư mục trong image
+# nên user app ghi được file cờ (deploy/tadss-flag.sh)
+RUN mkdir -p /app/runtime-config && chown "$APP_UID" /app/runtime-config
+
 # Chạy bằng user không phải root có sẵn trong image .NET (app, UID $APP_UID), như TADSS
 USER $APP_UID
 ENTRYPOINT ["dotnet", "SmashCourt-BE.dll"]

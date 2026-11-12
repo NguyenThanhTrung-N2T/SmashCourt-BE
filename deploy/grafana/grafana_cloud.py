@@ -391,7 +391,7 @@ def push(no_auth: bool) -> None:
     email = env.get("ALERT_EMAIL_TO", "")
     missing = [k for k, v in (("GRAFANA_URL", url), ("GRAFANA_SA_TOKEN", token if not no_auth else "x"), ("ALERT_EMAIL_TO", email)) if not v]
     if missing:
-        raise SystemExit(f"grafana_cloud.py: thiếu {', '.join(missing)} trong file bí mật (xem DOCKER_COMMANDS.md, mục Grafana Cloud)")
+        raise SystemExit(f"grafana_cloud.py: thiếu {', '.join(missing)} trong file bí mật (xem docs/guides/RUNBOOK.md của TADSS-Runtime, mục 4 Grafana Cloud)")
 
     grafana = Grafana(url, token)
     datasources = grafana.call("GET", "/api/datasources") or []

@@ -30,6 +30,9 @@ using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Cờ đổi lúc chạy (runtime-config/feature-flags.json, chỉ khi có thư mục — bản deploy): nguồn cuối nên thắng appsettings và biến môi trường
+builder.Configuration.AddSmashCourtRuntimeOverrides(builder.Environment.ContentRootPath);
+
 // Cấu hình cốt lõi (DB, JWT, OTP) phải có trước khi đăng ký service: thiếu thì dừng ngay, thông báo chỉ nêu tên khóa (Epic 6C, OPS-03)
 RequiredConfiguration.EnsureBlockingKeys(builder.Configuration);
 

@@ -432,7 +432,7 @@ User -> VNPay: Nhập thông tin\nvà xác thực
 VNPay -> VNPay: Xử lý giao dịch\nthanh toán
 
 == Bước 5-18: VNPay IPN (Server-to-Server) ==
-VNPay -> Backend: POST /api/payment/vnpay/ipn\n(Thông báo thanh toán)
+VNPay -> Backend: GET /api/payments/vnpay/ipn\n(Thông báo thanh toán)
 activate Backend
 
 Backend -> Backend: Ghi nhận thông báo
@@ -530,7 +530,7 @@ end
 
 == Bước 19: VNPay Callback (Browser Redirect) ==
 VNPay -> Browser: HTTP 302 Redirect\nđến Backend callback URL
-Browser -> CallbackHandler: GET /api/payment/vnpay/callback\n(query params)
+Browser -> CallbackHandler: GET /api/payments/vnpay/callback\n(query params)
 activate CallbackHandler
 
 CallbackHandler -> CallbackHandler: Xác thực chữ ký
@@ -551,7 +551,7 @@ activate Frontend
 
 Frontend -> User: Hiển thị "Đang xác nhận\nthanh toán..."
 
-Frontend -> Backend: GET /api/payment/vnpay/confirm\n(query params)
+Frontend -> Backend: POST /api/payments/vnpay/confirm\n(query params)
 activate Backend
 
 Backend -> Backend: Xác thực thông tin

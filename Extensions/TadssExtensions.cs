@@ -16,6 +16,7 @@ public static class TadssExtensions
             .Bind(config.GetSection(TadssSettings.SectionName))
             .ValidateOnStart();
         services.AddSingleton<IValidateOptions<TadssSettings>, TadssSettingsValidator>();
+        services.AddHostedService<TadssFlagChangeLogger>();
 
         services.AddHttpClient<ITadssClient, TadssClient>(client =>
             {

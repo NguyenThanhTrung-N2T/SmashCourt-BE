@@ -80,6 +80,10 @@ services:
       OTEL_RESOURCE_ATTRIBUTES: deployment.environment.name=deploy
       # Câu SQL của EF ở mức Information làm log phình (console và Grafana Cloud): chỉ giữ cảnh báo
       Logging__LogLevel__Microsoft.EntityFrameworkCore: Warning
+    # Cờ đổi lúc chạy (runtime-config/feature-flags.json): bật / tắt TADSS bằng bash deploy/tadss-flag.sh on|off, không khởi động lại BE.
+    # Volume tên cố định để giữ trạng thái cờ qua các lần CD tạo lại container; không đặt TadssConfig__EnableTadssDecision ở đây (file thắng)
+    volumes:
+      - be-runtime-config:/app/runtime-config
     ports:
       - "127.0.0.1:8080:8080"
     healthcheck:
@@ -173,6 +177,8 @@ services:
 volumes:
   pgdata:
     name: smashcourt-deploy-pgdata
+  be-runtime-config:
+    name: smashcourt-deploy-be-runtime-config
   alloy-data:
     name: smashcourt-deploy-alloy-data
 

@@ -28,7 +28,7 @@ if [ "$service" = obs ]; then
   # Chỉ kiểm có giá trị, không in giá trị
   for key in GRAFANA_CLOUD_OTLP_ENDPOINT GRAFANA_CLOUD_INSTANCE_ID GRAFANA_CLOUD_API_TOKEN; do
     [ -n "$(sed -n "s/^${key}=//p" "$env_file" | tail -n 1)" ] \
-      || { echo "deploy.sh: thiếu ${key} trong ${env_file} (xem docs/guides/DOCKER_COMMANDS.md của TADSS-Runtime, mục Grafana Cloud)" >&2; exit 1; }
+      || { echo "deploy.sh: thiếu ${key} trong ${env_file} (xem docs/guides/RUNBOOK.md của TADSS-Runtime, mục 4 Grafana Cloud)" >&2; exit 1; }
   done
 fi
 

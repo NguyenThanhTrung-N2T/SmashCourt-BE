@@ -13,7 +13,17 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](https://opensource.org/licenses/MIT)
 [![CI Status](https://github.com/NguyenThanhTrung-N2T/SmashCourt-BE/actions/workflows/ci.yml/badge.svg)](https://github.com/NguyenThanhTrung-N2T/SmashCourt-BE/actions)
 
-> Hệ thống xử lý nghiệp vụ, cung cấp REST API hiệu năng cao, điều phối tác vụ thời gian thực và quản lý tác vụ nền cho Hệ thống Quản lý và Đặt Sân Cầu Lông **SmashCourt**. Được xây dựng trên nền tảng **ASP.NET Core 8** với kiến trúc phân tầng (Layered Architecture).
+> Hệ thống xử lý nghiệp vụ, cung cấp REST API hiệu năng cao, điều phối tác vụ thời gian thực và quản lý tác vụ nền cho Hệ thống Quản lý và Đặt Sân Cầu Lông **SmashCourt**
+
+> **Cập nhật 12/11/2026 (Đồ án 2, Phase 6).** Phần còn lại của README này viết ở Đồ án 1 và **chưa cập nhật theo mã hiện tại**. Khác biệt chính:
+>
+> - Đã tích hợp quyết định cọc của TADSS: `Integrations/Tadss/`, `Services/Deposit/`, trạng thái `PENDING_APPROVAL`, duyệt cọc, job hết hạn duyệt, job báo kết quả về TADSS. Cờ `TadssConfig:EnableTadssDecision` mặc định tắt (tắt thì mọi đơn cọc 100 %).
+> - Hoàn tiền bằng tiền mặt tại chi nhánh đặt sân, BE không gọi API hoàn tiền của cổng; nghiệp vụ thanh toán nằm sau `IPaymentGateway`.
+> - Đặt sân online là `POST /api/bookings/online`; không có API khóa slot riêng (`POST /api/slots/lock` trong sơ đồ bên dưới không tồn tại). Email gửi ngay sau khi giao dịch commit, không qua job nền.
+> - `Migrations/` trống: schema thật ở `TADSS-Runtime/docs/database/schema_smashcourt.sql`, script đổi schema ở `docs/database/phase6_*.sql`; **không** chạy `dotnet ef database update`.
+> - Bộ test hiện khoảng 2550 test (unit, integration và HTTP trên PostgreSQL 17 thật qua Testcontainers, TADSS giả bằng WireMock.Net), không còn là 236.
+>
+> Nguồn hiện hành: [`CLAUDE.md`](CLAUDE.md) (lệnh, kiến trúc, luật đã chốt), [`docs/3.1-kien-truc-he-thong.md`](docs/3.1-kien-truc-he-thong.md), [`docs/api/DEPOSIT_APPROVAL_API.md`](docs/api/DEPOSIT_APPROVAL_API.md); tài liệu Phase 6 và lệnh vận hành ở repo TADSS-Runtime (`spec/PHASE6_DESIGN_SPEC.md`, `docs/guides/RUNBOOK.md`).. Được xây dựng trên nền tảng **ASP.NET Core 8** với kiến trúc phân tầng (Layered Architecture).
 
 ---
 
