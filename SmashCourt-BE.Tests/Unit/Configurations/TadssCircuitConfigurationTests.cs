@@ -4,7 +4,7 @@ using SmashCourt_BE.Tests.TestData;
 namespace SmashCourt_BE.Tests.Unit.Configurations;
 
 /// <summary>
-/// P6-57: mạch ngắt mặc định tắt trong mã (<c>appsettings.json</c>), bật ở bản deploy và E-STAGING. Mặc định tắt để bộ test HTTP dùng chung
+/// P6-57: mạch ngắt mặc định tắt trong mã (<c>appsettings.json</c>), bật ở bản deploy và E-STAGING. P6-58: bản deploy tắt cache quyết định. Mặc định tắt để bộ test HTTP dùng chung
 /// một host không bị một test làm TADSS lỗi mở mạch cho các test sau.
 /// </summary>
 [Trait("Category", TestCategories.Configuration)]
@@ -26,6 +26,17 @@ public class TadssCircuitConfigurationTests
     public void DeployAndStagingCompose_TurnTheCircuitOn(string relativePath, string expectedLine)
     {
         var lines = File.ReadAllLines(Path.Combine(RepoRoot(), relativePath)).Select(line => line.Trim());
+
+        Assert.Contains(expectedLine, lines);
+    }
+
+    // P6-58: bản deploy tắt cache quyết định của hai strategy quy tắc bằng cấu hình (khóa cache chứa mã đơn nên không bao giờ trúng)
+    [Theory]
+    [InlineData("Tadss__Strategies__Default__CacheTtlMinutes: \"0\"")]
+    [InlineData("Tadss__Strategies__MockAlternative__CacheTtlMinutes: \"0\"")]
+    public void DeployCompose_TurnsOffTheDecisionCacheOfRuleStrategies(string expectedLine)
+    {
+        var lines = File.ReadAllLines(Path.Combine(RepoRoot(), "deploy", "docker-compose.yml")).Select(line => line.Trim());
 
         Assert.Contains(expectedLine, lines);
     }

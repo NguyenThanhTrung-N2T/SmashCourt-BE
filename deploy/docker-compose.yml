@@ -115,6 +115,10 @@ services:
       # Database trên máy nên cho tự migrate; compose gốc của TADSS vẫn "false" (không bao giờ tự migrate Neon, D-05)
       Tadss__Database__ApplyMigrationsOnStartup: "true"
       Tadss__Cache__RedisConnectionString: redis:6379
+      # P6-58: tắt cache quyết định của hai strategy quy tắc. Khóa cache chứa mã đơn nên không bao giờ trúng, mà mỗi quyết định vẫn tốn hai
+      # lệnh Redis nằm ngoài ngân sách 500 ms. Cơ chế cache giữ trong mã, stack đánh giá của TADSS vẫn bật; muốn bật lại thì bỏ hai dòng này
+      Tadss__Strategies__Default__CacheTtlMinutes: "0"
+      Tadss__Strategies__MockAlternative__CacheTtlMinutes: "0"
       Tadss__Security__ApiKeys__0__ClientId: smashcourt-be
       Tadss__Security__ApiKeys__0__KeySha256: ${TADSS_API_KEY_SHA256:?}
       Tadss__Telemetry__Enabled: "true"
