@@ -32,9 +32,11 @@ internal sealed class BookingRowLockGate : IAsyncDisposable
         var scope = services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<SmashCourtContext>();
         var transaction = await db.Database.BeginTransactionAsync();
-        // Ghi lại đúng giá trị cũ: chỉ để lấy khóa dòng, dữ liệu không đổi
-        var locked = await db.Bookings.Where(b => b.Id == bookingId)
-            .ExecuteUpdateAsync(s => s.SetProperty(b => b.UpdatedAt, b => b.UpdatedAt));
+        // SELECT … FOR UPDATE, không dùng UPDATE ghi lại giá trị cũ: UPDATE tạo phiên bản dòng mới, nên khi cổng commit các phiên đang chờ cùng
+        // đi theo chuỗi phiên bản sang dòng mới và tranh lại khóa ở đó (thứ tự xếp hàng mất; CI 13/11 lệnh xóa dịch vụ chạy trước check-out
+        // dù check-out xếp trước). Khóa không tạo phiên bản mới thì các phiên chờ trên cùng một dòng và lấy khóa theo thứ tự đã xếp.
+        // Câu SQL thô chỉ ở hạ tầng test: EF Core không dựng được FOR UPDATE
+        var locked = (await db.Database.SqlQuery<int>($"SELECT 1 AS \"Value\" FROM bookings WHERE id = {bookingId} FOR UPDATE").ToListAsync()).Count;
         if (locked != 1)
             throw new InvalidOperationException($"Không khóa được booking {bookingId}.");
         var pid = await db.Database.SqlQuery<int>($"SELECT pg_backend_pid() AS \"Value\"").SingleAsync();
