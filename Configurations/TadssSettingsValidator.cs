@@ -18,6 +18,21 @@ public class TadssSettingsValidator : IValidateOptions<TadssSettings>
         if (options.ApprovedPaymentWindowMinutes is < 1 or > 60)
             errors.Add($"{TadssSettings.SectionName}:ApprovedPaymentWindowMinutes phải trong khoảng 1…60 (hiện {options.ApprovedPaymentWindowMinutes}).");
 
+        if (options.CircuitFailureThreshold is < 1 or > 20)
+            errors.Add($"{TadssSettings.SectionName}:CircuitFailureThreshold phải trong khoảng 1…20 (hiện {options.CircuitFailureThreshold}).");
+
+        if (options.CircuitProbeIntervalSeconds is < 1 or > 300)
+            errors.Add($"{TadssSettings.SectionName}:CircuitProbeIntervalSeconds phải trong khoảng 1…300 (hiện {options.CircuitProbeIntervalSeconds}).");
+
+        if (options.CircuitProbeTimeoutMs is < 50 or > 5000)
+            errors.Add($"{TadssSettings.SectionName}:CircuitProbeTimeoutMs phải trong khoảng 50…5000 (hiện {options.CircuitProbeTimeoutMs}).");
+
+        if (options.CircuitBreakSeconds is < 1 or > 3600)
+            errors.Add($"{TadssSettings.SectionName}:CircuitBreakSeconds phải trong khoảng 1…3600 (hiện {options.CircuitBreakSeconds}).");
+
+        if (options.CircuitMaxBreakSeconds < options.CircuitBreakSeconds || options.CircuitMaxBreakSeconds > 3600)
+            errors.Add($"{TadssSettings.SectionName}:CircuitMaxBreakSeconds phải trong khoảng CircuitBreakSeconds…3600 (hiện {options.CircuitMaxBreakSeconds}).");
+
         if (!IsIanaTimeZone(options.BranchTimeZone))
             errors.Add($"{TadssSettings.SectionName}:BranchTimeZone '{options.BranchTimeZone}' không phải mã múi giờ IANA tìm được trên máy (mã Windows như 'SE Asia Standard Time' bị TADSS từ chối).");
 

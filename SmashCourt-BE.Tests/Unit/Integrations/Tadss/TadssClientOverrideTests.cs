@@ -29,7 +29,8 @@ public class TadssClientOverrideTests
         var handler = FakeHttpMessageHandler.Always(response);
         var logger = new ListLogger<TadssClient>();
         var client = new TadssClient(
-            new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan }, monitor.Object, new HttpContextAccessor(), TimeProvider.System, logger);
+            new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan }, monitor.Object, new HttpContextAccessor(), TimeProvider.System, logger,
+            TadssCircuitFactory.Disabled());
         return new Sut(client, handler, logger);
     }
 

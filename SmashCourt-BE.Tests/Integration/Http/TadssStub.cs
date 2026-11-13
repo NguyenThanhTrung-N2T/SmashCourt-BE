@@ -93,6 +93,19 @@ public sealed class TadssStub(WireMockServer server)
         server.Given(Request.Create().WithPath("/health/live").UsingGet()).RespondWith(response);
     }
 
+    /// <summary>Giả lập <c>GET /health/ready</c> của TADSS (mạch ngắt của BE kiểm endpoint này, P6-57); <paramref name="delay"/> để thử timeout.</summary>
+    public void ReplyHealthReady(int status, TimeSpan? delay = null)
+    {
+        var response = Response.Create().WithStatusCode(status).WithBody(status == 200 ? "Healthy" : "Unhealthy");
+        if (delay != null)
+            response = response.WithDelay(delay.Value);
+        server.Given(Request.Create().WithPath("/health/ready").UsingGet()).RespondWith(response);
+    }
+
+    /// <summary>Số lần BE đã kiểm <c>/health/ready</c>.</summary>
+    public int HealthReadyCalls =>
+        server.LogEntries.Count(e => e.RequestMessage?.Path == "/health/ready" && e.RequestMessage.Method == "GET");
+
     /// <summary>Trả một response tùy ý (lỗi 4xx/5xx, body hỏng...); <paramref name="retryAfter"/> là giá trị header Retry-After.</summary>
     public void Reply(int status, string? body, string contentType = "application/problem+json", string? retryAfter = null, TimeSpan? delay = null) =>
         server.Given(Request.Create().WithPath(DecisionsPath).UsingPost())

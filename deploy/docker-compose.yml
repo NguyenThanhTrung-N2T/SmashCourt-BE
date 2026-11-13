@@ -74,6 +74,8 @@ services:
       AIService__BaseUrl: http://ai:8000
       TadssConfig__BaseUrl: http://tadss:8080
       TadssConfig__ApiKey: ${TADSS_API_KEY:?}
+      # Mạch ngắt lệnh đánh giá cọc (P6-57): TADSS không trả lời được thì đơn online cọc 100 % ngay; tham số khác lấy mặc định của appsettings.json
+      TadssConfig__CircuitEnabled: "true"
       Telemetry__Enabled: "true"
       Telemetry__OtlpEndpoint: http://alloy:4317
       Telemetry__MetricExportIntervalMs: "60000"

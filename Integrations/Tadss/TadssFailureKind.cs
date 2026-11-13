@@ -15,5 +15,8 @@ public enum TadssFailureKind
     Http,
 
     /// <summary>HTTP 2xx nhưng body không dùng được (JSON hỏng, trang HTML của ngrok, thiếu trường bắt buộc, <c>status</c> lạ). Không thử lại.</summary>
-    InvalidResponse
+    InvalidResponse,
+
+    /// <summary>Mạch ngắt của lệnh đánh giá đang mở (P6-57): BE không gọi TADSS, đơn đi phương án dự phòng ngay. Không thử lại.</summary>
+    CircuitOpen
 }

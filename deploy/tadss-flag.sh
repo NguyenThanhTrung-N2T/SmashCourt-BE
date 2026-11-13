@@ -44,6 +44,9 @@ case "$action" in
     docker exec "$container" sh -c "cat ${file} 2>/dev/null || echo '  (chưa có: dùng giá trị trong appsettings.json, mặc định TẮT)'"
     echo "Log của BE về cờ (24 giờ gần nhất):"
     flag_log 24h | tail -n 5
+    # Mạch ngắt lệnh đánh giá cọc (P6-57): cờ bật mà mạch đang mở thì đơn online vẫn cọc 100 %
+    echo "Mạch ngắt gọi TADSS (lần chuyển gần nhất, 24 giờ):"
+    docker logs --since 24h "$container" 2>&1 | grep "Mạch gọi TADSS" | tail -n 1 || true
     ;;
   *) echo "tadss-flag.sh: action phải là on, off hoặc status (nhận: ${action})" >&2; exit 1 ;;
 esac

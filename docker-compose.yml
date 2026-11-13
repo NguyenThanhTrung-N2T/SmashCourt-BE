@@ -26,6 +26,9 @@ services:
       # TADSS: URL công khai (ngrok) của TADSS và khóa client smashcourt-be, đặt trong .env; chỉ bắt buộc khi bật TadssConfig:EnableTadssDecision
       - TadssConfig__BaseUrl=${TADSS_BASE_URL}
       - TadssConfig__ApiKey=${TADSS_API_KEY}
+      # E-STAGING chạy đúng cấu hình bản deploy: bật mạch ngắt lệnh đánh giá cọc (P6-57). TADSS dev dùng Neon (ngủ khi vắng):
+      # trước mỗi đợt E2E/LT-04 gọi /health/ready của TADSS tới khi 200 rồi chờ 15 giây (E2E_TEST_SPECIFICATION mục 2.2)
+      - TadssConfig__CircuitEnabled=true
     # Sẵn sàng = kết nối được PostgreSQL (/health/ready, Epic 6C OPS-04); CD dùng `up --wait` dựa trên trạng thái này
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health/ready"]

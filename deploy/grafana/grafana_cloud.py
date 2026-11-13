@@ -331,6 +331,13 @@ def alert_rules(prometheus_uid: str, grafana_url: str = "") -> list[dict]:
               f"{error_ratio} quyết định TADSS phải dùng đường lùi (cọc 100 %) trong 10 phút (ngưỡng 20 %). Khách vẫn đặt được sân.",
               "mở dashboard TADSS xem lý do đường lùi (strategy lỗi, quá thời gian); kiểm PostgreSQL và Redis của TADSS.",
               "smashcourt-van-hanh-tadss", "TADSS"),
+        # Mạch mở / nửa mở là suy giảm im lặng: khách vẫn đặt được nhưng mọi đơn cọc 100 %. Nửa mở kéo dài khi vắng khách nên xét "khác đóng"
+        _rule("smashcourt-be-tadss-circuit", "Mạch gọi TADSS của BE không đóng",
+              'max(smashcourt_tadss_circuit_state{job="smashcourt-be"})', "gt", 0, "2m", "OK",
+              "Mạch ngắt lệnh đánh giá cọc của BE không ở trạng thái đóng quá 2 phút: mọi đơn online đang cọc 100 %, không có quyết định của TADSS.",
+              "xem tab TADSS (health, đường lùi) và log 'Mạch gọi TADSS' của BE (\"docker logs smashcourt-be --tail 200\"); "
+              "TADSS hồi phục thì mạch tự đóng sau một đơn thử. Tắt hẳn TADSS: \"bash deploy/tadss-flag.sh off\".",
+              "smashcourt-van-hanh-be", "BE"),
         _rule("smashcourt-gemini-quota", "Gemini hết giới hạn (429) liên tục",
               'sum(rate(gemini_request_duration_seconds_count{job="smashcourt-ai",outcome="quota"}[5m]))',
               "gt", 0, "10m", "OK",

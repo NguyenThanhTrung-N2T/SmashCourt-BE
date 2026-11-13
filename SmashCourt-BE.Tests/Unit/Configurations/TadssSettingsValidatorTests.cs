@@ -25,6 +25,42 @@ public class TadssSettingsValidatorTests
         Assert.True(result.Succeeded, result.FailureMessage);
     }
 
+    // P6-57: tham số mạch ngắt nằm trong khoảng cho phép; trần thời gian mở không nhỏ hơn thời gian mở đầu
+    [Theory]
+    [InlineData(nameof(TadssSettings.CircuitFailureThreshold), 0)]
+    [InlineData(nameof(TadssSettings.CircuitFailureThreshold), 21)]
+    [InlineData(nameof(TadssSettings.CircuitProbeIntervalSeconds), 0)]
+    [InlineData(nameof(TadssSettings.CircuitProbeIntervalSeconds), 301)]
+    [InlineData(nameof(TadssSettings.CircuitProbeTimeoutMs), 49)]
+    [InlineData(nameof(TadssSettings.CircuitProbeTimeoutMs), 5001)]
+    [InlineData(nameof(TadssSettings.CircuitBreakSeconds), 0)]
+    [InlineData(nameof(TadssSettings.CircuitBreakSeconds), 3601)]
+    [InlineData(nameof(TadssSettings.CircuitMaxBreakSeconds), 59)]
+    [InlineData(nameof(TadssSettings.CircuitMaxBreakSeconds), 3601)]
+    public void Validate_WhenCircuitSettingOutOfRange_FailsNamingTheKey(string property, int value)
+    {
+        var settings = Enabled();
+        settings.CircuitEnabled = true;
+        var setter = typeof(TadssSettings).GetProperty(property) ?? throw new InvalidOperationException($"Không có thuộc tính {property}");
+        setter.SetValue(settings, value);
+
+        var result = _validator.Validate(null, settings);
+
+        Assert.True(result.Failed);
+        Assert.Contains(property, result.FailureMessage);
+    }
+
+    [Fact]
+    public void Validate_WhenCircuitDefaults_IsValid()
+    {
+        var settings = Enabled();
+        settings.CircuitEnabled = true;
+
+        Assert.True(_validator.Validate(null, settings).Succeeded);
+        Assert.Equal((3, 10, 300, 60, 300), (settings.CircuitFailureThreshold, settings.CircuitProbeIntervalSeconds,
+            settings.CircuitProbeTimeoutMs, settings.CircuitBreakSeconds, settings.CircuitMaxBreakSeconds));
+    }
+
     [Fact]
     public void Validate_WhenFlagOnWithKeyAndAbsoluteUrl_IsValid()
     {

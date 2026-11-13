@@ -9,7 +9,9 @@ namespace SmashCourt_BE.Integrations.Tadss;
 
 /// <summary>
 /// HTTP client gọi TADSS Decision Runtime v2. Không dùng Polly: chỉ <see cref="EvaluateAsync"/> thử lại đúng một lần
-/// bằng vòng lặp tường minh để bảo đảm cùng idempotency key và không thử lại lỗi 4xx.
+/// bằng vòng lặp tường minh để bảo đảm cùng idempotency key và không thử lại lỗi 4xx. Riêng <see cref="EvaluateAsync"/> đi qua mạch ngắt
+/// <see cref="ITadssCircuit"/> (P6-57, bật bằng <c>TadssConfig:CircuitEnabled</c>): mạch mở thì trả <see cref="TadssFailureKind.CircuitOpen"/>
+/// ngay, không gọi TADSS; đơn thử chỉ gọi một lần; mạch vừa mở trong lúc đơn đang chờ thì bỏ lần thử lại.
 /// Cấu hình (BaseUrl, ApiKey, TimeoutMs) đọc từ <see cref="IOptionsMonitor{TOptions}"/> ở mỗi lần gọi; riêng lệnh gửi outcome
 /// dùng timeout cố định <see cref="OutcomeTimeout"/> (P6-26).
 /// Không bao giờ ghi khóa API hay body request vào log.
@@ -31,27 +33,47 @@ public class TadssClient : ITadssClient
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<TadssClient> _logger;
+    private readonly ITadssCircuit _circuit;
 
     public TadssClient(
         HttpClient httpClient,
         IOptionsMonitor<TadssSettings> settings,
         IHttpContextAccessor httpContextAccessor,
         TimeProvider timeProvider,
-        ILogger<TadssClient> logger)
+        ILogger<TadssClient> logger,
+        ITadssCircuit circuit)
     {
         _httpClient = httpClient;
         _settings = settings;
         _httpContextAccessor = httpContextAccessor;
         _timeProvider = timeProvider;
         _logger = logger;
+        _circuit = circuit;
     }
 
-    public Task<TadssCallResult<TadssDecisionResultDto>> EvaluateAsync(
+    public async Task<TadssCallResult<TadssDecisionResultDto>> EvaluateAsync(
         TadssDecisionRequestDto request, Guid bookingId, CancellationToken cancellationToken = default)
     {
+        var permit = _circuit.TryAcquire();
+        if (permit is null)
+        {
+            var correlationId = ResolveCorrelationId();
+            _logger.LogInformation(
+                "TADSS Evaluate: mạch ngắt đang mở, không gọi TADSS (booking {BookingId}). CorrelationId={CorrelationId}", bookingId, correlationId);
+            return TadssCallResult<TadssDecisionResultDto>.Failure(TadssFailureKind.CircuitOpen, correlationId);
+        }
+
         var call = new TadssCall("Evaluate", HttpMethod.Post, DecisionsPath, request, bookingId.ToString(), null);
-        return SendAsync<TadssDecisionResultDto>(
-            call, allowRetry: true, result => CheckDecisionResult(result, request.ReservationId), cancellationToken);
+        try
+        {
+            return await SendAsync<TadssDecisionResultDto>(
+                call, allowRetry: !permit.IsTrial, result => CheckDecisionResult(result, request.ReservationId), cancellationToken, permit);
+        }
+        finally
+        {
+            // Đơn thử bị hủy hay ném lỗi ngoài dự kiến thì trả lượt thử: mạch không kẹt ở nửa mở
+            _circuit.Release(permit);
+        }
     }
 
     public Task<TadssCallResult<TadssOverrideResponseDto>> OverrideAsync(
@@ -124,7 +146,8 @@ public class TadssClient : ITadssClient
         detail.DecisionId != decisionId ? $"decisionId {detail.DecisionId} khác quyết định đã hỏi {decisionId}" : null;
 
     private async Task<TadssCallResult<T>> SendAsync<T>(
-        TadssCall call, bool allowRetry, Func<T, string?>? check, CancellationToken cancellationToken)
+        TadssCall call, bool allowRetry, Func<T, string?>? check, CancellationToken cancellationToken,
+        TadssCircuitPermit? permit = null)
     {
         var settings = _settings.CurrentValue;
         var correlationId = ResolveCorrelationId();
@@ -139,8 +162,17 @@ public class TadssClient : ITadssClient
         for (var attempt = 1; ; attempt++)
         {
             var result = await SendOnceAsync(call, uri, settings, correlationId, check, cancellationToken);
+            if (permit != null)
+                _circuit.RecordAttempt(permit, TadssCircuit.Classify(result));
             if (result.IsSuccess || attempt >= maxAttempts || !IsRetryable(result))
                 return result;
+            if (permit != null && !_circuit.CanRetry(permit))
+            {
+                _logger.LogWarning(
+                    "TADSS {Operation} lỗi tạm thời ({Kind}) và mạch ngắt vừa mở: bỏ lần thử lại. CorrelationId={CorrelationId}",
+                    call.Operation, result.FailureKind, correlationId);
+                return result;
+            }
 
             _logger.LogWarning(
                 "TADSS {Operation} lỗi tạm thời ({Kind}, HTTP {Status}), thử lại một lần với cùng idempotency key. CorrelationId={CorrelationId}",

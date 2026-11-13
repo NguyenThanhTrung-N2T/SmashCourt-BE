@@ -39,7 +39,7 @@ public class TadssClientOutcomeTests
         var logger = new ListLogger<TadssClient>();
         var client = new TadssClient(
             new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan }, monitor.Object, new HttpContextAccessor(),
-            time ?? TimeProvider.System, logger);
+            time ?? TimeProvider.System, logger, TadssCircuitFactory.Disabled());
         return new Sut(client, handler, logger);
     }
 

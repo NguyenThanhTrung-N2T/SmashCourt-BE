@@ -18,6 +18,13 @@ public static class TadssExtensions
         services.AddSingleton<IValidateOptions<TadssSettings>, TadssSettingsValidator>();
         services.AddHostedService<TadssFlagChangeLogger>();
 
+        // Mạch ngắt của lệnh đánh giá cọc (P6-57): một trạng thái cho cả tiến trình; tiến trình nền kiểm /health/ready khi cần
+        services.AddSingleton<TadssCircuit>();
+        services.AddSingleton<ITadssCircuit>(sp => sp.GetRequiredService<TadssCircuit>());
+        services.AddHttpClient<ITadssHealthProbe, TadssHealthProbe>(client => client.Timeout = Timeout.InfiniteTimeSpan)
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+        services.AddHostedService<TadssCircuitMonitor>();
+
         services.AddHttpClient<ITadssClient, TadssClient>(client =>
             {
                 // Timeout từng lần gọi do TadssClient tự cắt theo TimeoutMs (không dùng HttpClient.Timeout, không dùng Polly)

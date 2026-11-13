@@ -130,9 +130,14 @@ public static class DepositDecisionResolver
             null, null, [], AtLeastWarning(level), message == null ? small : $"{message} {small}");
     }
 
-    // 400/409 bất thường là lỗi của BE (request sai, dùng lại khóa) nên Error; lỗi hạ tầng còn lại là Warning
-    private static LogLevel FailureLevel(TadssCallResult<TadssDecisionResultDto> result) =>
-        result.FailureKind == TadssFailureKind.Http && result.HttpStatus is 400 or 409 ? LogLevel.Error : LogLevel.Warning;
+    // 400/409 bất thường là lỗi của BE (request sai, dùng lại khóa) nên Error; lỗi hạ tầng còn lại là Warning. Mạch ngắt đang mở (P6-57):
+    // Information, vì lần chuyển trạng thái của mạch đã có Warning, ghi Warning cho từng đơn chỉ làm log phình lúc tải cao
+    private static LogLevel FailureLevel(TadssCallResult<TadssDecisionResultDto> result) => result.FailureKind switch
+    {
+        TadssFailureKind.CircuitOpen => LogLevel.Information,
+        TadssFailureKind.Http when result.HttpStatus is 400 or 409 => LogLevel.Error,
+        _ => LogLevel.Warning
+    };
 
     private static string DescribeFailure(TadssCallResult<TadssDecisionResultDto> result) =>
         $"TADSS lỗi ({result.FailureKind}, HTTP {result.HttpStatus?.ToString(CultureInfo.InvariantCulture) ?? "-"}, " +

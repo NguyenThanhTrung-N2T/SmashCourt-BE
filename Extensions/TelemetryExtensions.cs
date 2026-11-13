@@ -8,6 +8,7 @@ using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using SmashCourt_BE.Configurations;
 using SmashCourt_BE.Infrastructure.Telemetry;
+using SmashCourt_BE.Integrations.Tadss;
 
 namespace SmashCourt_BE.Extensions;
 
@@ -71,6 +72,7 @@ public static class TelemetryExtensions
         .AddHttpClientInstrumentation()
         .AddRuntimeInstrumentation()
         .AddMeter(NpgsqlMeter)
+        .AddMeter(TadssCircuit.MeterName)
         .AddView(RequestDurationInstrument, new ExplicitBucketHistogramConfiguration { Boundaries = [.. RequestDurationBoundariesSeconds] });
 
     private static TelemetrySettings Read(IConfiguration configuration)

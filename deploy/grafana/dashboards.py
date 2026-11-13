@@ -24,6 +24,9 @@ KNOWN_METRICS = {
     # BE: runtime .NET (OpenTelemetry.Instrumentation.Runtime)
     "process_runtime_dotnet_gc_heap_size_bytes": "process.runtime.dotnet.gc.heap.size",
     "process_runtime_dotnet_thread_pool_queue_length": "process.runtime.dotnet.thread_pool.queue.length",
+    # BE: mạch ngắt lệnh đánh giá cọc (Integrations/Tadss/TadssCircuit, meter SmashCourt.Tadss, P6-57)
+    "smashcourt_tadss_circuit_state": "smashcourt.tadss.circuit.state",
+    "smashcourt_tadss_circuit_transitions_total": "smashcourt.tadss.circuit.transitions",
     # TADSS (TADSS.Application/Common/TadssMetricNames)
     "tadss_decisions_total": "tadss.decisions",
     "tadss_fallbacks_total": "tadss.fallbacks",
@@ -393,6 +396,7 @@ BE = Dashboard(
                     tests="OB-BE-1, OB-BE-2",
                 ),
                 no_value="Chưa có lời gọi (TADSS chỉ được gọi khi bật cờ)",
+                width=6,
             ),
             Panel(
                 "Lời gọi TADSS / AI thất bại",
@@ -411,6 +415,23 @@ BE = Dashboard(
                     tests="OB-BE-1",
                 ),
                 no_value="Không có lỗi",
+                width=6,
+            ),
+            Panel(
+                "Mạch gọi TADSS (0 đóng, 1 mở, 2 nửa mở)",
+                "timeseries",
+                [('max(smashcourt_tadss_circuit_state{job="smashcourt-be"})', "trạng thái")],
+                "none",
+                Description(
+                    what="Trạng thái mạch ngắt lệnh đánh giá cọc của BE (P6-57): 0 đóng (gọi TADSS bình thường), 1 mở (TADSS không trả lời, đơn online cọc 100 % ngay), 2 nửa mở (một đơn đang được phép đi thử).",
+                    unit="Mã trạng thái 0 / 1 / 2.",
+                    read="Khác 0 ⇒ khách vẫn đặt được nhưng mọi đơn online cọc 100 %, không có quyết định của TADSS; xem tab TADSS và log 'Mạch gọi TADSS' của BE.",
+                    threshold="Khác 0 quá 2 phút ⇒ email 'Mạch gọi TADSS của BE không đóng'. Mở khi 1 lần gọi lỗi và /health/ready cũng lỗi (300 ms), hoặc 3 lần gọi lỗi liên tiếp.",
+                    source="smashcourt_tadss_circuit_state (meter SmashCourt.Tadss)",
+                    tests="BE-UT-14, BE-IT-27",
+                ),
+                no_value="Chưa có số liệu (BE chưa xuất metric)",
+                width=6,
             ),
             Panel(
                 "Kết nối PostgreSQL",
@@ -428,6 +449,7 @@ BE = Dashboard(
                     source="db_client_connections_usage, db_client_connections_max",
                     tests="OB-BE-1",
                 ),
+                width=6,
             ),
         ]),
         Section("Tài nguyên", [

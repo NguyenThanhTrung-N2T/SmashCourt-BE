@@ -29,7 +29,8 @@ public static class OverrideFailureResolver
 
         return failure.FailureKind switch
         {
-            TadssFailureKind.Timeout or TadssFailureKind.Network => Unavailable(LogLevel.Warning, log),
+            // CircuitOpen: lệnh duyệt không đi qua mạch ngắt (P6-57); nhánh này chỉ để an toàn nếu sau này có
+            TadssFailureKind.Timeout or TadssFailureKind.Network or TadssFailureKind.CircuitOpen => Unavailable(LogLevel.Warning, log),
             // Hay gặp nhất là proxy trả trang HTML: yêu cầu chưa tới TADSS nên Quản lý thử lại là đúng
             TadssFailureKind.InvalidResponse => Unavailable(LogLevel.Error, log),
             _ => FromHttp(failure.HttpStatus, failure.ErrorCode, failure.ErrorFields, log)
