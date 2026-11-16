@@ -119,6 +119,14 @@ services:
       # lệnh Redis nằm ngoài ngân sách 500 ms. Cơ chế cache giữ trong mã, stack đánh giá của TADSS vẫn bật; muốn bật lại thì bỏ hai dòng này
       Tadss__Strategies__Default__CacheTtlMinutes: "0"
       Tadss__Strategies__MockAlternative__CacheTtlMinutes: "0"
+      # P6-59: chính sách giảm cọc giờ thấp điểm của DefaultDecisionStrategy 2.2.0 (mặc định tắt trong mã). Chỉ hạng STANDARD, SILVER chưa từng không đến và
+      # chưa từng bỏ thanh toán (ngưỡng mặc định 0, 0), đơn dưới ngưỡng duyệt, đặt ngoài Tadss:Calendar:PeakWindows: cọc min(theo hạng, 30 %). Khóa sai tên
+      # hoặc giá trị sai làm TADSS 2.2.0 không khởi động; image TADSS cũ (2.1.0) bỏ qua các khóa này nên giữ cọc theo hạng.
+      # Không bật shadow (Tadss:Shadow mặc định tắt): MockAlternative không trả lời câu hỏi so sánh nào của chính sách này
+      Tadss__Strategies__Default__OffPeakDiscountEnabled: "true"
+      Tadss__Strategies__Default__OffPeakDiscountRate: "0.3"
+      Tadss__Strategies__Default__OffPeakDiscountTiers__0: STANDARD
+      Tadss__Strategies__Default__OffPeakDiscountTiers__1: SILVER
       Tadss__Security__ApiKeys__0__ClientId: smashcourt-be
       Tadss__Security__ApiKeys__0__KeySha256: ${TADSS_API_KEY_SHA256:?}
       Tadss__Telemetry__Enabled: "true"

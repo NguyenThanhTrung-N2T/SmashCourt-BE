@@ -259,7 +259,7 @@ Content-Type: application/json
 }
 ```
 
-**(c) TADSS `REJECTED` — bị từ chối theo chính sách** (Q1; HTTP 400, theo tiền lệ `SLOT_UNAVAILABLE` của BE: request hợp lệ nhưng nghiệp vụ không nhận). BE đã hủy booking và giải phóng slot trước khi trả lỗi; `reasons` của TADSS không hiển thị cho khách (Q6); **không** ghi `slot_interest` cho khách (khác `SLOT_UNAVAILABLE`), vì slot vẫn trống (R-8). Strategy mặc định 2.1.0 của TADSS trả `REJECTED` khi khách lặp lại việc giữ chỗ rồi để hết hạn thanh toán (`reasonCode = REPEATED_PAYMENT_EXPIRY`); kịch bản kiểm: E2E-14.
+**(c) TADSS `REJECTED` — bị từ chối theo chính sách** (Q1; HTTP 400, theo tiền lệ `SLOT_UNAVAILABLE` của BE: request hợp lệ nhưng nghiệp vụ không nhận). BE đã hủy booking và giải phóng slot trước khi trả lỗi; `reasons` của TADSS không hiển thị cho khách (Q6); **không** ghi `slot_interest` cho khách (khác `SLOT_UNAVAILABLE`), vì slot vẫn trống (R-8). Strategy mặc định (từ 2.1.0) của TADSS trả `REJECTED` khi khách lặp lại việc giữ chỗ rồi để hết hạn thanh toán (`reasonCode = REPEATED_PAYMENT_EXPIRY`); kịch bản kiểm: E2E-14.
 
 ```json
 {
@@ -808,7 +808,7 @@ Các câu hỏi mở của bản viết 12/10 đã được chốt cùng ngườ
 
 | # | Câu hỏi | Quyết định |
 | :---: | :--- | :--- |
-| Q1 | Nhánh `REJECTED` của `POST /api/bookings/online` trả lỗi hay 201 kèm `CANCELLED`? | Lỗi 400 `BOOKING_REJECTED`, `data = null` (Mục 3.1 c); không ghi `slot_interest`. Strategy mặc định 2.1.0 của TADSS sinh ra nhánh này (E2E-14) |
+| Q1 | Nhánh `REJECTED` của `POST /api/bookings/online` trả lỗi hay 201 kèm `CANCELLED`? | Lỗi 400 `BOOKING_REJECTED`, `data = null` (Mục 3.1 c); không ghi `slot_interest`. Strategy mặc định (từ 2.1.0) của TADSS sinh ra nhánh này (E2E-14) |
 | Q2 | Sau khi Manager duyệt, khách có bao lâu để thanh toán cọc? | Cấu hình `TadssConfig:ApprovedPaymentWindowMinutes`, **15 phút** (sửa 18/10 từ 30), không vượt giờ bắt đầu chơi; đây cũng là hạn giữ chỗ tuyệt đối của đơn; slot lock gia hạn theo; `retry-payment` không vượt hạn này (Mục 3.3) |
 | Q3 | Khách nhận kết quả duyệt và link thanh toán bằng cách nào? | **Sửa 18/10:** đặt online chỉ cho khách đã đăng nhập (P6-01), nên không còn khách vãng lai trong luồng duyệt. Khách nhận SignalR `BookingApprovalResolved` và email dẫn tới lịch sử đặt sân; link VNPay chỉ sinh khi khách bấm "Thanh toán cọc" (`retry-payment`), email không chứa URL VNPay (P6-10) |
 | Q4 | Có cho Manager duyệt mức cọc 0 % không? | **Có**: booking `PENDING_APPROVAL → CONFIRMED`, không tạo VNPay, hóa đơn `UNPAID`, thu toàn bộ tại quầy như booking tại quầy (Mục 4.2 bước 6) |

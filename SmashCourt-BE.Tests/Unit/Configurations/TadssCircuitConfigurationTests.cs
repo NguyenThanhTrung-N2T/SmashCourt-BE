@@ -4,7 +4,8 @@ using SmashCourt_BE.Tests.TestData;
 namespace SmashCourt_BE.Tests.Unit.Configurations;
 
 /// <summary>
-/// P6-57: mạch ngắt mặc định tắt trong mã (<c>appsettings.json</c>), bật ở bản deploy và E-STAGING. P6-58: bản deploy tắt cache quyết định. Mặc định tắt để bộ test HTTP dùng chung
+/// P6-57: mạch ngắt mặc định tắt trong mã (<c>appsettings.json</c>), bật ở bản deploy và E-STAGING. P6-58: bản deploy tắt cache quyết định. P6-59: bản deploy bật giảm cọc
+/// giờ thấp điểm của TADSS (STANDARD, SILVER, 30 %), không shadow, không rule định tuyến. Mạch ngắt mặc định tắt để bộ test HTTP dùng chung
 /// một host không bị một test làm TADSS lỗi mở mạch cho các test sau.
 /// </summary>
 [Trait("Category", TestCategories.Configuration)]
@@ -39,6 +40,31 @@ public class TadssCircuitConfigurationTests
         var lines = File.ReadAllLines(Path.Combine(RepoRoot(), "deploy", "docker-compose.yml")).Select(line => line.Trim());
 
         Assert.Contains(expectedLine, lines);
+    }
+
+    // P6-59: bản deploy bật giảm cọc giờ thấp điểm của TADSS cho đúng STANDARD, SILVER, tối đa 30 %, và không chạy shadow
+    [Theory]
+    [InlineData("Tadss__Strategies__Default__OffPeakDiscountEnabled: \"true\"")]
+    [InlineData("Tadss__Strategies__Default__OffPeakDiscountRate: \"0.3\"")]
+    [InlineData("Tadss__Strategies__Default__OffPeakDiscountTiers__0: STANDARD")]
+    [InlineData("Tadss__Strategies__Default__OffPeakDiscountTiers__1: SILVER")]
+    public void DeployCompose_EnablesTheOffPeakDiscountForStandardAndSilver(string expectedLine)
+    {
+        var lines = File.ReadAllLines(Path.Combine(RepoRoot(), "deploy", "docker-compose.yml")).Select(line => line.Trim());
+
+        Assert.Contains(expectedLine, lines);
+    }
+
+    [Fact]
+    public void DeployCompose_DoesNotWidenTheDiscountOrRunShadow()
+    {
+        var lines = File.ReadAllLines(Path.Combine(RepoRoot(), "deploy", "docker-compose.yml")).Select(line => line.Trim()).ToList();
+
+        // Không thêm hạng thứ ba, không nới ngưỡng lịch sử (mặc định 0, 0), không bật shadow, không thêm rule định tuyến
+        Assert.DoesNotContain(lines, line => line.StartsWith("Tadss__Strategies__Default__OffPeakDiscountTiers__2", StringComparison.Ordinal));
+        Assert.DoesNotContain(lines, line => line.StartsWith("Tadss__Strategies__Default__OffPeakDiscountMax", StringComparison.Ordinal));
+        Assert.DoesNotContain(lines, line => line.StartsWith("Tadss__Shadow__", StringComparison.Ordinal));
+        Assert.DoesNotContain(lines, line => line.StartsWith("Tadss__Routing__", StringComparison.Ordinal));
     }
 
     private static string RepoRoot()
