@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Options;
 using SmashCourt_BE.Configurations;
 using SmashCourt_BE.Helpers;
+using SmashCourt_BE.Infrastructure.Telemetry;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Models.Payments;
@@ -28,6 +29,7 @@ public class PaymentResultService : IPaymentResultService
     private readonly IOptionsMonitor<BookingPaymentSettings> _paymentSettings;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<PaymentResultService> _logger;
+    private readonly BookingFlowMetrics _metrics;
 
     public PaymentResultService(
         IPaymentRepository paymentRepo,
@@ -39,8 +41,10 @@ public class PaymentResultService : IPaymentResultService
         IBookingNotificationService notifications,
         IOptionsMonitor<BookingPaymentSettings> paymentSettings,
         TimeProvider timeProvider,
-        ILogger<PaymentResultService> logger)
+        ILogger<PaymentResultService> logger,
+        BookingFlowMetrics metrics)
     {
+        _metrics = metrics;
         _paymentRepo = paymentRepo;
         _bookingRepo = bookingRepo;
         _invoiceRepo = invoiceRepo;
@@ -72,11 +76,13 @@ public class PaymentResultService : IPaymentResultService
         if (!result.IsSignatureValid)
         {
             _logger.LogWarning("Kết quả {Provider} sai chữ ký, bỏ qua: {Ref}", result.Provider, result.TransactionRef);
+            _metrics.RecordPaymentResult(BookingFlowMetrics.PaymentInvalidSignature);
             return;
         }
         if (payment?.Invoice?.Booking is not { } booking)
         {
             _logger.LogWarning("Không tìm thấy Payment hoặc booking của giao dịch {Ref}", result.TransactionRef);
+            _metrics.RecordPaymentResult(BookingFlowMetrics.PaymentUnknownTransaction);
             return;
         }
         // Chặn kết quả bị sửa số tiền
@@ -84,6 +90,7 @@ public class PaymentResultService : IPaymentResultService
         {
             _logger.LogWarning("Số tiền của giao dịch {Ref} lệch: Payment {Expected}, cổng gửi {Actual}; bỏ qua",
                 result.TransactionRef, payment.Amount, result.Amount);
+            _metrics.RecordPaymentResult(BookingFlowMetrics.PaymentAmountMismatch);
             return;
         }
 
@@ -103,6 +110,7 @@ public class PaymentResultService : IPaymentResultService
             if (!await _paymentRepo.TryFailPendingAsync(payment.Id, now))
             {
                 _logger.LogInformation("Kết quả thất bại của Payment {PaymentId} không còn chờ (link cũ hoặc gửi lặp), bỏ qua", payment.Id);
+                _metrics.RecordPaymentResult(BookingFlowMetrics.PaymentStaleFailure);
                 return;
             }
 
@@ -117,6 +125,7 @@ public class PaymentResultService : IPaymentResultService
         }
 
         payment.Status = PaymentTxStatus.FAILED;
+        _metrics.RecordPaymentResult(BookingFlowMetrics.PaymentFailed);
         _logger.LogInformation("Thanh toán thất bại (mã {Code}) cho booking {BookingId}; giữ đơn đến {HoldUntil}",
             responseCode, booking.Id, holdUntil);
         await _notifications.NotifyPaymentFailedAsync(booking, payment, holdUntil);
@@ -136,6 +145,7 @@ public class PaymentResultService : IPaymentResultService
             if (!await _paymentRepo.TryMarkSuccessAsync(payment.Id, now))
             {
                 _logger.LogInformation("Payment {PaymentId} đã được ghi nhận trước đó, bỏ qua", payment.Id);
+                _metrics.RecordPaymentResult(BookingFlowMetrics.PaymentAlreadyRecorded);
                 return;
             }
 
@@ -185,6 +195,7 @@ public class PaymentResultService : IPaymentResultService
         switch (outcome)
         {
             case SuccessOutcome.Confirmed:
+                _metrics.RecordPaymentResult(BookingFlowMetrics.PaymentSucceeded);
                 booking.Status = BookingStatus.PAID_ONLINE;
                 invoice.PaymentStatus = InvoicePaymentStatus.PARTIALLY_PAID;
                 _logger.LogInformation("Thanh toán thành công {Amount} đ cho booking {BookingId}", payment.Amount, booking.Id);
@@ -192,6 +203,7 @@ public class PaymentResultService : IPaymentResultService
                 break;
 
             case SuccessOutcome.LatePaymentRefund:
+                _metrics.RecordPaymentResult(BookingFlowMetrics.PaymentAfterCancellation);
                 booking.Status = BookingStatus.CANCELLED_PENDING_REFUND;
                 _logger.LogWarning("Tiền về {Amount} đ sau khi booking {BookingId} đã hủy ({Status}); tạo hoàn 100 % tại chi nhánh",
                     payment.Amount, booking.Id, currentStatus);
@@ -199,6 +211,7 @@ public class PaymentResultService : IPaymentResultService
                 break;
 
             case SuccessOutcome.ExtraPayment:
+                _metrics.RecordPaymentResult(BookingFlowMetrics.PaymentExtra);
                 // Khoản thừa được trừ vào phần thu tại quầy khi check-out; đơn đã kết thúc thì phải hoàn tay tại chi nhánh
                 var finished = currentStatus is BookingStatus.COMPLETED or BookingStatus.NO_SHOW;
                 _logger.Log(finished ? LogLevel.Error : LogLevel.Warning,

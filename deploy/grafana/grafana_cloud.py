@@ -325,6 +325,15 @@ def alert_rules(prometheus_uid: str, grafana_url: str = "") -> list[dict]:
               f"{error_ratio} request vào AI trả lỗi 5xx trong 5 phút gần nhất (ngưỡng 5 %).",
               "mở dashboard AI xem lời gọi Gemini (lỗi, 429) và hàng Log.",
               "smashcourt-van-hanh-ai", "AI"),
+        # TADSS không xuất metric HTTP chuẩn: đọc histogram request /api/* của chính nó (tadss.decision.duration, nhãn status_code)
+        _rule("smashcourt-tadss-5xx", "TADSS lỗi 5xx > 5 %",
+              '(sum(rate(tadss_decision_duration_milliseconds_count{job="tadss-runtime",status_code=~"5.."}[5m])) or vector(0))'
+              ' / sum(rate(tadss_decision_duration_milliseconds_count{job="tadss-runtime"}[5m]))',
+              "gt", 0.05, "5m", "OK",
+              f"{error_ratio} request vào TADSS trả lỗi 5xx trong 5 phút gần nhất (ngưỡng 5 %). BE vẫn nhận đơn với cọc 100 %.",
+              "mở tab TADSS xem endpoint lỗi và hàng Log; kiểm PostgreSQL của TADSS (\"docker logs tadss-runtime --tail 100\"); "
+              "nếu vừa deploy bản mới thì cân nhắc quay về bản trước.",
+              "smashcourt-van-hanh-tadss", "TADSS"),
         _rule("smashcourt-tadss-fallback", "TADSS dùng đường lùi > 20 %",
               '(sum(rate(tadss_fallbacks_total{job="tadss-runtime"}[10m])) or vector(0)) / sum(rate(tadss_decisions_total{job="tadss-runtime"}[10m]))',
               "gt", 0.2, "10m", "OK",
@@ -337,6 +346,25 @@ def alert_rules(prometheus_uid: str, grafana_url: str = "") -> list[dict]:
               "Mạch ngắt lệnh đánh giá cọc của BE không ở trạng thái đóng quá 2 phút: mọi đơn online đang cọc 100 %, không có quyết định của TADSS.",
               "xem tab TADSS (health, đường lùi) và log 'Mạch gọi TADSS' của BE (\"docker logs smashcourt-be --tail 200\"); "
               "TADSS hồi phục thì mạch tự đóng sau một đơn thử. Tắt hẳn TADSS: \"bash deploy/tadss-flag.sh off\".",
+              "smashcourt-van-hanh-be", "BE"),
+        _rule("smashcourt-be-invariants", "Dữ liệu đặt sân sai",
+              'sum(smashcourt_booking_invariant_violations{job="smashcourt-be"})', "gt", 0, "0s", "OK",
+              "Lượt kiểm tính đúng gần nhất thấy {{ $values.A.Value }} vi phạm trong các đơn tạo / sửa 24 giờ qua "
+              "(sai tiền cọc, hóa đơn thu thiếu, giữ sân sai, trùng giờ hoặc đơn hủy thiếu lý do).",
+              "mở tab BE, nhóm 'Tính đúng dữ liệu đặt sân' xem điều bị vi phạm; mã đơn nằm trong log BE "
+              "(\"docker logs smashcourt-be 2>&1 | grep Invariant\"). Sửa dữ liệu theo mô tả; lượt kiểm sau (tối đa 10 phút) tự về 0.",
+              "smashcourt-van-hanh-be", "BE"),
+        # Job lỗi liên tục hoặc ngừng chạy thì gauge giữ số của lượt trước (thường 0): báo khi 30 phút không có lượt thành công trong lúc BE vẫn sống
+        # (BE tắt đã có luật "không phản hồi"). Counter mới cần 2 lượt (khoảng 20 phút sau khi khởi động) mới có increase nên "for" 25 phút
+        # "< bool 1" trả 1 khi không có lượt thành công, 0 khi có (so sánh không có bool chỉ lọc chuỗi và giữ giá trị 0, ngưỡng > 0 không bao giờ đạt)
+        _rule("smashcourt-be-invariants-stale", "Kiểm tính đúng dữ liệu không chạy được",
+              '(sum(increase(smashcourt_booking_invariant_checks_total{job="smashcourt-be",outcome!="error"}[30m])) or vector(0)) < bool 1'
+              ' and on() count(process_runtime_dotnet_gc_heap_size_bytes{job="smashcourt-be"}) > 0',
+              "gt", 0, "25m", "OK",
+              "BE vẫn chạy nhưng 30 phút qua không có lượt kiểm tính đúng dữ liệu nào thành công: số vi phạm trên dashboard là của lượt cũ, "
+              "dữ liệu sai sẽ không được báo.",
+              "xem log BE \"docker logs smashcourt-be 2>&1 | grep Invariant\" (lỗi đọc DB?) và trang Hangfire (job check-booking-invariants còn lịch không); "
+              "sửa xong thì lượt kiểm sau (tối đa 10 phút) tự xóa cảnh báo.",
               "smashcourt-van-hanh-be", "BE"),
         _rule("smashcourt-gemini-quota", "Gemini hết giới hạn (429) liên tục",
               'sum(rate(gemini_request_duration_seconds_count{job="smashcourt-ai",outcome="quota"}[5m]))',

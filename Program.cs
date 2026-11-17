@@ -15,6 +15,7 @@ using SmashCourt_BE.DTOs.Auth;
 using SmashCourt_BE.Extensions;
 using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Infrastructure.CodeGeneration;
+using SmashCourt_BE.Infrastructure.Telemetry;
 using SmashCourt_BE.Integrations.AI;
 using SmashCourt_BE.Jobs;
 using SmashCourt_BE.Jobs.Interfaces;
@@ -203,6 +204,12 @@ builder.Services.AddScoped<ISlotInterestNotificationService, SlotInterestNotific
 builder.Services.AddScoped<IBookingApprovalService, BookingApprovalService>();
 builder.Services.AddScoped<IBookingNotificationService, BookingNotificationService>();
 builder.Services.AddScoped<IBookingCancellationService, BookingCancellationService>();
+// Kiểm tính đúng dữ liệu đặt sân (chỉ đọc): dùng chung cho job kiểm định kỳ và bộ test; metric giữ kết quả lượt gần nhất nên là singleton
+builder.Services.AddScoped<IBookingInvariantRepository, BookingInvariantRepository>();
+builder.Services.AddScoped<IBookingInvariantService, BookingInvariantService>();
+builder.Services.AddSingleton<BookingInvariantMetrics>();
+// Counter nghiệp vụ (nhánh cọc, kết quả thanh toán, đơn job hủy) dùng chung meter SmashCourt.Booking
+builder.Services.AddSingleton<BookingFlowMetrics>();
 
 builder.Services.AddScoped<EmailService>();
 builder.Services.AddScoped<OtpService>();

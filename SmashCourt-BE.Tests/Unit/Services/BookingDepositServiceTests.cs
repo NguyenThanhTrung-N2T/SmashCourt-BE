@@ -13,6 +13,7 @@ using SmashCourt_BE.Models.ViewModels;
 using SmashCourt_BE.Repositories.IRepository;
 using SmashCourt_BE.Services;
 using SmashCourt_BE.Tests.TestData;
+using SmashCourt_BE.Infrastructure.Telemetry;
 
 namespace SmashCourt_BE.Tests.Unit.Services;
 
@@ -32,6 +33,7 @@ public class BookingDepositServiceTests
     private readonly TadssSettings _settings = new() { BranchTimeZone = "Asia/Ho_Chi_Minh" };
     private readonly BookingPaymentSettings _paymentSettings = new() { MinOnlinePaymentAmount = 5000m };
     private readonly ListLogger<BookingDepositService> _logger = new();
+    private readonly System.Diagnostics.Metrics.IMeterFactory _meters = MeterProbe.NewFactory();
 
     // Lúc BE nhận quyết định: 18/11/2026 09:00 giờ VN; giờ chơi sớm nhất 22/11 18:00 giờ VN (P6-24)
     private static readonly DateTime Now = new(2026, 11, 18, 2, 0, 0, DateTimeKind.Utc);
@@ -66,7 +68,8 @@ public class BookingDepositServiceTests
         var paymentMonitor = new Mock<IOptionsMonitor<BookingPaymentSettings>>();
         paymentMonitor.Setup(x => x.CurrentValue).Returns(_paymentSettings);
         return new BookingDepositService(
-            _bookings.Object, _history.Object, _client.Object, monitor.Object, paymentMonitor.Object, _time, _logger);
+            _bookings.Object, _history.Object, _client.Object, monitor.Object, paymentMonitor.Object, _time, _logger,
+            new BookingFlowMetrics(_meters));
     }
 
     private void CaptureRequestInto(List<TadssDecisionRequestDto> sent) =>
@@ -234,6 +237,25 @@ public class BookingDepositServiceTests
 
     private void ClientReturns(TadssCallResult<TadssDecisionResultDto> result) =>
         _client.Setup(x => x.EvaluateAsync(It.IsAny<TadssDecisionRequestDto>(), BookingId, It.IsAny<CancellationToken>())).ReturnsAsync(result);
+
+    // Counter nghiệp vụ trên dashboard "Vận hành": mỗi quyết định ghi đúng một lần với nhãn nhánh
+    [Theory]
+    [Trait("Catalog", "OB-BE-6")]
+    [InlineData(false, 228_000, "full_payment_fallback")]
+    [InlineData(false, 3_000, "confirm_without_online_payment")]
+    [InlineData(true, 228_000, "tadss_deposit")]
+    public async Task DecideAsync_RecordsTheDecisionBranchOnce(bool flag, int finalTotal, string branch)
+    {
+        _settings.EnableTadssDecision = flag;
+        var service = CreateService(Snapshot());
+        using var probe = new MeterProbe(_meters, BookingInvariantMetrics.MeterName);
+
+        await service.DecideAsync(BookingId, finalTotal, PlayStart);
+
+        var point = Assert.Single(probe.Recorded(BookingFlowMetrics.DepositDecisionsInstrument));
+        Assert.Equal(branch, point.Tags["branch"]);
+        Assert.Equal(1, point.Value);
+    }
 
     [Fact]
     [Trait("Catalog", "BE-IT-04")]

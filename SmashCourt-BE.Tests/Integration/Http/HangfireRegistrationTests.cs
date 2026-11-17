@@ -22,7 +22,7 @@ public sealed class HangfireRegistrationTests(PostgreSqlIntegrationFixture datab
     [
         "cleanup-expired-otp", "cleanup-unverified-users", "cleanup-expired-refresh-tokens", "update-promotion-status",
         "cancel-expired-pending", "process-expired-bookings", "cleanup-slot-locks", "detect-no-show", "cleanup-slot-interests",
-        "expire-approvals", "report-tadss-outcomes"
+        "expire-approvals", "report-tadss-outcomes", "check-booking-invariants"
     ];
 
     private readonly string _databaseName = $"{SmashCourtWebApplicationFactory.DatabasePrefix}hf_{Guid.NewGuid():N}";
@@ -116,6 +116,18 @@ public sealed class HangfireRegistrationTests(PostgreSqlIntegrationFixture datab
         Assert.Equal(SmashCourt_BE.Helpers.DateTimeHelper.VNTimezone.Id, job.TimeZoneId);
         Assert.Equal(typeof(SmashCourt_BE.Jobs.Interfaces.IBookingApprovalJob), job.Job.Type);
         Assert.Equal(nameof(SmashCourt_BE.Jobs.Interfaces.IBookingApprovalJob.ExpireApprovalsAsync), job.Job.Method.Name);
+    }
+
+    [Fact]
+    [Trait("Catalog", "OB-BE-5")]
+    public void UseHangfireServices_InvariantJob_RunsEveryTenMinutesInVietnamTime()
+    {
+        var job = Assert.Single(RegisterAndListRecurringJobs(Config(null)), j => j.Id == "check-booking-invariants");
+
+        Assert.Equal("*/10 * * * *", job.Cron);
+        Assert.Equal(SmashCourt_BE.Helpers.DateTimeHelper.VNTimezone.Id, job.TimeZoneId);
+        Assert.Equal(typeof(SmashCourt_BE.Jobs.Interfaces.IBookingInvariantJob), job.Job.Type);
+        Assert.Equal(nameof(SmashCourt_BE.Jobs.Interfaces.IBookingInvariantJob.CheckRecentBookingsAsync), job.Job.Method.Name);
     }
 
     [Fact]

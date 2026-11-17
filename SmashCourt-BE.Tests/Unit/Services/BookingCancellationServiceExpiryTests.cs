@@ -6,6 +6,7 @@ using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Services.IService;
 using SmashCourt_BE.Tests.TestData;
+using SmashCourt_BE.Infrastructure.Telemetry;
 
 namespace SmashCourt_BE.Tests.Unit.Services;
 
@@ -427,5 +428,39 @@ public class BookingCancellationServiceExpiryTests
         builder.PaymentRepository.Verify(x => x.FailPendingByInvoiceAsync(order.Booking.Invoice!.Id, null, Now), Times.Once);
         builder.InvoiceRepository.Verify(x => x.SetPaymentStatusAsync(order.Booking.Invoice!.Id, InvoicePaymentStatus.EXPIRED, Now), Times.Once);
         Assert.Equal(Now, order.Booking.CancelledAt);
+    }
+
+    // ───────────────────────── Counter nghiệp vụ ─────────────────────────
+
+    [Theory]
+    [Trait("Catalog", "OB-BE-6")]
+    [InlineData(BookingStatus.PENDING, BookingFlowMetrics.ExpiryPayment)]
+    [InlineData(BookingStatus.PENDING_APPROVAL, BookingFlowMetrics.ExpiryApproval)]
+    public async Task Expire_Wins_CountsOneExpiryWithItsReason(BookingStatus status, string reason)
+    {
+        var order = CreateOrder(status, DepositSource.TADSS);
+        var builder = BuilderFor(order);
+        using var probe = new MeterProbe(builder.Meters, BookingInvariantMetrics.MeterName);
+        var service = builder.Build();
+
+        Assert.True(status == BookingStatus.PENDING
+            ? await service.ExpireUnpaidAsync(order.Booking.Id)
+            : await service.ExpireApprovalAsync(order.Booking.Id));
+
+        var point = Assert.Single(probe.Recorded(BookingFlowMetrics.ExpirationsInstrument));
+        Assert.Equal(reason, point.Tags["reason"]);
+    }
+
+    [Fact]
+    [Trait("Catalog", "OB-BE-6")]
+    public async Task Expire_WindowNoLongerOver_CountsNothing()
+    {
+        var order = CreateOrder(BookingStatus.PENDING, DepositSource.TADSS);
+        var builder = BuilderFor(order, windowOver: false);
+        using var probe = new MeterProbe(builder.Meters, BookingInvariantMetrics.MeterName);
+
+        Assert.False(await builder.Build().ExpireUnpaidAsync(order.Booking.Id));
+
+        Assert.Empty(probe.Recorded(BookingFlowMetrics.ExpirationsInstrument));
     }
 }

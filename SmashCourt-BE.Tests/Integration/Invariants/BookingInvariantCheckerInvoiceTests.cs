@@ -1,4 +1,5 @@
 using SmashCourt_BE.Models.Enums;
+using SmashCourt_BE.Models.Invariants;
 
 namespace SmashCourt_BE.Tests.Integration.Invariants;
 

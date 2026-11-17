@@ -9,6 +9,7 @@ using SmashCourt_BE.Repositories.IRepository;
 using SmashCourt_BE.Services;
 using SmashCourt_BE.Services.IService;
 using SmashCourt_BE.Tests.Integration.Http;
+using SmashCourt_BE.Infrastructure.Telemetry;
 
 namespace SmashCourt_BE.Tests.TestData;
 
@@ -28,6 +29,8 @@ internal sealed class PaymentResultServiceTestBuilder
     public FakeTimeProvider Time { get; } = new(new DateTimeOffset(DefaultNow));
     public IConfiguration Configuration { get; } = TestConfigurationFactory.Create();
     public ListLogger<PaymentResultService> Logger { get; } = new();
+    /// <summary>Factory riêng: đọc counter nghiệp vụ bằng <see cref="MeterProbe"/>.</summary>
+    public System.Diagnostics.Metrics.IMeterFactory Meters { get; } = MeterProbe.NewFactory();
     public ListLogger<BookingNotificationService> NotificationLogger { get; } = new();
 
     /// <summary>Ghi lại thư thay vì gửi SMTP.</summary>
@@ -67,6 +70,7 @@ internal sealed class PaymentResultServiceTestBuilder
             notifications,
             settings.Object,
             Time,
-            Logger);
+            Logger,
+            new BookingFlowMetrics(Meters));
     }
 }

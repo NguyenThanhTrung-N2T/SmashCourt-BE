@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using SmashCourt_BE.Data;
 using SmashCourt_BE.Models.Enums;
+using SmashCourt_BE.Models.Invariants;
 
 namespace SmashCourt_BE.Tests.Integration.Invariants;
 
@@ -67,6 +68,51 @@ public sealed class BookingInvariantCheckerScopeTests(PostgreSqlIntegrationFixtu
         Assert.Contains(createdAtEdge.Booking.Id, reported);
         Assert.DoesNotContain(before.Booking.Id, reported);
         Assert.DoesNotContain(after.Booking.Id, reported);
+    }
+
+    // Job kiểm định kỳ bỏ đơn vừa đổi (có thể đang dở giữa hai transaction): mốc SettledBeforeUtc là biên đóng, xét cả created_at lẫn updated_at
+    [Fact]
+    [Trait("Catalog", "OB-BE-5")]
+    public async Task TimeWindow_SettledBefore_SkipsOrdersChangedAfterIt()
+    {
+        var windowFrom = CreatedAt.AddHours(-1);
+        var windowTo = CreatedAt.AddHours(1);
+        var settled = CreatedAt;
+        var quiet = await SeedBrokenOrderAsync(CreatedAt.AddMinutes(-30), CreatedAt.AddMinutes(-10));
+        var atEdge = await SeedBrokenOrderAsync(CreatedAt.AddMinutes(-30), settled);
+        var justUpdated = await SeedBrokenOrderAsync(CreatedAt.AddMinutes(-30), settled.AddSeconds(30));
+        var justCreated = await SeedBrokenOrderAsync(settled.AddSeconds(30), settled.AddSeconds(30));
+
+        var reported = (await BookingInvariantChecker.CheckAsync(
+                DbContext, new BookingScope(null, windowFrom, windowTo, SettledBeforeUtc: settled), Now))
+            .Select(v => v.BookingId).ToHashSet();
+
+        Assert.Contains(quiet.Booking.Id, reported);
+        Assert.Contains(atEdge.Booking.Id, reported);
+        Assert.DoesNotContain(justUpdated.Booking.Id, reported);
+        Assert.DoesNotContain(justCreated.Booking.Id, reported);
+    }
+
+    // Job kiểm định kỳ luôn soát đơn còn hiệu lực: vi phạm của đơn chưa kết thúc không được rời phạm vi chỉ vì đơn đã yên quá 24 giờ
+    [Fact]
+    [Trait("Catalog", "OB-BE-5")]
+    public async Task TimeWindow_IncludeActive_AddsOldActiveOrders_ButStillSkipsRecentlyChangedOnes()
+    {
+        var windowFrom = CreatedAt.AddHours(-1);
+        var windowTo = CreatedAt.AddHours(1);
+        var oldActive = await SeedBrokenOrderAsync(CreatedAt.AddDays(-5), CreatedAt.AddDays(-5));
+        var oldButJustChanged = await SeedBrokenOrderAsync(CreatedAt.AddDays(-5), windowTo.AddMinutes(1));
+
+        var withoutActive = (await BookingInvariantChecker.CheckAsync(
+                DbContext, new BookingScope(null, windowFrom, windowTo, SettledBeforeUtc: windowTo), Now))
+            .Select(v => v.BookingId).ToHashSet();
+        var withActive = (await BookingInvariantChecker.CheckAsync(
+                DbContext, new BookingScope(null, windowFrom, windowTo, SettledBeforeUtc: windowTo, IncludeActive: true), Now))
+            .Select(v => v.BookingId).ToHashSet();
+
+        Assert.DoesNotContain(oldActive.Booking.Id, withoutActive);
+        Assert.Contains(oldActive.Booking.Id, withActive);
+        Assert.DoesNotContain(oldButJustChanged.Booking.Id, withActive);
     }
 
     // Hai nhánh của phạm vi kiểm riêng ở cả hai biên (mỗi đơn chỉ có đúng một mốc nằm trong khoảng)

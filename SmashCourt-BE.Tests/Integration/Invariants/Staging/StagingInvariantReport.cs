@@ -1,6 +1,7 @@
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using SmashCourt_BE.Models.Invariants;
 
 namespace SmashCourt_BE.Tests.Integration.Invariants.Staging;
 

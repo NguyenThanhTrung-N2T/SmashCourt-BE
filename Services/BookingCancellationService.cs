@@ -1,6 +1,7 @@
 using SmashCourt_BE.Common;
 using SmashCourt_BE.DTOs.Booking;
 using SmashCourt_BE.Helpers;
+using SmashCourt_BE.Infrastructure.Telemetry;
 using SmashCourt_BE.Models.Cancellation;
 using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
@@ -28,6 +29,7 @@ public class BookingCancellationService : IBookingCancellationService
     private readonly IPaymentRepository _paymentRepo;
     private readonly IInvoiceRepository _invoiceRepo;
     private readonly IRefundRepository _refundRepo;
+    private readonly BookingFlowMetrics _metrics;
     private readonly IPromotionRepository _promotionRepo;
     private readonly ICancelPolicyRepository _cancelPolicyRepo;
     private readonly IUserBranchRepository _userBranchRepo;
@@ -47,8 +49,10 @@ public class BookingCancellationService : IBookingCancellationService
         IUserBranchRepository userBranchRepo,
         IBookingNotificationService notifications,
         TimeProvider timeProvider,
-        ILogger<BookingCancellationService> logger)
+        ILogger<BookingCancellationService> logger,
+        BookingFlowMetrics metrics)
     {
+        _metrics = metrics;
         _bookingRepo = bookingRepo;
         _slotLockRepo = slotLockRepo;
         _courtRepo = courtRepo;
@@ -157,9 +161,18 @@ public class BookingCancellationService : IBookingCancellationService
 
     // ── Hủy do hết hạn (job) ────────────────────────────────────────────────
 
-    public Task<bool> ExpireUnpaidAsync(Guid bookingId) => ExpireAsync(bookingId, BookingStatus.PENDING);
+    public Task<bool> ExpireUnpaidAsync(Guid bookingId) => ExpireCountedAsync(bookingId, BookingStatus.PENDING, BookingFlowMetrics.ExpiryPayment);
 
-    public Task<bool> ExpireApprovalAsync(Guid bookingId) => ExpireAsync(bookingId, BookingStatus.PENDING_APPROVAL);
+    public Task<bool> ExpireApprovalAsync(Guid bookingId) => ExpireCountedAsync(bookingId, BookingStatus.PENDING_APPROVAL, BookingFlowMetrics.ExpiryApproval);
+
+    // Chỉ đếm đơn thật sự bị hủy (thua lệnh khác thì không)
+    private async Task<bool> ExpireCountedAsync(Guid bookingId, BookingStatus expected, string reason)
+    {
+        var expired = await ExpireAsync(bookingId, expected);
+        if (expired)
+            _metrics.RecordExpiry(reason);
+        return expired;
+    }
 
     // Đường riêng của job, không qua CancelAsync: thua thì trả false thay vì 409, khóa rồi kiểm lại hạn, hóa đơn sang EXPIRED,
     // không hoàn tiền và không trả lượt khuyến mãi (đơn chờ chưa có tiền về, chưa được tính lượt), thông báo hết hạn thay vì thông báo hủy

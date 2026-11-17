@@ -73,6 +73,7 @@ public static class TelemetryExtensions
         .AddRuntimeInstrumentation()
         .AddMeter(NpgsqlMeter)
         .AddMeter(TadssCircuit.MeterName)
+        .AddMeter(BookingInvariantMetrics.MeterName)
         .AddView(RequestDurationInstrument, new ExplicitBucketHistogramConfiguration { Boundaries = [.. RequestDurationBoundariesSeconds] });
 
     private static TelemetrySettings Read(IConfiguration configuration)

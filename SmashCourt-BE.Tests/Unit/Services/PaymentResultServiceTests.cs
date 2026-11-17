@@ -7,6 +7,7 @@ using SmashCourt_BE.Models.Entities;
 using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Models.Payments;
 using SmashCourt_BE.Tests.TestData;
+using SmashCourt_BE.Infrastructure.Telemetry;
 
 namespace SmashCourt_BE.Tests.Unit.Services;
 
@@ -420,5 +421,51 @@ public class PaymentResultServiceTests
         await builder.Build().ApplyAsync(Result());
 
         Assert.Contains(builder.NotificationLogger.Entries, e => e.Level == LogLevel.Error);
+    }
+
+    // ───────────────────────── Counter nghiệp vụ ─────────────────────────
+
+    private static string RecordedOutcome(MeterProbe probe) =>
+        (string)Assert.Single(probe.Recorded(BookingFlowMetrics.PaymentResultsInstrument)).Tags["outcome"]!;
+
+    [Fact]
+    [Trait("Catalog", "OB-BE-6")]
+    public async Task Metrics_EachRejectedResult_IsCountedWithItsReason()
+    {
+        var invalid = new PaymentResultServiceTestBuilder();
+        CreateOrder(invalid);
+        var unknown = new PaymentResultServiceTestBuilder();
+        var mismatch = new PaymentResultServiceTestBuilder();
+        CreateOrder(mismatch);
+        using var invalidProbe = new MeterProbe(invalid.Meters, BookingInvariantMetrics.MeterName);
+        using var unknownProbe = new MeterProbe(unknown.Meters, BookingInvariantMetrics.MeterName);
+        using var mismatchProbe = new MeterProbe(mismatch.Meters, BookingInvariantMetrics.MeterName);
+
+        await invalid.Build().ApplyAsync(Result(signatureValid: false));
+        await unknown.Build().ApplyAsync(Result());
+        await mismatch.Build().ApplyAsync(Result(amount: 1_000m));
+
+        Assert.Equal(BookingFlowMetrics.PaymentInvalidSignature, RecordedOutcome(invalidProbe));
+        Assert.Equal(BookingFlowMetrics.PaymentUnknownTransaction, RecordedOutcome(unknownProbe));
+        Assert.Equal(BookingFlowMetrics.PaymentAmountMismatch, RecordedOutcome(mismatchProbe));
+    }
+
+    [Theory]
+    [Trait("Catalog", "OB-BE-6")]
+    [InlineData(true, true, BookingFlowMetrics.PaymentSucceeded)]
+    [InlineData(true, false, BookingFlowMetrics.PaymentAlreadyRecorded)]
+    [InlineData(false, true, BookingFlowMetrics.PaymentFailed)]
+    [InlineData(false, false, BookingFlowMetrics.PaymentStaleFailure)]
+    public async Task Metrics_SuccessAndFailure_AreCountedOnceWithTheirOutcome(bool success, bool wins, string expected)
+    {
+        var builder = new PaymentResultServiceTestBuilder();
+        CreateOrder(builder);
+        builder.Payments.Setup(x => x.TryMarkSuccessAsync(It.IsAny<Guid>(), It.IsAny<DateTime>())).ReturnsAsync(wins);
+        builder.Payments.Setup(x => x.TryFailPendingAsync(It.IsAny<Guid>(), It.IsAny<DateTime>())).ReturnsAsync(wins);
+        using var probe = new MeterProbe(builder.Meters, BookingInvariantMetrics.MeterName);
+
+        await builder.Build().ApplyAsync(Result(success: success));
+
+        Assert.Equal(expected, RecordedOutcome(probe));
     }
 }

@@ -1,3 +1,5 @@
+using SmashCourt_BE.Models.Invariants;
+
 namespace SmashCourt_BE.Tests.Integration.Invariants;
 
 /// <summary>Bộ tự kiểm SC6 sau test HTTP thấy vi phạm (plan 6A-6 Task 10). Tiền tố <c>[SC6]</c> để tách khỏi lỗi của thân test.</summary>

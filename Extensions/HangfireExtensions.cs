@@ -23,6 +23,7 @@ public static class HangfireExtensions
         services.AddScoped<IBookingJob, BookingJob>();
         services.AddScoped<IBookingApprovalJob, BookingApprovalJob>();
         services.AddScoped<ITadssOutcomeJob, TadssOutcomeJob>();
+        services.AddScoped<IBookingInvariantJob, BookingInvariantJob>();
 
         if (!IsEnabled(config))
             return services;
@@ -146,6 +147,13 @@ public static class HangfireExtensions
             "report-tadss-outcomes",
             job => job.ReportOutcomesAsync(),
             "*/5 * * * *",
+            new RecurringJobOptions { TimeZone = vnTimezone });
+
+        // Mỗi 10 phút — kiểm tính đúng dữ liệu các đơn tạo / sửa trong 24 giờ (chỉ đọc; vi phạm ⇒ log Error + metric ⇒ cảnh báo email)
+        recurringJobs.AddOrUpdate<IBookingInvariantJob>(
+            "check-booking-invariants",
+            job => job.CheckRecentBookingsAsync(),
+            "*/10 * * * *",
             new RecurringJobOptions { TimeZone = vnTimezone });
 
         // Mỗi 1 giờ — xóa slot_interest hết hạn (interest hết hạn sau ngày đặt sân)

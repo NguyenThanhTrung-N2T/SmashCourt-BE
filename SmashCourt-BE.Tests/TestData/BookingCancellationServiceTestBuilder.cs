@@ -10,6 +10,7 @@ using SmashCourt_BE.Repositories.IRepository;
 using SmashCourt_BE.Services;
 using SmashCourt_BE.Services.IService;
 using SmashCourt_BE.Tests.Integration.Http;
+using SmashCourt_BE.Infrastructure.Telemetry;
 
 namespace SmashCourt_BE.Tests.TestData;
 
@@ -68,6 +69,9 @@ internal sealed class BookingCancellationServiceTestBuilder
 
     public BookingPaymentSettings PaymentSettings { get; } = new();
 
+    /// <summary>Factory riêng: đọc counter nghiệp vụ bằng <see cref="MeterProbe"/>.</summary>
+    public System.Diagnostics.Metrics.IMeterFactory Meters { get; } = MeterProbe.NewFactory();
+
     public BookingCancellationService Build()
     {
         var paymentSettings = new Mock<IOptionsMonitor<BookingPaymentSettings>>();
@@ -89,6 +93,7 @@ internal sealed class BookingCancellationServiceTestBuilder
             UserBranchRepository.Object,
             notifications,
             Time,
-            Logger);
+            Logger,
+            new BookingFlowMetrics(Meters));
     }
 }

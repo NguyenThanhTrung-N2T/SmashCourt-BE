@@ -12,6 +12,7 @@ using SmashCourt_BE.Models.Enums;
 using SmashCourt_BE.Repositories;
 using SmashCourt_BE.Services;
 using SmashCourt_BE.Tests.TestData;
+using SmashCourt_BE.Infrastructure.Telemetry;
 
 namespace SmashCourt_BE.Tests.Integration;
 
@@ -38,7 +39,8 @@ public sealed class BookingDepositServiceIntegrationTests(PostgreSqlIntegrationF
         paymentMonitor.Setup(x => x.CurrentValue).Returns(new BookingPaymentSettings());
         return new BookingDepositService(
             new BookingRepository(DbContext), new CustomerHistoryRepository(DbContext), client.Object, monitor.Object,
-            paymentMonitor.Object, TimeProvider.System, NullLogger<BookingDepositService>.Instance);
+            paymentMonitor.Object, TimeProvider.System, NullLogger<BookingDepositService>.Instance,
+            new BookingFlowMetrics(MeterProbe.NewFactory()));
     }
 
     private async Task<Booking> AddHistoryBookingAsync(

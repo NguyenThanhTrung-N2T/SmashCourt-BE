@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using SmashCourt_BE.Data;
 using SmashCourt_BE.Extensions;
+using SmashCourt_BE.Models.Invariants;
 
 namespace SmashCourt_BE.Tests.Integration.Invariants.Staging;
 

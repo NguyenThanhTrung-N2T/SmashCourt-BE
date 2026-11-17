@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using SmashCourt_BE.Configurations;
 using SmashCourt_BE.Helpers;
+using SmashCourt_BE.Infrastructure.Telemetry;
 using SmashCourt_BE.Integrations.Tadss;
 using SmashCourt_BE.Integrations.Tadss.DTOs;
 using SmashCourt_BE.Models.ViewModels;
@@ -21,6 +22,7 @@ namespace SmashCourt_BE.Services
         private readonly IOptionsMonitor<BookingPaymentSettings> _paymentSettings;
         private readonly TimeProvider _timeProvider;
         private readonly ILogger<BookingDepositService> _logger;
+        private readonly BookingFlowMetrics _metrics;
 
         public BookingDepositService(
             IBookingRepository bookingRepo,
@@ -29,8 +31,10 @@ namespace SmashCourt_BE.Services
             IOptionsMonitor<TadssSettings> settings,
             IOptionsMonitor<BookingPaymentSettings> paymentSettings,
             TimeProvider timeProvider,
-            ILogger<BookingDepositService> logger)
+            ILogger<BookingDepositService> logger,
+            BookingFlowMetrics metrics)
         {
+            _metrics = metrics;
             _bookingRepo = bookingRepo;
             _historyRepo = historyRepo;
             _tadssClient = tadssClient;
@@ -78,6 +82,7 @@ namespace SmashCourt_BE.Services
                 _logger.Log(decision.LogLevel, evaluateError, "Quyết định cọc {Branch} cho booking {BookingId}: {Message}",
                     decision.Branch, bookingId, decision.LogMessage);
 
+            _metrics.RecordDepositDecision(decision.Branch);
             return decision;
         }
 

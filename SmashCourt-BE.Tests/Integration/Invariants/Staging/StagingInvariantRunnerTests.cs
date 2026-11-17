@@ -6,6 +6,7 @@ using SmashCourt_BE.Models.Enums;
 using WireMock.RequestBuilders;
 using WireMock.ResponseBuilders;
 using WireMock.Server;
+using SmashCourt_BE.Models.Invariants;
 
 namespace SmashCourt_BE.Tests.Integration.Invariants.Staging;
 
