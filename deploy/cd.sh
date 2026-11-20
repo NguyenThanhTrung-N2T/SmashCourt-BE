@@ -5,7 +5,7 @@
 # Thoát: 0 = bản mới chạy và kiểm đạt
 #        1 = bản mới hỏng, đã quay về bản trước và bản trước kiểm đạt
 #        2 = UNSAFE: bản mới hỏng và quay về cũng hỏng (hoặc không có bản trước) — cần người xử lý
-#        3 = từ chối, chưa đụng gì: sha sai dạng hoặc image sha-<7> không có trên GHCR
+#        3 = từ chối, chưa đụng gì: sha sai dạng, image sha-<7> không có trên GHCR hoặc nhãn revision của image không phải sha đó
 #        4 = chưa đụng gì: không tới được GHCR sau vài lần thử (mạng của máy deploy), chạy lại job khi mạng ổn
 # Kiểm tra = container chạy đúng commit (nhãn org.opencontainers.image.revision) + health + smoke chỉ đọc (không tạo dữ liệu).
 set -uo pipefail
@@ -37,6 +37,13 @@ pull_image() {
   echo "cd.sh: không tới được GHCR sau 5 lần thử, chưa đụng gì — chạy lại job khi mạng ổn" >&2; exit 4
 }
 pull_image
+
+# OPS-08: tag chỉ mang 7 ký tự đầu của sha, nên nhãn revision của image phải đúng sha đầy đủ trước khi đụng container
+# (trước 20/11 chỉ kiểm sau khi chạy, lệch nhãn thì đã khởi động lại container rồi mới quay về)
+image_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${image}:${tag}" 2>/dev/null || true)"
+if [ "$image_revision" != "$sha" ]; then
+  echo "cd.sh: image ${image}:${tag} mang nhãn revision '${image_revision}', không phải ${sha}; không triển khai" >&2; exit 3
+fi
 
 revision_of() { docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$container" 2>/dev/null; }
 

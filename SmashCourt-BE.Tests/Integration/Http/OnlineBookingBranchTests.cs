@@ -386,7 +386,8 @@ public sealed partial class OnlineBookingBranchTests(PostgreSqlIntegrationFixtur
         var court = await SeedCourtAsync();
         var vnNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, DateTimeHelper.VNTimezone);
         var start = new TimeSpan(vnNow.Hour, 0, 0); // giờ hiện tại đã bắt đầu (≤ bây giờ)
-        var end = vnNow.Hour == 23 ? new TimeSpan(23, 59, 0) : start.Add(TimeSpan.FromHours(1));
+        // Theo bước 30 phút (P6-61) và cùng ngày kể cả lúc 23:xx; trước đây 23:59 bị chặn ở bước kiểm DTO nên lệch lỗi cần kiểm
+        var end = start.Add(TimeSpan.FromMinutes(30));
         var client = await CustomerClientAsync(await SeedUserAsync());
 
         var call = await PostOnlineAsync(client, new

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using SmashCourt_BE.Common;
 using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Models.Enums;
 
@@ -241,7 +242,7 @@ public sealed class OnlineBookingRealWorldTests(PostgreSqlIntegrationFixture dat
         // khung mới so với đơn có sẵn 10:00–11:00: bắt đầu, kết thúc, bị chặn
         { "10:30:00", "11:30:00", true },  // chồng nửa sau
         { "09:30:00", "10:30:00", true },  // chồng nửa trước
-        { "10:15:00", "10:45:00", true },  // nằm trong
+        { "10:00:00", "10:30:00", true },  // nằm trong (mốc theo bước 30 phút, P6-61)
         { "09:00:00", "12:00:00", true },  // bao trùm
         { "11:00:00", "12:00:00", false }, // sát sau: không chồng
         { "09:00:00", "10:00:00", false }, // sát trước: không chồng
@@ -270,6 +271,29 @@ public sealed class OnlineBookingRealWorldTests(PostgreSqlIntegrationFixture dat
             await AssertStatusAsync(HttpStatusCode.Created, call);
             Assert.Equal(2, (await BookingsOnCourtAsync(court.CourtId)).Count);
         }
+    }
+
+    [Fact]
+    public async Task BookingOffThirtyMinuteStep_IsRejectedBeforeAnyRecord_AndTadssIsNotCalled()
+    {
+        // P6-61: ca thật trên deploy 20/11 (đơn 20 phút 21:40–22:00 gọi API thẳng) từng ra 500 và để lại đơn PENDING giữ sân
+        var tadss = await GetTadssAsync();
+        using var _ = await UseTadssAsync();
+        tadss.ApproveAnyBooking(0.5m, 100_000m);
+        var court = await SeedCourtAsync(200_000m);
+        var client = await CustomerClientAsync(await SeedUserAsync());
+
+        var call = await PostOnlineAsync(client, new
+        {
+            bookingDate = FutureDate().ToString("yyyy-MM-dd"),
+            courts = new[] { Slot(court.CourtId, "10:40:00", "11:00:00") }
+        });
+
+        await AssertStatusAsync(HttpStatusCode.BadRequest, call);
+        Assert.Equal(ErrorCodes.ValidationError, call.Code);
+        Assert.Empty(await BookingsOnCourtAsync(court.CourtId));
+        Assert.False(await WithDbAsync(db => db.SlotLocks.AnyAsync(l => l.CourtId == court.CourtId)));
+        Assert.Empty(tadss.EvaluationsMentioning(court.CourtId));
     }
 
     // ───────────────────────── Tranh lượt khuyến mãi cuối (mở rộng P-22) ─────────────────────────

@@ -51,6 +51,14 @@ namespace SmashCourt_BE.DTOs.Booking
                     yield return new ValidationResult(
                         $"Giờ bắt đầu phải nhỏ hơn giờ kết thúc",
                         new[] { nameof(Courts) });
+                else if (!court.IsOnSlotStep())
+                    yield return new ValidationResult(
+                        "Giờ bắt đầu và kết thúc phải theo bước 30 phút (VD 18:00, 18:30)",
+                        new[] { nameof(Courts) });
+                else if (!court.IsWithinMaxDuration())
+                    yield return new ValidationResult(
+                        "Mỗi lượt đặt tối đa 12 giờ, vui lòng tách thành nhiều đơn",
+                        new[] { nameof(Courts) });
             }
 
             // kiểm tra trùng lặp hoàn toàn trong cùng 1 lần đặt
