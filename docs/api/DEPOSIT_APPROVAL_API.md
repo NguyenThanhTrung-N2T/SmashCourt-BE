@@ -656,6 +656,7 @@ Response lỗi — đã quá hạn duyệt (HTTP 409):
 | 2 | Đặt sân: tắt flag, TADSS timeout/lỗi mạng/5xx/401/413/429 | — (thành công, cọc 100 %) | 201 | — | Như nhánh thanh toán bình thường; không báo lỗi |
 | 2a | Đặt sân: đơn vừa tạo bị nhân viên xử lý (hủy) trước khi BE áp kết quả cọc (rất hiếm) | `CONFLICT` (có sẵn), `data = null` | 409 | Không | "Đơn đặt sân vừa được nhân viên xử lý, vui lòng xem lịch sử đặt sân"; mở lịch sử đặt sân |
 | 2b | Đặt sân: khung giờ đã bắt đầu hoặc đã qua (giờ VN so với bây giờ) | `BAD_REQUEST` (có sẵn), `data = null` | 400 | Không | "Khung giờ đã bắt đầu hoặc đã qua, vui lòng chọn khung giờ khác"; kiểm trước mọi bước nên không tạo bản ghi và không gọi TADSS |
+| 2c | Đặt sân (online và tại quầy): `startTime` / `endTime` không theo bước 30 phút (VD 18:15), hoặc một sân dài quá 12 giờ (P6-61, 20/11/2026) | `VALIDATION_ERROR` (có sẵn), câu ở `errors.Courts` | 400 | Sửa rồi gửi lại | Lưới giờ chỉ cho chọn ô 30 phút và tối đa 12 giờ mỗi lượt; gặp lỗi thì hiện câu trong `errors.Courts` (`message` chỉ là câu chung) |
 | 3 | Duyệt: `depositRate` ngoài `[0, 1]` hoặc quá 4 chữ số thập phân; số tiền cọc quy đổi > 0 nhưng dưới mức tối thiểu (bước 4b); `reason` thiếu, < 5, > 500 code point, chỉ khoảng trắng | `VALIDATION_ERROR` (có sẵn) | 400 | Sửa rồi gửi | Lỗi dưới ô nhập theo khóa `errors` (`DepositRate`, `Reason`) |
 | 4 | Duyệt: TADSS 400 `VALIDATION_ERROR` về `deposit.rate` (BE đã kiểm nên chỉ xảy ra khi lệch quy tắc) | `VALIDATION_ERROR` (có sẵn), `errors.DepositRate` | 400 | Sửa rồi gửi | Như #3 |
 | 5 | Duyệt: TADSS 400 khác (`MISSING_HEADER`, `VALIDATION_ERROR` về header/`reason` mà BE không bắt được, `DOMAIN_INVARIANT_VIOLATION`), 413, 415 — lỗi lập trình của BE | `INTERNAL_ERROR` (có sẵn) | 500 | Không | "Đã xảy ra lỗi hệ thống"; BE log mức Error kèm correlation id |
@@ -859,5 +860,6 @@ Sau khi lần theo luồng thực tế FE → BE trên mã hiện có, nhóm ch�
 | P6-27 | Link thanh toán có hạn theo hạn đơn (chốt 27/10/2026, 6A-6; đã thử sandbox VNPay 28/10) | 3.3, 3.6 |
 | P6-28 | `POST /api/payments/vnpay/confirm` trả thêm `bookingStatus`; FE rẽ nhánh theo trạng thái đơn, không theo `isSuccess` (chốt 29/10/2026, 6A-6) | 3.6 |
 | P6-31 | `BookingDto` thêm `cancelSource` (ai hủy, mọi endpoint), `cancelledByName` (tên nhân viên hủy / Manager từ chối, chỉ endpoint nhân viên) và `cancelledAt` (thời điểm hủy, mọi endpoint) để hiển thị và tra cứu rõ ràng (chốt 31/10/2026) | 2.2, 3.2 |
+| P6-61 | Giờ đặt sân phải theo bước 30 phút, mỗi sân tối đa 12 giờ một lượt; sai ⇒ 400 `VALIDATION_ERROR`, câu ở `errors.Courts` (chốt 20/11/2026; lộ ra khi gọi API thẳng với đơn 20 phút làm số tiền cọc lẻ) | 5 (#2c) |
 
 Mã lỗi mới: `PAYMENT_HOLD_EXPIRED`, `BOOKING_ALREADY_STARTED` (Mục 5). Không đổi hợp đồng BE ↔ TADSS.
