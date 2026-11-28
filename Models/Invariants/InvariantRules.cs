@@ -27,5 +27,24 @@ namespace SmashCourt_BE.Models.Invariants
             PendingHasHoldDeadline, ConfirmedIsPaid, AwaitingApprovalHoldsLocks, CancelledHoldsNothing,
             ActiveCourtsAreActive, NoDoubleBooking, CancelledHasReason, PaidInvoiceIsCollected
         ];
+
+        /// <summary>
+        /// Tên dễ hiểu của từng điều, cho người vận hành đọc trên dashboard, trong log và email; nơi duy nhất khai báo
+        /// (dashboard lấy qua nhãn metric rule_name, không chép lại).
+        /// </summary>
+        public static readonly IReadOnlyDictionary<string, string> Titles = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [ConfirmedIsPaid] = "Đơn đã xác nhận nhưng chưa thu đủ tiền cọc",
+            [AwaitingApprovalHoldsLocks] = "Đơn chờ duyệt không còn giữ sân",
+            [CancelledHoldsNothing] = "Đơn đã hủy vẫn còn giữ sân",
+            [ActiveCourtsAreActive] = "Đơn còn hiệu lực nhưng có sân bị tắt",
+            [NoDoubleBooking] = "Hai đơn trùng sân, trùng giờ",
+            [DecisionExistsInTadss] = "Đơn không có quyết định cọc trên TADSS",
+            [CancelledHasReason] = "Đơn đã hủy không có lý do hủy",
+            [PaidInvoiceIsCollected] = "Hóa đơn ghi đã trả nhưng thu chưa đủ tiền",
+            [PendingHasHoldDeadline] = "Đơn chờ thanh toán không có hạn giữ chỗ",
+        };
+
+        public static string Title(string rule) => Titles.TryGetValue(rule, out var title) ? title : rule;
     }
 }

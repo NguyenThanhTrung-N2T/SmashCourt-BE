@@ -29,7 +29,7 @@ public sealed class BookingInvariantMetrics
         // Meter thuộc IMeterFactory (factory dispose khi host dừng), không dispose ở đây
         var meter = meterFactory.Create(MeterName);
         meter.CreateObservableGauge(ViolationsInstrument, ObserveViolations,
-            description: "Số vi phạm tính đúng dữ liệu đặt sân ở lượt kiểm gần nhất, nhãn rule = mã điều.");
+            description: "Số vi phạm tính đúng dữ liệu đặt sân ở lượt kiểm gần nhất, nhãn rule = mã điều, rule_name = tên dễ hiểu của điều.");
         meter.CreateObservableGauge(CheckedBookingsInstrument, ObserveChecked,
             description: "Số đơn trong phạm vi của lượt kiểm tính đúng gần nhất (đơn còn hiệu lực cộng đơn tạo hoặc sửa trong 24 giờ).");
         _runs = meter.CreateCounter<long>(RunsInstrument,
@@ -67,8 +67,11 @@ public sealed class BookingInvariantMetrics
         {
             if (_lastViolations == null)
                 return [];
+            // rule_name: tên dễ hiểu cho chú giải dashboard; rule giữ cho luật cảnh báo và truy vết
             return _lastViolations
-                .Select(pair => new Measurement<long>(pair.Value, new KeyValuePair<string, object?>("rule", pair.Key)))
+                .Select(pair => new Measurement<long>(pair.Value,
+                    new KeyValuePair<string, object?>("rule", pair.Key),
+                    new KeyValuePair<string, object?>("rule_name", InvariantRules.Title(pair.Key))))
                 .ToList();
         }
     }

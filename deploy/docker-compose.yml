@@ -83,6 +83,10 @@ services:
       OTEL_RESOURCE_ATTRIBUTES: deployment.environment.name=deploy
       # Câu SQL của EF ở mức Information làm log phình (console và Grafana Cloud): chỉ giữ cảnh báo
       Logging__LogLevel__Microsoft.EntityFrameworkCore: Warning
+      # Hai cảnh báo lúc khởi động, vô hại trên bản deploy nhưng làm nhiễu panel log: HTTPS do ngrok lo nên không có cổng https để chuyển hướng
+      # (request qua ngrok đã là https nhờ X-Forwarded-Proto); BE không dùng dữ liệu mã hóa bằng khóa DataProtection nên mất khóa khi tạo lại container không sao
+      Logging__LogLevel__Microsoft.AspNetCore.HttpsPolicy: Error
+      Logging__LogLevel__Microsoft.AspNetCore.DataProtection: Error
     # Cờ đổi lúc chạy (runtime-config/feature-flags.json): bật / tắt TADSS bằng bash deploy/tadss-flag.sh on|off, không khởi động lại BE.
     # Volume tên cố định để giữ trạng thái cờ qua các lần CD tạo lại container; không đặt TadssConfig__EnableTadssDecision ở đây (file thắng)
     volumes:

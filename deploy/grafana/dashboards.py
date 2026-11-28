@@ -397,7 +397,7 @@ BE = Dashboard(
                          "Cùng bộ luật với bộ test: đơn xác nhận đủ cọc, hóa đơn đã trả thu đủ, đơn chờ duyệt giữ sân, đơn hủy không giữ sân và có lý do, "
                          "dòng sân của đơn hiệu lực đang bật, không trùng giờ, đơn chờ thanh toán có hạn giữ chỗ.",
                     unit="Vi phạm (số đơn × điều).",
-                    read="0 là dữ liệu đúng. Khác 0 ⇒ panel 'Đơn đang vi phạm' ngay dưới nêu mã đơn (BK-…) và lý do; panel 'Vi phạm theo điều' cho biết điều nào.",
+                    read="0 là dữ liệu đúng. Khác 0 ⇒ panel 'Lỗi dữ liệu đang có' cho biết loại lỗi, panel 'Đơn đang vi phạm' ngay dưới nêu mã đơn (BK-…) và lý do.",
                     threshold="Khác 0 ⇒ email 'Dữ liệu đặt sân sai' (đỏ). Chỉ tiêu của đề cương: 0 đơn hỏng.",
                     source="smashcourt_booking_invariant_violations (meter SmashCourt.Booking, BookingInvariantJob)",
                     tests="OB-BE-5, BE-IT-20",
@@ -408,21 +408,26 @@ BE = Dashboard(
                 instant=True,
             ),
             Panel(
-                "Vi phạm theo điều",
+                "Lỗi dữ liệu đang có",
                 "timeseries",
-                [('max by (rule) (smashcourt_booking_invariant_violations{job="smashcourt-be"})', "{{rule}}")],
+                # Chỉ loại lỗi đang khác 0, chú giải là tên dễ hiểu (nhãn rule_name do BE gắn từ InvariantRules.Titles); rule_name!="" bỏ chuỗi cũ chưa có tên
+                [('max by (rule_name) (smashcourt_booking_invariant_violations{job="smashcourt-be",rule_name!=""}) > 0', "{{rule_name}}")],
                 "none",
                 Description(
-                    what="Số vi phạm của lượt kiểm gần nhất, tách theo mã điều (PHU-2, SC6-1…SC6-4b, SC6-6, SC6-7).",
-                    unit="Vi phạm.",
-                    read="Đường nào lên khỏi 0 là điều đó bị vi phạm; giữ nguyên tới lượt kiểm sau (đơn đã sửa thì về 0 sau tối đa 10 phút). Đơn đã kết thúc hoặc đã hủy chỉ được soát trong 24 giờ sau lần sửa cuối, nên vi phạm của chúng có thể biến mất mà chưa được sửa: tra log để chắc.",
-                    threshold="Mọi đường bằng 0.",
-                    source="smashcourt_booking_invariant_violations, nhãn rule",
+                    what="Số đơn đang sai theo từng loại lỗi ở lượt kiểm gần nhất, chỉ hiện loại đang có lỗi. Các loại: đơn đã xác nhận nhưng chưa thu đủ tiền cọc; "
+                         "hóa đơn ghi đã trả nhưng thu chưa đủ; đơn chờ duyệt không còn giữ sân; đơn đã hủy vẫn giữ sân; đơn đã hủy không có lý do hủy; "
+                         "đơn còn hiệu lực nhưng có sân bị tắt; hai đơn trùng sân, trùng giờ; đơn chờ thanh toán không có hạn giữ chỗ.",
+                    unit="Vi phạm (một đơn có thể sai nhiều chỗ).",
+                    read="Trống ('Không có lỗi nào') là dữ liệu đúng. Có đường nào là loại lỗi đó đang tồn tại; mã đơn và lý do cụ thể ở panel 'Đơn đang vi phạm' ngay dưới. "
+                         "Sửa xong thì đường biến mất sau tối đa 10 phút. Đơn đã kết thúc hoặc đã hủy chỉ được soát trong 24 giờ sau lần sửa cuối, "
+                         "nên lỗi của chúng có thể biến mất mà chưa được sửa: tra panel 'Đơn đang vi phạm' để chắc.",
+                    threshold="Không có đường nào.",
+                    source="smashcourt_booking_invariant_violations, nhãn rule_name (tên lỗi) và rule (mã điều, dùng cho cảnh báo)",
                     tests="OB-BE-5",
                 ),
                 width=6,
                 soft_max=1,
-                no_value="Chưa có lượt kiểm",
+                no_value="Không có lỗi nào",
             ),
             Panel(
                 "Đơn trong phạm vi soát",
@@ -463,8 +468,8 @@ BE = Dashboard(
                 [('{service_name="smashcourt-be"} |= "[Invariant]" | detected_level=~"warn|error"', "")],
                 "none",
                 Description(
-                    what="Log của job kiểm tính đúng khi có vi phạm: dòng 'Đơn BK-… (id) vi phạm <điều>: <lý do>' khi một vi phạm mới xuất hiện, "
-                         "và mỗi lượt kiểm (10 phút) một dòng tổng 'Đơn đang vi phạm: <điều>: BK-…, BK-…' nêu lại mọi đơn còn sai (tối đa 20 mã, còn lại chỉ đếm). "
+                    what="Log của job kiểm tính đúng khi có vi phạm: dòng 'Đơn BK-… (id) vi phạm <mã>: <tên lỗi>. Chi tiết: <lý do>' khi một vi phạm mới xuất hiện, "
+                         "và mỗi lượt kiểm (10 phút) một dòng tổng 'Đơn đang vi phạm: <tên lỗi> (<mã>): BK-…, BK-…' nêu lại mọi đơn còn sai (tối đa 20 mã, còn lại chỉ đếm). "
                          "Dòng 'Không kiểm được' là lượt kiểm lỗi (không đọc được DB).",
                     unit="Dòng log, mới nhất ở trên.",
                     read="Dòng tổng mới nhất là danh sách đơn đang sai; tra mã đơn ở trang quản lý đặt sân rồi sửa theo lý do ở dòng 'vi phạm' của đơn đó. "

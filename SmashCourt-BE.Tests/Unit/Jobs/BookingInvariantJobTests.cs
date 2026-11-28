@@ -165,11 +165,11 @@ public sealed class BookingInvariantJobTests : IDisposable
         var secondRun = _logger.Entries.Skip(firstRun.Count).ToList();
 
         Assert.Contains(firstRun, e => e.Level == LogLevel.Error
-                                       && e.Message.Contains($"Đơn BK-20261128-0001 ({bookingId}) vi phạm {InvariantRules.CancelledHasReason}: thiếu lý do"));
+                                       && e.Message.Contains($"Đơn BK-20261128-0001 ({bookingId}) vi phạm {InvariantRules.CancelledHasReason}: Đơn đã hủy không có lý do hủy. Chi tiết: thiếu lý do"));
         // Lượt sau không có dòng Error, nhưng dòng tổng Warning vẫn nêu mã đơn còn sai
         var reminder = Assert.Single(secondRun);
         Assert.Equal(LogLevel.Warning, reminder.Level);
-        Assert.Contains($"Đơn đang vi phạm: {InvariantRules.CancelledHasReason}: BK-20261128-0001.", reminder.Message);
+        Assert.Contains($"Đơn đang vi phạm: Đơn đã hủy không có lý do hủy ({InvariantRules.CancelledHasReason}): BK-20261128-0001.", reminder.Message);
     }
 
     [Fact]
@@ -187,7 +187,8 @@ public sealed class BookingInvariantJobTests : IDisposable
         var text = BookingInvariantJob.DescribeBookings(violations);
 
         var rules = new[] { InvariantRules.NoDoubleBooking, InvariantRules.CancelledHasReason }.Order(StringComparer.Ordinal).ToList();
-        var expected = string.Join("; ", rules.Select(r => r == InvariantRules.NoDoubleBooking ? $"{r}: BK-A, BK-B" : $"{r}: BK-A"));
+        var expected = string.Join("; ", rules.Select(r =>
+            $"{InvariantRules.Title(r)} ({r}): " + (r == InvariantRules.NoDoubleBooking ? "BK-A, BK-B" : "BK-A")));
         Assert.Equal(expected, text);
     }
 
@@ -198,7 +199,7 @@ public sealed class BookingInvariantJobTests : IDisposable
 
         var text = BookingInvariantJob.DescribeBookings([new InvariantViolation(InvariantRules.PendingHasHoldDeadline, id, "thiếu hạn")]);
 
-        Assert.Equal($"{InvariantRules.PendingHasHoldDeadline}: {id}", text);
+        Assert.Equal($"Đơn chờ thanh toán không có hạn giữ chỗ ({InvariantRules.PendingHasHoldDeadline}): {id}", text);
     }
 
     [Fact]
@@ -214,6 +215,37 @@ public sealed class BookingInvariantJobTests : IDisposable
         Assert.Contains("BK-020", text);
         Assert.DoesNotContain("BK-021", text);
         Assert.EndsWith("… và 5 mục khác", text);
+    }
+
+    // Dashboard đọc tên dễ hiểu qua nhãn rule_name; nhãn rule giữ nguyên cho luật cảnh báo
+    [Fact]
+    public async Task CheckRecentBookingsAsync_GaugeCarriesTheReadableRuleName()
+    {
+        _invariants.Setup(s => s.CheckAsync(It.IsAny<BookingScope>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new InvariantCheckResult(2, [new InvariantViolation(InvariantRules.NoDoubleBooking, Guid.NewGuid(), "trùng giờ")]));
+
+        await Job().CheckRecentBookingsAsync();
+
+        var points = _probe.ObserveGauges(BookingInvariantMetrics.ViolationsInstrument);
+        Assert.All(points, p => Assert.Equal(InvariantRules.Title((string)p.Tags["rule"]!), p.Tags["rule_name"]));
+        var doubleBooking = Assert.Single(points, p => (string)p.Tags["rule"]! == InvariantRules.NoDoubleBooking);
+        Assert.Equal(("Hai đơn trùng sân, trùng giờ", 1L), ((string)doubleBooking.Tags["rule_name"]!, doubleBooking.Value));
+    }
+
+    [Fact]
+    public void Titles_EveryRuleHasADistinctReadableName()
+    {
+        string[] all = [.. InvariantRules.DatabaseRules, InvariantRules.DecisionExistsInTadss];
+
+        Assert.All(all, rule =>
+        {
+            Assert.True(InvariantRules.Titles.TryGetValue(rule, out var title), $"điều {rule} chưa có tên");
+            Assert.False(string.IsNullOrWhiteSpace(title));
+            Assert.DoesNotContain(rule, title!);
+        });
+        Assert.Equal(all.Length, InvariantRules.Titles.Count);
+        Assert.Equal(all.Length, InvariantRules.Titles.Values.Distinct().Count());
+        Assert.Equal("SC6-99", InvariantRules.Title("SC6-99"));
     }
 
     [Fact]

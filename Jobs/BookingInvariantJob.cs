@@ -53,8 +53,8 @@ namespace SmashCourt_BE.Jobs
                 var fresh = _metrics.RecordRun(result);
 
                 foreach (var violation in fresh)
-                    _logger.LogError("[Invariant] Đơn {BookingCode} ({BookingId}) vi phạm {Rule}: {Detail}",
-                        violation.BookingLabel, violation.BookingId, violation.Rule, violation.Detail);
+                    _logger.LogError("[Invariant] Đơn {BookingCode} ({BookingId}) vi phạm {Rule}: {RuleTitle}. Chi tiết: {Detail}",
+                        violation.BookingLabel, violation.BookingId, violation.Rule, InvariantRules.Title(violation.Rule), violation.Detail);
 
                 if (result.Violations.Count == 0)
                     _logger.LogInformation("[Invariant] {Checked} đơn (24 giờ và đơn còn hiệu lực), không vi phạm. Thời gian chạy: {Ms}ms",
@@ -62,9 +62,8 @@ namespace SmashCourt_BE.Jobs
                 else
                     // Dòng tổng mỗi lượt nêu lại mã các đơn đang vi phạm: dashboard đọc dòng mới nhất là biết đơn nào còn sai, kể cả vi phạm cũ
                     _logger.Log(fresh.Count > 0 ? LogLevel.Error : LogLevel.Warning,
-                        "[Invariant] {Checked} đơn (24 giờ và đơn còn hiệu lực), {Count} vi phạm, {New} mới ({Rules}). Đơn đang vi phạm: {Bookings}. Thời gian chạy: {Ms}ms",
+                        "[Invariant] {Checked} đơn (24 giờ và đơn còn hiệu lực), {Count} vi phạm, {New} mới. Đơn đang vi phạm: {Bookings}. Thời gian chạy: {Ms}ms",
                         result.CheckedBookings, result.Violations.Count, fresh.Count,
-                        string.Join(", ", result.Violations.GroupBy(v => v.Rule).Select(g => $"{g.Key}: {g.Count()}")),
                         DescribeBookings(result.Violations), sw.ElapsedMilliseconds);
             }
             catch (Exception ex)
@@ -75,7 +74,7 @@ namespace SmashCourt_BE.Jobs
             }
         }
 
-        // "SC6-6: BK-1, BK-2; PHU-2: BK-3", mỗi đơn một lần trong mỗi điều; quá giới hạn thì "… và N mục khác"
+        // "Đơn đã hủy không có lý do hủy (SC6-6): BK-1, BK-2; …", mỗi đơn một lần trong mỗi điều; quá giới hạn thì "… và N mục khác"
         public static string DescribeBookings(IReadOnlyList<InvariantViolation> violations)
         {
             var listed = 0;
@@ -86,7 +85,7 @@ namespace SmashCourt_BE.Jobs
                 var shown = labels.Take(Math.Max(0, MaxListedBookings - listed)).ToList();
                 listed += shown.Count;
                 if (shown.Count > 0)
-                    parts.Add($"{group.Key}: {string.Join(", ", shown)}");
+                    parts.Add($"{InvariantRules.Title(group.Key)} ({group.Key}): {string.Join(", ", shown)}");
             }
 
             var total = violations.GroupBy(v => v.Rule).Sum(g => g.Select(v => v.BookingLabel).Distinct().Count());
