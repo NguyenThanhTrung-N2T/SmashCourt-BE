@@ -861,5 +861,6 @@ Sau khi lần theo luồng thực tế FE → BE trên mã hiện có, nhóm ch�
 | P6-28 | `POST /api/payments/vnpay/confirm` trả thêm `bookingStatus`; FE rẽ nhánh theo trạng thái đơn, không theo `isSuccess` (chốt 29/10/2026, 6A-6) | 3.6 |
 | P6-31 | `BookingDto` thêm `cancelSource` (ai hủy, mọi endpoint), `cancelledByName` (tên nhân viên hủy / Manager từ chối, chỉ endpoint nhân viên) và `cancelledAt` (thời điểm hủy, mọi endpoint) để hiển thị và tra cứu rõ ràng (chốt 31/10/2026) | 2.2, 3.2 |
 | P6-61 | Giờ đặt sân phải theo bước 30 phút, mỗi sân tối đa 12 giờ một lượt; sai ⇒ 400 `VALIDATION_ERROR`, câu ở `errors.Courts` (chốt 20/11/2026; lộ ra khi gọi API thẳng với đơn 20 phút làm số tiền cọc lẻ) | 5 (#2c) |
+| P6-62 | Mọi số tiền là số đồng nguyên: tiền sân tính theo tỷ lệ khung giờ làm tròn về đồng ở từng phần; giảm giá, cọc, tiền hoàn làm tròn nửa đồng lên (`MoneyHelper.RoundVnd`); giá sân và giá dịch vụ có phần lẻ ⇒ 400 `VALIDATION_ERROR` (chốt 28/11/2026; lộ ra khi khung giá dài hơn 30 phút hoặc giá lẻ làm cọc 100 % lẻ, VNPay từ chối ⇒ 500) | 3.4, 5 |
 
 Mã lỗi mới: `PAYMENT_HOLD_EXPIRED`, `BOOKING_ALREADY_STARTED` (Mục 5). Không đổi hợp đồng BE ↔ TADSS.

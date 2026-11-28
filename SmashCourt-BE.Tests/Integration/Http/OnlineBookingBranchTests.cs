@@ -213,6 +213,54 @@ public sealed partial class OnlineBookingBranchTests(PostgreSqlIntegrationFixtur
         Assert.Empty(await tadss.WaitForEvaluationsAsync(call.BookingId, 0));
     }
 
+    // ───────────────────────── Tiền sân tính theo tỷ lệ là số đồng nguyên ─────────────────────────
+
+    // Nửa giờ của giá 85.001 đ/giờ = 42.500,5 đ trước khi làm tròn; VNPay từ chối số lẻ nên đơn cọc 100 % từng lỗi 500
+    private static object HalfHourRequest(Guid courtId, DateOnly date) => new
+    {
+        bookingDate = date.ToString("yyyy-MM-dd"),
+        courts = new[] { new { courtId, startTime = "10:00:00", endTime = "10:30:00" } }
+    };
+
+    [Fact]
+    public async Task HalfHourOfAnOddPrice_FlagOff_ChargesWholeDongInTheFullPayment()
+    {
+        var court = await SeedCourtAsync(85_001m);
+        var client = await CustomerClientAsync(await SeedUserAsync());
+
+        var call = await PostOnlineAsync(client, HalfHourRequest(court.CourtId, FutureDate()));
+
+        await AssertStatusAsync(HttpStatusCode.Created, call);
+        Assert.Equal((42_501m, 1m, 42_501m, 0m),
+            (call.DataDecimal("finalTotal"), call.DataDecimal("depositRate"), call.DataDecimal("depositAmount"),
+                call.DataDecimal("remainingAmount")));
+        Assert.Equal(42_501m, VnPayAmount(call.DataString("paymentUrl") ?? ""));
+        var invoice = Assert.IsType<Invoice>((await RequireBookingAsync(call.BookingId)).Invoice);
+        Assert.Equal((42_501m, 42_501m), (invoice.CourtFee, invoice.FinalTotal));
+        Assert.Equal(42_501m, Assert.Single(invoice.Payments).Amount);
+    }
+
+    [Fact]
+    public async Task HalfHourOfAnOddPrice_TadssDeposit_SendsAWholeTotalAndLeavesAWholeRemainder()
+    {
+        var tadss = await GetTadssAsync();
+        using var _ = await UseTadssAsync();
+        var court = await SeedCourtAsync(85_001m);
+        tadss.ApproveAnyBooking(0.3m, 12_750m);
+        var client = await CustomerClientAsync(await SeedUserAsync());
+
+        var call = await PostOnlineAsync(client, HalfHourRequest(court.CourtId, FutureDate()));
+
+        await AssertStatusAsync(HttpStatusCode.Created, call);
+        Assert.Equal((42_501m, 12_750m, 29_751m),
+            (call.DataDecimal("finalTotal"), call.DataDecimal("depositAmount"), call.DataDecimal("remainingAmount")));
+        Assert.Equal(12_750m, VnPayAmount(call.DataString("paymentUrl") ?? ""));
+        var request = Assert.Single(await tadss.WaitForEvaluationsAsync(call.BookingId, 1));
+        AssertSchemaValid(request);
+        using var body = JsonDocument.Parse(request.RequestMessage?.Body ?? "{}");
+        Assert.Equal(42_501m, body.RootElement.GetProperty("totalPrice").GetDecimal());
+    }
+
     [Fact]
     public async Task MultiCourtOrder_HoldsOneLockPerCourt_AndChargesBoth()
     {

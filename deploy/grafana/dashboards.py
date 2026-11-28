@@ -397,7 +397,7 @@ BE = Dashboard(
                          "Cùng bộ luật với bộ test: đơn xác nhận đủ cọc, hóa đơn đã trả thu đủ, đơn chờ duyệt giữ sân, đơn hủy không giữ sân và có lý do, "
                          "dòng sân của đơn hiệu lực đang bật, không trùng giờ, đơn chờ thanh toán có hạn giữ chỗ.",
                     unit="Vi phạm (số đơn × điều).",
-                    read="0 là dữ liệu đúng. Khác 0 ⇒ xem panel 'Vi phạm theo điều' và hàng Log (dòng '[Invariant] Booking … vi phạm …' có mã đơn).",
+                    read="0 là dữ liệu đúng. Khác 0 ⇒ panel 'Đơn đang vi phạm' ngay dưới nêu mã đơn (BK-…) và lý do; panel 'Vi phạm theo điều' cho biết điều nào.",
                     threshold="Khác 0 ⇒ email 'Dữ liệu đặt sân sai' (đỏ). Chỉ tiêu của đề cương: 0 đơn hỏng.",
                     source="smashcourt_booking_invariant_violations (meter SmashCourt.Booking, BookingInvariantJob)",
                     tests="OB-BE-5, BE-IT-20",
@@ -456,6 +456,25 @@ BE = Dashboard(
                 ),
                 width=6,
                 no_value="Chưa có lượt kiểm",
+            ),
+            Panel(
+                "Đơn đang vi phạm",
+                "logs",
+                [('{service_name="smashcourt-be"} |= "[Invariant]" | detected_level=~"warn|error"', "")],
+                "none",
+                Description(
+                    what="Log của job kiểm tính đúng khi có vi phạm: dòng 'Đơn BK-… (id) vi phạm <điều>: <lý do>' khi một vi phạm mới xuất hiện, "
+                         "và mỗi lượt kiểm (10 phút) một dòng tổng 'Đơn đang vi phạm: <điều>: BK-…, BK-…' nêu lại mọi đơn còn sai (tối đa 20 mã, còn lại chỉ đếm). "
+                         "Dòng 'Không kiểm được' là lượt kiểm lỗi (không đọc được DB).",
+                    unit="Dòng log, mới nhất ở trên.",
+                    read="Dòng tổng mới nhất là danh sách đơn đang sai; tra mã đơn ở trang quản lý đặt sân rồi sửa theo lý do ở dòng 'vi phạm' của đơn đó. "
+                         "Không có dòng nào trong khoảng thời gian đang xem nghĩa là không có vi phạm (lượt sạch ghi mức Information, không hiện ở đây). "
+                         "Vi phạm cũ hơn khoảng đang xem vẫn có trong dòng tổng mới nhất; chi tiết lý do thì mở rộng khoảng thời gian.",
+                    threshold="Không có dòng nào. Có dòng 'vi phạm' ⇒ cùng lúc có email 'Dữ liệu đặt sân sai'.",
+                    source='Loki, service_name="smashcourt-be", dòng có "[Invariant]" mức Warning trở lên (Jobs/BookingInvariantJob)',
+                    tests="OB-BE-5",
+                ),
+                width=24,
             ),
         ]),
         Section("Nghiệp vụ đặt sân", [

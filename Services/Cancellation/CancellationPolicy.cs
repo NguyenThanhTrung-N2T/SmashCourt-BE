@@ -35,7 +35,7 @@ public static class CancellationPolicy
         var percent = RefundPercent(policies, playStartUtc, nowUtc);
         var shares = payments
             .Where(p => p.Status == PaymentTxStatus.SUCCESS)
-            .Select(p => new RefundShare(p.Id, Math.Round((p.Amount - p.RefundedAmount) * percent / 100, 0)))
+            .Select(p => new RefundShare(p.Id, MoneyHelper.RoundVnd((p.Amount - p.RefundedAmount) * percent / 100)))
             .Where(s => s.Amount > 0)
             .ToList();
 

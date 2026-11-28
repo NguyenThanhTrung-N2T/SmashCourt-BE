@@ -351,8 +351,8 @@ def alert_rules(prometheus_uid: str, grafana_url: str = "") -> list[dict]:
               'sum(smashcourt_booking_invariant_violations{job="smashcourt-be"})', "gt", 0, "0s", "OK",
               "Lượt kiểm tính đúng gần nhất thấy {{ $values.A.Value }} vi phạm trong các đơn tạo / sửa 24 giờ qua "
               "(sai tiền cọc, hóa đơn thu thiếu, giữ sân sai, trùng giờ hoặc đơn hủy thiếu lý do).",
-              "mở tab BE, nhóm 'Tính đúng dữ liệu đặt sân' xem điều bị vi phạm; mã đơn nằm trong log BE "
-              "(\"docker logs smashcourt-be 2>&1 | grep Invariant\"). Sửa dữ liệu theo mô tả; lượt kiểm sau (tối đa 10 phút) tự về 0.",
+              "mở tab BE, nhóm 'Tính đúng dữ liệu đặt sân': panel 'Đơn đang vi phạm' nêu mã đơn (BK-…) và lý do "
+              "(hoặc \"docker logs smashcourt-be 2>&1 | grep Invariant\"). Sửa dữ liệu theo lý do; lượt kiểm sau (tối đa 10 phút) tự về 0.",
               "smashcourt-van-hanh-be", "BE"),
         # Job lỗi liên tục hoặc ngừng chạy thì gauge giữ số của lượt trước (thường 0): báo khi 30 phút không có lượt thành công trong lúc BE vẫn sống
         # (BE tắt đã có luật "không phản hồi"). Counter mới cần 2 lượt (khoảng 20 phút sau khi khởi động) mới có increase nên "for" 25 phút

@@ -1,8 +1,9 @@
+using SmashCourt_BE.Helpers;
 using System.ComponentModel.DataAnnotations;
 
 namespace SmashCourt_BE.DTOs.PriceConfig
 {
-    public class PriceSlotInput
+    public class PriceSlotInput : IValidatableObject
     {
         /// <summary>
         /// Start time in HH:mm:ss format
@@ -29,5 +30,14 @@ namespace SmashCourt_BE.DTOs.PriceConfig
         [Required]
         [Range(0, double.MaxValue, ErrorMessage = "Giá cuối tuần không được âm")]
         public decimal WeekendPrice { get; set; }
+
+        public IEnumerable<ValidationResult> Validate(ValidationContext context)
+        {
+            if (!MoneyHelper.IsWholeVnd(WeekdayPrice))
+                yield return new ValidationResult("Giá ngày thường phải là số đồng nguyên", new[] { nameof(WeekdayPrice) });
+
+            if (!MoneyHelper.IsWholeVnd(WeekendPrice))
+                yield return new ValidationResult("Giá cuối tuần phải là số đồng nguyên", new[] { nameof(WeekendPrice) });
+        }
     }
 }

@@ -108,6 +108,31 @@ public class CancellationPolicyTests
         Assert.Equal(100_000, quote.Amount);
     }
 
+    // Nửa đồng làm tròn lên như cọc của TADSS và Math.round của FE; làm tròn về số chẵn từng cho 3.038 và 31.250
+    [Theory]
+    [InlineData(6_077, 3_039)]
+    [InlineData(62_501, 31_251)]
+    [InlineData(6_078, 3_039)]
+    public void QuoteRefund_HalfDong_RoundsUp(int paid, int expected)
+    {
+        var quote = CancellationPolicy.QuoteRefund(Policies, PlayStartUtc, HoursBefore(13), [Paid(paid)]);
+
+        Assert.Equal(50, quote.Percent);
+        Assert.Equal(expected, quote.Amount);
+        Assert.Equal(expected, Assert.Single(quote.Shares).Amount);
+    }
+
+    [Fact]
+    public void QuoteRefund_ThirdOfAPayment_IsWholeDong()
+    {
+        var policies = new[] { new CancelPolicy { HoursBefore = 0, RefundPercent = 33.33m } };
+
+        // 100.001 × 33,33 % = 33.330,3333 đ
+        var quote = CancellationPolicy.QuoteRefund(policies, PlayStartUtc, HoursBefore(1), [Paid(100_001)]);
+
+        Assert.Equal(33_330, quote.Amount);
+    }
+
     [Fact]
     public void QuoteRefund_TwoPayments_OneSharePerPayment()
     {
@@ -165,10 +190,10 @@ public class CancellationPolicyTests
     [Fact]
     public void QuoteRefund_RoundsEachShareToWholeDong()
     {
-        // 33.333 × 50 % = 16.666,5 ⇒ làm tròn như mã cũ (Math.Round, về số chẵn)
+        // 33.333 × 50 % = 16.666,5 ⇒ nửa đồng làm tròn lên như cọc của TADSS (trước đây về số chẵn: 16.666)
         var quote = CancellationPolicy.QuoteRefund(Policies, PlayStartUtc, HoursBefore(13), [Paid(33_333)]);
 
-        Assert.Equal(16_666, quote.Amount);
+        Assert.Equal(16_667, quote.Amount);
     }
 
     // ─── Đã tới giờ bắt đầu ─────────────────────────────────────────────

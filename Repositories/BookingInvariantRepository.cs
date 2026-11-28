@@ -62,7 +62,8 @@ namespace SmashCourt_BE.Repositories
 
             var bookings = await _context.Bookings.AsNoTracking()
                 .Where(b => ids.Contains(b.Id))
-                .Select(b => new InvariantBookingRow(b.Id, b.Status, b.ApprovalExpiresAt, b.CancelReason, b.CancelSource, b.TadssDecisionId, b.CustomerId))
+                .Select(b => new InvariantBookingRow(
+                    b.Id, b.Status, b.ApprovalExpiresAt, b.CancelReason, b.CancelSource, b.TadssDecisionId, b.CustomerId, b.BookingCode))
                 .ToListAsync(ct);
             var invoices = await _context.Invoices.AsNoTracking()
                 .Where(i => ids.Contains(i.BookingId))

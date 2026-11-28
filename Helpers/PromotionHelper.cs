@@ -35,6 +35,6 @@ public static class PromotionHelper
         // Discount cannot be negative or exceed the total amount
         discount = Math.Clamp(discount, 0, amount);
 
-        return Math.Round(discount, 0);
+        return MoneyHelper.RoundVnd(discount);
     }
 }

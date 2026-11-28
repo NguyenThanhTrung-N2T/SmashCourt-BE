@@ -131,4 +131,21 @@ public class PromotionHelperTests
 
         Assert.Equal(TestConstants.MaxDiscountAmount, result);
     }
+
+    // Nửa đồng làm tròn lên (cùng cọc TADSS và Math.round của FE); làm tròn về số chẵn từng cho 1.234 và 4.250
+    [Theory]
+    [InlineData(12_345, 10, 1_235)]
+    [InlineData(42_505, 10, 4_251)]
+    [InlineData(42_501, 10, 4_250)]
+    [InlineData(100_001, 33.33, 33_330)]
+    public void CalculateDiscount_WhenPercentGivesFractionalDong_RoundsHalfUp(int amount, double percent, int expected)
+    {
+        var promotion = TestDataFactory.CreatePromotion(
+            discountType: DiscountTypeEnum.PERCENT,
+            discountValue: (decimal)percent);
+
+        var result = PromotionHelper.CalculateDiscount(promotion, amount);
+
+        Assert.Equal(expected, result);
+    }
 }

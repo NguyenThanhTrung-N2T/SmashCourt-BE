@@ -1,9 +1,10 @@
+using SmashCourt_BE.Helpers;
 using SmashCourt_BE.Models.Enums;
 using System.ComponentModel.DataAnnotations;
 
 namespace SmashCourt_BE.DTOs.Service
 {
-    public class UpdateServiceDto
+    public class UpdateServiceDto : IValidatableObject
     {
         [Required(ErrorMessage = "Tên dịch vụ không được để trống")]
         [MaxLength(255, ErrorMessage = "Tên dịch vụ tối đa 255 ký tự")]
@@ -21,6 +22,12 @@ namespace SmashCourt_BE.DTOs.Service
 
         // Optional display URL for the service (e.g., image or page)
         public string? ServiceDisplayUrl { get; set; }
+
+        public IEnumerable<ValidationResult> Validate(ValidationContext context)
+        {
+            if (!MoneyHelper.IsWholeVnd(DefaultPrice))
+                yield return new ValidationResult("Giá mặc định phải là số đồng nguyên", new[] { nameof(DefaultPrice) });
+        }
     }
 }
 

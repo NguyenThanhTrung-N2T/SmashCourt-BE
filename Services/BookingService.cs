@@ -395,8 +395,8 @@ namespace SmashCourt_BE.Services
                 decimal loyaltyDiscountAmount = 0;
                 var loyalty = await _loyaltyRepo.GetByUserIdAsync(customerId);
                 if (loyalty?.Tier != null)
-                    loyaltyDiscountAmount = Math.Round(
-                        Math.Clamp(totalCourtFee * loyalty.Tier.DiscountRate / 100, 0, totalCourtFee), 0);
+                    loyaltyDiscountAmount = MoneyHelper.RoundVnd(
+                        Math.Clamp(totalCourtFee * loyalty.Tier.DiscountRate / 100, 0, totalCourtFee));
 
                 var totalAfterLoyalty = Math.Max(0, totalCourtFee - loyaltyDiscountAmount);
 
@@ -809,8 +809,8 @@ namespace SmashCourt_BE.Services
                 {
                     var loyalty = await _loyaltyRepo.GetByUserIdAsync(dto.CustomerId.Value);
                     if (loyalty?.Tier != null)
-                        loyaltyDiscountAmount = Math.Round(
-                            totalCourtFee * loyalty.Tier.DiscountRate / 100, 0);
+                        loyaltyDiscountAmount = MoneyHelper.RoundVnd(
+                            totalCourtFee * loyalty.Tier.DiscountRate / 100);
                 }
 
                 var totalAfterLoyalty = totalCourtFee - loyaltyDiscountAmount;

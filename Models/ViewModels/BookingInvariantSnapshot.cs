@@ -19,7 +19,7 @@ namespace SmashCourt_BE.Models.ViewModels
 
     public sealed record InvariantBookingRow(
         Guid Id, BookingStatus Status, DateTime? ApprovalExpiresAt, BookingCancelReason? CancelReason, CancelSourceEnum? CancelSource,
-        Guid? TadssDecisionId, Guid? CustomerId);
+        Guid? TadssDecisionId, Guid? CustomerId, string BookingCode);
 
     /// <summary>Paid: tổng Payment SUCCESS của hóa đơn; Collected: thực thu (SUCCESS trừ đã hoàn), cùng công thức tính trạng thái thanh toán của BE.</summary>
     public sealed record InvariantInvoiceRow(

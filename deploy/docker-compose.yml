@@ -68,7 +68,8 @@ services:
       Google__ClientId: ${GOOGLE_CLIENT_ID}
       Google__ClientSecret: ${GOOGLE_CLIENT_SECRET}
       Google__RedirectUri: ${GOOGLE_REDIRECT_URI}
-      FrontendBaseUrl: https://smashcourt-ai.vercel.app
+      # FE nhận người dùng sau thanh toán VNPay và trong link email. Mặc định FE trên Vercel; thử FE local: FRONTEND_BASE_URL trong file bí mật (RUNBOOK 2.6)
+      FrontendBaseUrl: ${FRONTEND_BASE_URL:-https://smashcourt-ai.vercel.app}
       Cookie__Secure: "true"
       Hangfire__Dashboard: "false"
       AIService__BaseUrl: http://ai:8000

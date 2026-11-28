@@ -19,9 +19,14 @@ public sealed class BookingInvariantRulesTests
     private static readonly DateOnly Day = new(2026, 11, 21);
 
     private static InvariantBookingRow Booking(BookingStatus status, Guid? id = null, DateTime? approvalExpiresAt = null,
-        BookingCancelReason? reason = BookingCancelReason.CUSTOMER_CANCELLED, bool decision = false, bool customer = true) =>
-        new(id ?? Guid.NewGuid(), status, approvalExpiresAt, reason, CancelSourceEnum.CUSTOMER, decision ? Guid.NewGuid() : null,
-            customer ? Guid.NewGuid() : null);
+        BookingCancelReason? reason = BookingCancelReason.CUSTOMER_CANCELLED, bool decision = false, bool customer = true)
+    {
+        var bookingId = id ?? Guid.NewGuid();
+        return new(bookingId, status, approvalExpiresAt, reason, CancelSourceEnum.CUSTOMER, decision ? Guid.NewGuid() : null,
+            customer ? Guid.NewGuid() : null, CodeOf(bookingId));
+    }
+
+    private static string CodeOf(Guid bookingId) => $"BK-TEST-{bookingId.ToString("N")[..8]}";
 
     private static InvariantInvoiceRow Invoice(Guid bookingId, DepositSource? source = null, decimal? deposit = null, decimal paid = 0m,
         InvoicePaymentStatus status = InvoicePaymentStatus.UNPAID, decimal finalTotal = 200_000m, decimal? collected = null,
@@ -161,6 +166,19 @@ public sealed class BookingInvariantRulesTests
         Assert.Empty(Evaluate(booking, Invoice(booking.Id)));
     }
 
+    // Mã đơn đi cùng vi phạm để log của job và dashboard chỉ ra đơn nhân viên tra được, không chỉ id
+    [Fact]
+    public void Evaluate_Violation_CarriesTheBookingCode()
+    {
+        var booking = Booking(BookingStatus.PENDING);
+
+        var violation = Assert.Single(Evaluate(booking));
+
+        Assert.Equal(CodeOf(booking.Id), violation.BookingCode);
+        Assert.Equal(CodeOf(booking.Id), violation.BookingLabel);
+        Assert.Contains(CodeOf(booking.Id), violation.ToString());
+    }
+
     [Fact]
     public void Evaluate_TwoOrdersHoldingOverlappingTime_IsReportedOnceForTheScopedOrder()
     {
@@ -173,6 +191,7 @@ public sealed class BookingInvariantRulesTests
         var violation = Assert.Single(violations);
         Assert.Equal(InvariantRules.NoDoubleBooking, violation.Rule);
         Assert.Equal(scoped.Id, violation.BookingId);
+        Assert.Equal(CodeOf(scoped.Id), violation.BookingCode);
     }
 
     [Fact]
@@ -205,6 +224,7 @@ public sealed class BookingInvariantRulesTests
         var violation = Assert.Single(BookingInvariantRules.Evaluate(snapshot, Now));
 
         Assert.Equal(a.Id, violation.BookingId);
+        Assert.Equal(CodeOf(a.Id), violation.BookingCode);
     }
 
     [Fact]

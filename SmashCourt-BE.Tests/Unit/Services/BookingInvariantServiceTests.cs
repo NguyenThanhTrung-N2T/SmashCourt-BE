@@ -49,7 +49,7 @@ public sealed class BookingInvariantServiceTests
     public async Task CheckAsync_WhenDataIsHealthy_ReturnsTheCheckedCountAndNoViolation()
     {
         var scope = new BookingScope(null, Now.AddHours(-24), Now, Now.AddMinutes(-2));
-        var booking = new InvariantBookingRow(Guid.NewGuid(), BookingStatus.COMPLETED, null, null, null, null, Guid.NewGuid());
+        var booking = new InvariantBookingRow(Guid.NewGuid(), BookingStatus.COMPLETED, null, null, null, null, Guid.NewGuid(), "BK-TEST-1");
         _repository.Setup(r => r.LoadAsync(scope, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new BookingInvariantSnapshot([booking.Id, Guid.NewGuid()], [booking], new Dictionary<Guid, InvariantInvoiceRow>(), [], [], []));
 
@@ -62,7 +62,7 @@ public sealed class BookingInvariantServiceTests
     [Fact]
     public async Task CheckAsync_WhenDataIsBroken_ReturnsTheViolations()
     {
-        var booking = new InvariantBookingRow(Guid.NewGuid(), BookingStatus.PENDING, null, null, null, null, Guid.NewGuid());
+        var booking = new InvariantBookingRow(Guid.NewGuid(), BookingStatus.PENDING, null, null, null, null, Guid.NewGuid(), "BK-TEST-2");
         _repository.Setup(r => r.LoadAsync(It.IsAny<BookingScope>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new BookingInvariantSnapshot([booking.Id], [booking], new Dictionary<Guid, InvariantInvoiceRow>(), [], [], []));
 
@@ -71,5 +71,6 @@ public sealed class BookingInvariantServiceTests
         var violation = Assert.Single(result.Violations);
         Assert.Equal(InvariantRules.PendingHasHoldDeadline, violation.Rule);
         Assert.Equal(booking.Id, violation.BookingId);
+        Assert.Equal("BK-TEST-2", violation.BookingCode);
     }
 }

@@ -50,6 +50,10 @@ public sealed class InvariantSelfCheckTests(PostgreSqlIntegrationFixture databas
         var violation = Assert.Single(violations);
         Assert.Equal(InvariantRules.PendingHasHoldDeadline, violation.Rule);
         Assert.Equal(order.BookingId, violation.BookingId);
+        // Mã đơn đọc từ DB để log của job và dashboard chỉ đúng đơn nhân viên tra được
+        var code = await WithDbAsync(db => db.Bookings.AsNoTracking().Where(b => b.Id == order.BookingId).Select(b => b.BookingCode).SingleAsync());
+        Assert.Equal(code, violation.BookingCode);
+        Assert.StartsWith("BK", code);
         // Chính bước tự kiểm cuối test (DisposeAsync của nền) ném lỗi có tiền tố [SC6]
         var thrown = await Assert.ThrowsAsync<InvariantViolationException>(DisposeAsync);
         Assert.StartsWith("[SC6] 1 vi phạm", thrown.Message);

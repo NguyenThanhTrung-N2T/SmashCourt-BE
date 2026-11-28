@@ -20,6 +20,9 @@ namespace SmashCourt_BE.Jobs
         /// <summary>Bỏ đơn vừa đổi trong chừng này thời gian: luồng nhiều transaction (đặt online, thanh toán) có thể đang dở giữa hai bước.</summary>
         public static readonly TimeSpan SettleTime = TimeSpan.FromMinutes(2);
 
+        /// <summary>Số mã đơn tối đa nêu trong dòng tổng; lỗi hàng loạt thì phần còn lại chỉ đếm để dòng log không phình.</summary>
+        public const int MaxListedBookings = 20;
+
         private readonly IBookingInvariantService _invariants;
         private readonly BookingInvariantMetrics _metrics;
         private readonly TimeProvider _timeProvider;
@@ -50,16 +53,19 @@ namespace SmashCourt_BE.Jobs
                 var fresh = _metrics.RecordRun(result);
 
                 foreach (var violation in fresh)
-                    _logger.LogError("[Invariant] Booking {BookingId} vi phạm {Rule}: {Detail}", violation.BookingId, violation.Rule, violation.Detail);
+                    _logger.LogError("[Invariant] Đơn {BookingCode} ({BookingId}) vi phạm {Rule}: {Detail}",
+                        violation.BookingLabel, violation.BookingId, violation.Rule, violation.Detail);
 
                 if (result.Violations.Count == 0)
                     _logger.LogInformation("[Invariant] {Checked} đơn (24 giờ và đơn còn hiệu lực), không vi phạm. Thời gian chạy: {Ms}ms",
                         result.CheckedBookings, sw.ElapsedMilliseconds);
                 else
+                    // Dòng tổng mỗi lượt nêu lại mã các đơn đang vi phạm: dashboard đọc dòng mới nhất là biết đơn nào còn sai, kể cả vi phạm cũ
                     _logger.Log(fresh.Count > 0 ? LogLevel.Error : LogLevel.Warning,
-                        "[Invariant] {Checked} đơn (24 giờ và đơn còn hiệu lực), {Count} vi phạm, {New} mới ({Rules}). Thời gian chạy: {Ms}ms",
+                        "[Invariant] {Checked} đơn (24 giờ và đơn còn hiệu lực), {Count} vi phạm, {New} mới ({Rules}). Đơn đang vi phạm: {Bookings}. Thời gian chạy: {Ms}ms",
                         result.CheckedBookings, result.Violations.Count, fresh.Count,
-                        string.Join(", ", result.Violations.GroupBy(v => v.Rule).Select(g => $"{g.Key}: {g.Count()}")), sw.ElapsedMilliseconds);
+                        string.Join(", ", result.Violations.GroupBy(v => v.Rule).Select(g => $"{g.Key}: {g.Count()}")),
+                        DescribeBookings(result.Violations), sw.ElapsedMilliseconds);
             }
             catch (Exception ex)
             {
@@ -67,6 +73,24 @@ namespace SmashCourt_BE.Jobs
                 _metrics.RecordError();
                 _logger.LogError(ex, "[Invariant] Không kiểm được tính đúng dữ liệu. Thời gian chạy: {Ms}ms", sw.ElapsedMilliseconds);
             }
+        }
+
+        // "SC6-6: BK-1, BK-2; PHU-2: BK-3", mỗi đơn một lần trong mỗi điều; quá giới hạn thì "… và N mục khác"
+        public static string DescribeBookings(IReadOnlyList<InvariantViolation> violations)
+        {
+            var listed = 0;
+            var parts = new List<string>();
+            foreach (var group in violations.GroupBy(v => v.Rule).OrderBy(g => g.Key, StringComparer.Ordinal))
+            {
+                var labels = group.Select(v => v.BookingLabel).Distinct().ToList();
+                var shown = labels.Take(Math.Max(0, MaxListedBookings - listed)).ToList();
+                listed += shown.Count;
+                if (shown.Count > 0)
+                    parts.Add($"{group.Key}: {string.Join(", ", shown)}");
+            }
+
+            var total = violations.GroupBy(v => v.Rule).Sum(g => g.Select(v => v.BookingLabel).Distinct().Count());
+            return total > listed ? $"{string.Join("; ", parts)} … và {total - listed} mục khác" : string.Join("; ", parts);
         }
     }
 }

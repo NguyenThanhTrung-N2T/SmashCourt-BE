@@ -34,7 +34,7 @@ public static class BookingInvariantRules
             snapshot.InvoicesByBooking.TryGetValue(booking.Id, out var invoice);
             var bookingLines = linesByBooking[booking.Id].ToList();
             var bookingLocks = locksByBooking[booking.Id].ToList();
-            void Report(string rule, string detail) => violations.Add(new InvariantViolation(rule, booking.Id, detail));
+            void Report(string rule, string detail) => violations.Add(new InvariantViolation(rule, booking.Id, detail, booking.BookingCode));
 
             // Đơn đã xác nhận qua luồng cọc phải có tiền SUCCESS của đúng hóa đơn đủ mức cọc
             if (PaidStatuses.Contains(booking.Status) && invoice?.DepositSource != null
@@ -87,7 +87,10 @@ public static class BookingInvariantRules
                     invoice == null ? "PENDING không có hóa đơn" : "PENDING có hóa đơn thiếu hold_deadline");
         }
 
-        violations.AddRange(DoubleBookings(snapshot.HoldingLines, snapshot.ScopedBookingIds.ToHashSet()));
+        // Đơn sở hữu một cặp trùng giờ luôn nằm trong phạm vi nên có mã trong snapshot.Bookings
+        var codes = snapshot.Bookings.ToDictionary(b => b.Id, b => b.BookingCode);
+        violations.AddRange(DoubleBookings(snapshot.HoldingLines, snapshot.ScopedBookingIds.ToHashSet())
+            .Select(v => v with { BookingCode = codes.GetValueOrDefault(v.BookingId) }));
 
         return violations
             .OrderBy(v => v.Rule, StringComparer.Ordinal)

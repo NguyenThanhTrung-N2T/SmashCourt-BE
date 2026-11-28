@@ -163,7 +163,7 @@ public class BookingApprovalService : IBookingApprovalService
     // Cùng công thức quy đổi của TADSS: số tiền lớn hơn 0 nhưng dưới mức thu online tối thiểu thì Quản lý phải chọn lại
     private void EnsureDepositReachesMinimum(Booking booking, decimal rate)
     {
-        var amount = Math.Round(FinalTotal(booking) * rate, 0, MidpointRounding.AwayFromZero);
+        var amount = MoneyHelper.RoundVnd(FinalTotal(booking) * rate);
         var minimum = _paymentSettings.CurrentValue.MinOnlinePaymentAmount;
         if (amount > 0m && amount < minimum)
             throw new AppException(400, "Dữ liệu đầu vào không hợp lệ", ErrorCodes.ValidationError,

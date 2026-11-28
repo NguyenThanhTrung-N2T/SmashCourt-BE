@@ -534,9 +534,10 @@ namespace SmashCourt_BE.Services
                             $"Chưa cấu hình giá cho khung giờ {slot.StartTime:HH\\:mm} - {slot.EndTime:HH\\:mm}",
                             ErrorCodes.BadRequest);
 
-                    // Tính giá theo tỷ lệ (pro-rate) nếu lượt đặt chỉ chiếm một phần khung giờ
+                    // Tính giá theo tỷ lệ (pro-rate) nếu lượt đặt chỉ chiếm một phần khung giờ. Làm tròn từng phần về đồng nguyên
+                    // (VD 1 giờ của khung 3 giờ = 1/3 giá): tiền sân lẻ làm cọc 100 % bị VNPay từ chối và phần thu tại quầy lẻ
                     var slotHours = (decimal)(slot.EndTime - slot.StartTime).TotalHours;
-                    var subTotal = unitPrice * (hours / slotHours);
+                    var subTotal = MoneyHelper.RoundVnd(unitPrice * hours / slotHours);
                     courtFee += subTotal;
 
                     // ĐƠN GIÁ (UnitPrice) luôn trả về theo GIỜ để đảm bảo UnitPrice * Hours = SubTotal
